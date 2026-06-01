@@ -1,0 +1,16 @@
+# Runtime data (decisions, temp files)
+/data/
+
+# Build output
+/dist/
+
+# Dependencies
+/node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
