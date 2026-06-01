@@ -35,6 +35,98 @@ const STATUS_WRITE_INTERVAL_MS = 5_000;
 const PING_INTERVAL_MS = 10_000;
 const RESPONSE_TIMEOUT_MS = 5_000;
 
+// ── 安全校验 ──────────────────────────────────────────
+
+/**
+ * 白名单正则：只允许字母、数字、_ - . : / = @ % + ~ , # ! 以及空格。
+ * 禁止 shell 敏感字符：; | $ ( ) ` { } [ ] & > < \n \r \0
+ */
+const SAFE_VALUE_RE = /^[a-zA-Z0-9_\-.:\/=@%+~,#! ]+$/;
+
+/**
+ * 禁止覆盖的危险环境变量（校验时转大写比较）。
+ * 攻击者可通过覆盖这些变量劫持进程加载恶意代码。
+ */
+const BLOCKED_ENV_KEYS = new Set([
+  'PATH',
+  'LD_PRELOAD',
+  'LD_LIBRARY_PATH',
+  'NODE_PATH',
+  'NODE_OPTIONS',
+  'DYLD_INSERT_LIBRARIES',
+  'DYLD_LIBRARY_PATH',
+  'DYLD_FRAMEWORK_PATH',
+  'PYTHONPATH',
+  'PYTHONHOME',
+  'PYTHONSTARTUP',
+  'PERL5LIB',
+  'RUBYLIB',
+  'RUBYOPT',
+  'BASH_ENV',
+  'IFS',
+  'SHELLOPTS',
+  'BASHOPTS',
+]);
+
+/**
+ * 校验 env 配置：禁止覆盖危险变量，禁止 value 含 shell 敏感字符，禁止非法 key。
+ * @throws 校验不通过时抛出 Error
+ */
+function sanitizeEnv(
+  userEnv: Record<string, string> | undefined,
+): Record<string, string> {
+  if (!userEnv) return {};
+
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(userEnv)) {
+    // 校验 key 格式（POSIX 环境变量名）
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) {
+      throw new Error(`Invalid environment variable name: ${key}`);
+    }
+
+    // 检查是否在禁止列表中（大小写不敏感）
+    if (BLOCKED_ENV_KEYS.has(key.toUpperCase())) {
+      throw new Error(
+        `Environment variable "${key}" is blocked and cannot be overridden`,
+      );
+    }
+
+    // 校验 value 白名单
+    if (!SAFE_VALUE_RE.test(value)) {
+      throw new Error(
+        `Environment variable "${key}" contains unsafe characters`,
+      );
+    }
+
+    result[key] = value;
+  }
+  return result;
+}
+
+/**
+ * 校验 args 数组每个元素的白名单（防止 --eval 等注入恶意代码）。
+ * @throws 校验不通过时抛出 Error
+ */
+function sanitizeArgs(args: string[] | undefined): string[] {
+  if (!args) return [];
+  for (const arg of args) {
+    if (!SAFE_VALUE_RE.test(arg)) {
+      throw new Error(`Argument contains unsafe characters: ${arg}`);
+    }
+  }
+  return args;
+}
+
+/**
+ * 校验 command 字符串的白名单（同样禁止 shell 敏感字符）。
+ * @throws 校验不通过时抛出 Error
+ */
+function sanitizeCommand(command: string): void {
+  if (!SAFE_VALUE_RE.test(command)) {
+    throw new Error(`Command contains unsafe characters: ${command}`);
+  }
+}
+
 // ── 类型 ──────────────────────────────────────────────
 
 type McpConfig = {
@@ -145,11 +237,16 @@ function spawnServer(
   config: { command: string; args?: string[]; env?: Record<string, string> },
 ): ChildProcess | null {
   try {
-    const env = { ...process.env, ...config.env };
-    const proc = spawn(config.command, config.args || [], {
+    // ── 安全校验（白名单） ────────────────────────────
+    sanitizeCommand(config.command);
+    const safeArgs = sanitizeArgs(config.args);
+    const safeEnv = sanitizeEnv(config.env);
+
+    const env = { ...process.env, ...safeEnv };
+    const proc = spawn(config.command, safeArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
       env,
-      // 不给 shell，直接用 exec
+      // 不给 shell，直接用 execve
       shell: false,
     });
 

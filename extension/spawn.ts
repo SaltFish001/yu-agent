@@ -213,20 +213,29 @@ export class SessionPool {
       return;
     }
 
+    // settled 守卫：防止 timer 回调在 timedPromise 已兑现后仍调用 session.abort()
+    let settled = false;
     let timer: ReturnType<typeof setTimeout>;
+
+    // 用 .then() 在 timedPromise 兑现/拒绝时立即标记 settled，
+    // 确保 timer 回调执行前先检查 settled 标志，避免重复兑现或误 abort。
+    const guardedTimedPromise = timedPromise.then(
+      (value) => { settled = true; return value; },
+      (err)  => { settled = true; throw err; },
+    );
+
     const abortPromise = new Promise<void>((_, reject) => {
-      timer = setTimeout(async () => {
-        try {
-          await session.abort();
-        } catch {
-          // abort 本身可能抛异常，忽略
-        }
+      timer = setTimeout(() => {
+        // timer 回调执行前先检查 settled 标志
+        if (settled) return;
+        settled = true;
+        session.abort().catch(() => {});
         reject(new Error(`Session prompt timed out after ${timeoutMs}ms`));
       }, timeoutMs);
     });
 
     try {
-      await Promise.race([timedPromise, abortPromise]);
+      await Promise.race([guardedTimedPromise, abortPromise]);
     } finally {
       clearTimeout(timer!);
     }

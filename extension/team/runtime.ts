@@ -96,9 +96,10 @@ export async function createTeamRun(options: TeamCreateOptions): Promise<Runtime
 
   await ensureDirs(baseDir, teamRunId);
 
-  for (const member of options.spec.members) {
-    await mkdir(getInboxDir(baseDir, teamRunId, member.name), { recursive: true, mode: 0o700 });
-  }
+  // 并行创建 inbox 目录
+  await Promise.all(options.spec.members.map(member =>
+    mkdir(getInboxDir(baseDir, teamRunId, member.name), { recursive: true, mode: 0o700 })
+  ));
 
   const runtimeState: RuntimeState = {
     version: 1,

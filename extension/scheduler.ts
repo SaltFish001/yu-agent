@@ -619,7 +619,7 @@ async function runTeamMode(
     type: 'coding',
     model: 'v4-flash',
     id: `team-coder-${i}`,
-    task: `实现模块: ${mod.name}。遵循 plan.md 的方案。\n\n模块文件: ${mod.files.join(', ')}\n\n约束: 只实现本模块 ${mod.name} 的内容，不要改其他模块的代码。`,
+    task: `实现模块: ${mod.name}。遵循 plan.md 的方案。\n\n模块文件: ${(mod.files || []).join(', ')}\n\n约束: 只实现本模块 ${mod.name} 的内容，不要改其他模块的代码。`,
     files: mod.files.length > 0 ? mod.files : undefined,
   }));
 

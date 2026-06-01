@@ -20,7 +20,7 @@ import { MessageSchema, type Message } from './types.js';
 
 // ── Path helpers ───────────────────────────────────────
 
-export const YU_TEAMS_BASE = path.join(process.env.HOME || '~', '.yu');
+export const YU_TEAMS_BASE = path.join(process.env.HOME || '/tmp', '.yu');
 export const TEAM_RUNTIME_DIR = 'runtime';
 
 export function resolveBaseDir(): string {
@@ -168,19 +168,60 @@ export async function listUnread(
 
 // ── ackMessages ────────────────────────────────────────
 
+/** Lock is considered stale if its mtime is older than this threshold (ms). */
+const LOCK_STALE_MS = 10_000;
+
+/** Per-process UUID used for lock ownership verification. */
+let _processLockToken: string | undefined;
+
+function getProcessLockToken(): string {
+  if (!_processLockToken) {
+    _processLockToken = randomUUID();
+  }
+  return _processLockToken;
+}
+
 /**
  * Acquire an exclusive lock on an inbox directory using atomic mkdir.
+ * Writes an owner UUID token into the lock directory for stale detection.
+ * Stale locks are detected via mtime + owner token double verification.
  * Retries up to ~5 seconds (50 × 100ms).
  */
 async function acquireInboxLock(inboxDir: string): Promise<string> {
   const lockDir = path.join(inboxDir, '.ack-lock');
   const maxRetries = 50;
+  const myToken = getProcessLockToken();
+
   for (let i = 0; i < maxRetries; i++) {
     try {
       await mkdir(lockDir, { mode: 0o700 });
+      await writeFile(path.join(lockDir, 'token'), myToken, 'utf-8');
       return lockDir;
     } catch {
-      if (i === maxRetries - 1) {
+      // mkdir failed — check if we should clean a stale lock
+      try {
+        const lockStat = await stat(lockDir);
+        const age = Date.now() - lockStat.mtimeMs;
+
+        if (age > LOCK_STALE_MS) {
+          let ownerToken: string | undefined;
+          try {
+            ownerToken = (await readFile(path.join(lockDir, 'token'), 'utf-8')).trim();
+          } catch {
+            // No token file — old-style lock without owner tracking
+          }
+
+          // Double verification: only remove if token does not match our own
+          if (ownerToken !== myToken) {
+            await rm(lockDir, { force: true, recursive: true });
+            continue; // retry immediately
+          }
+        }
+      } catch {
+        // stat/read/rm failed — lock may have vanished; fall through to retry
+      }
+
+      if (i >= maxRetries - 1) {
         throw new Error('Failed to acquire inbox lock after ' + maxRetries + ' retries');
       }
       await new Promise((r) => setTimeout(r, 100));
