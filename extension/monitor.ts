@@ -18,7 +18,6 @@ import { getSessionTag, setSessionTag } from './session-context.js';
 import {
   getSummary, getAgents, getCache,
   upsertAgents, upsertSummary, upsertSession, upsertCache,
-  insertMessage, ensureSlug,
 } from './db.js';
 
 
@@ -347,63 +346,9 @@ export function setupMonitor(pi: ExtensionAPI): void {
   let _cacheReadTotal = 0;
   let _cacheWriteTotal = 0;
 
-  // ── Message persistence ───────────────────────────────
-  // Track saved message hashes to avoid duplicates across hooks
-  const _savedMessages = new Set<string>();
-
-  /**
-   * Extract text content from an AgentMessage-like object.
-   * Content can be a string or an array of content blocks.
-   */
-  function extractText(msg: { content?: unknown; role?: string }): string {
-    if (!msg.content) return '';
-    const content = msg.content;
-    if (typeof content === 'string') return content;
-    if (Array.isArray(content)) {
-      return content
-        .filter((b: any) => b?.type === 'text' && typeof b.text === 'string')
-        .map((b: any) => b.text)
-        .join('\n');
-    }
-    return '';
-  }
-
   pi.on('turn_end', (event: { message: { role: string; content?: unknown; usage?: { input: number; cacheRead: number; cacheWrite: number } } }) => {
     const tag = getSessionTag();
     const role = event.message.role;
-
-    // ── Save assistant messages to messages table ─────
-    if (role === 'assistant') {
-      const text = extractText(event.message);
-      if (text.trim()) {
-        const key = `assistant:${text.slice(0, 200)}:${Date.now()}`;
-        if (!_savedMessages.has(key)) {
-          _savedMessages.add(key);
-          try {
-            insertMessage(tag, 'assistant', text);
-            ensureSlug(tag); // ensure slug exists on first message
-          } catch (e) {
-            console.warn('[yu-agent] Failed to save assistant message:', e);
-          }
-        }
-      }
-    }
-
-    // ── Save user messages to messages table ─────
-    if (role === 'user') {
-      const text = extractText(event.message);
-      if (text.trim()) {
-        const key = `user:${text.slice(0, 200)}`;
-        if (!_savedMessages.has(key)) {
-          _savedMessages.add(key);
-          try {
-            insertMessage(tag, 'user', text);
-          } catch (e) {
-            console.warn('[yu-agent] Failed to save user message:', e);
-          }
-        }
-      }
-    }
 
     // ── Cache stats (existing logic) ─────
     if (role !== 'assistant' || !event.message.usage) return;

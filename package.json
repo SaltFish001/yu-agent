@@ -17,6 +17,11 @@
   ],
   "pi": {
     "extensions": [
+      "./extension/identity.ts",
+      "./extension/session-store.ts",
+      "./extension/resumer.ts",
+      "./extension/session-cmd.ts",
+      "./extension/monitor.ts",
       "./extension/index.ts"
     ]
   },
