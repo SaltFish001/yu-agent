@@ -108,6 +108,55 @@ function fmtDur(ms?: number): string {
 // ── Widget renderer ───────────────────────────────────
 
 /**
+ * Status bar text — always shown, even when idle.
+ */
+function buildStatusText(): string {
+  const summary = readJSON<SummaryData>('summary.json');
+  const agentsFile = readJSON<AgentsFile>('agents.json');
+  const agents = agentsFile?.agents;
+  const cacheFile = readJSON<CacheFile>('cache.json');
+
+  const parts: string[] = [];
+
+  let runningCount = 0;
+  let completedCount = 0;
+  let failedCount = 0;
+
+  if (summary) {
+    runningCount = summary.running ?? 0;
+    completedCount = summary.completed ?? 0;
+    failedCount = summary.failed ?? 0;
+  } else if (agents && agents.length > 0) {
+    runningCount = agents.filter((a) => a.status === 'running' || a.status === 'queued').length;
+    completedCount = agents.filter((a) => a.status === 'completed').length;
+    failedCount = agents.filter((a) => a.status === 'failed' || a.status === 'interrupted').length;
+  }
+
+  if (runningCount > 0) parts.push(`${runningCount} running`);
+  if (completedCount > 0) parts.push(`${completedCount} done`);
+  if (failedCount > 0) parts.push(`${failedCount} failed`);
+
+  let text: string;
+  if (parts.length > 0) {
+    text = `yu-agent: ${parts.join(' · ')}`;
+  } else {
+    text = 'yu-agent';
+  }
+
+  if (cacheFile && typeof cacheFile.hitRate === 'number') {
+    const pct = Math.round(cacheFile.hitRate * 100);
+    const total = (cacheFile.totalHits ?? 0) + (cacheFile.totalMisses ?? 0);
+    if ((cacheFile.turnCount ?? 0) > 0) {
+      text += ` · cache: ${pct}% (${cacheFile.totalHits}h/${total}t)`;
+    } else {
+      text += ` · cache: 0%`;
+    }
+  }
+
+  return text;
+}
+
+/**
  * Read status files and produce an array of widget lines.
  * Returns [] when no data is available (shows nothing).
  */
@@ -116,7 +165,7 @@ function renderWidgetContent(): string[] {
   const agentsFile = readJSON<AgentsFile>('agents.json');
   const agents = agentsFile?.agents;
 
-  // ── No data at all → show "idle" ──
+  // ── No data at all → show nothing ──
   if (!summary && (!agents || agents.length === 0)) {
     return [];
   }
@@ -141,38 +190,52 @@ function renderWidgetContent(): string[] {
     failedCount = agents.filter((a) => a.status === 'failed' || a.status === 'interrupted').length;
   }
 
+  // ── Widget only shows when there are active agents ──
+  if (runningCount === 0) {
+    return [];
+  }
+
   const parts: string[] = [];
   if (runningCount > 0) parts.push(`${runningCount} running`);
-  if (completedCount > 0) parts.push(`${completedCount} completed`);
+  if (completedCount > 0) parts.push(`${completedCount} done`);
   if (failedCount > 0) parts.push(`${failedCount} failed`);
 
   let statusLine: string;
   if (parts.length > 0) {
-    statusLine = `yu-agent: ${parts.join(' \u00B7 ')}`; // middle dot separator
+    statusLine = `yu-agent: ${parts.join(' \u00B7 ')}`;
   } else {
     statusLine = 'yu-agent: idle';
   }
 
   // Append cache info if available
-  if (cacheFile && typeof cacheFile.hitRate === 'number' && (cacheFile.turnCount ?? 0) > 0) {
+  if (cacheFile && typeof cacheFile.hitRate === 'number') {
     const pct = Math.round(cacheFile.hitRate * 100);
     const total = (cacheFile.totalHits ?? 0) + (cacheFile.totalMisses ?? 0);
-    statusLine += `  \u00B7  cache: ${pct}% (${cacheFile.totalHits} hits / ${total} total)`;
+    const turns = cacheFile.turnCount ?? 0;
+    if (turns > 0) {
+      statusLine += `  \u00B7  cache: ${pct}% (${cacheFile.totalHits} hits / ${total} total)`;
+    } else {
+      statusLine += `  \u00B7  cache: 0%`;
+    }
   }
 
   lines.push(statusLine);
 
-  // ── Sub-agent entries (compact, max 3 visible) ──
-  if (agents && agents.length > 0) {
-    for (const a of agents.slice(-3)) {
+  // ── Only show running/failed agents in the panel ──
+  const activeAgents = (agents || []).filter(
+    (a) => a.status === 'running' || a.status === 'queued' || a.status === 'failed' || a.status === 'interrupted'
+  );
+
+  if (activeAgents.length > 0) {
+    for (const a of activeAgents.slice(0, 5)) {
       const g = glyph(a.status);
       const dur = a.durationMs ? ` ${fmtDur(a.durationMs)}` : '';
       const goal = a.goal ? ` ${a.goal.slice(0, 40)}` : '';
       const err = a.error ? ` [${a.error.slice(0, 25)}]` : '';
       lines.push(`  ${g} ${a.type}${goal}${dur}${err}`);
     }
-    if (agents.length > 3) {
-      const remaining = agents.length - 3;
+    if (activeAgents.length > 5) {
+      const remaining = activeAgents.length - 5;
       lines.push(`  ... ${remaining} more`);
     }
   }
@@ -203,10 +266,14 @@ export function setupMonitor(pi: ExtensionAPI): void {
 
     // Initial render
     try {
-      const initial = renderWidgetContent();
-      if (initial.length > 0) {
-        ctx.ui.setWidget(WIDGET_KEY, initial);
+      const content = renderWidgetContent();
+      const statusText = buildStatusText();
+      if (content.length > 0) {
+        ctx.ui.setWidget(WIDGET_KEY, content);
+      } else {
+        ctx.ui.setWidget(WIDGET_KEY, undefined);
       }
+      ctx.ui.setStatus('yu-agent', statusText);
     } catch (err) {
       console.error('[yu-agent monitor] initial render error:', err);
     }
@@ -215,11 +282,13 @@ export function setupMonitor(pi: ExtensionAPI): void {
     _updateInterval = setInterval(() => {
       try {
         const content = renderWidgetContent();
+        const statusText = buildStatusText();
         if (content.length > 0) {
           ctx.ui.setWidget(WIDGET_KEY, content);
         } else {
           ctx.ui.setWidget(WIDGET_KEY, undefined);
         }
+        ctx.ui.setStatus('yu-agent', statusText);
       } catch (err) {
         console.error('[yu-agent monitor] poll error:', err);
       }

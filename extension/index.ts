@@ -43,6 +43,8 @@ function buildStatusSummary(): string {
       const c = JSON.parse(readFileSync(cachePath, 'utf-8'));
       if (c.turnCount > 0 && typeof c.hitRate === 'number') {
         parts.push(`cache ${Math.round(c.hitRate * 100)}%`);
+      } else {
+        parts.push(`cache 0%`);
       }
     }
 

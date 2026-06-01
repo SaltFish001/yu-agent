@@ -173,9 +173,8 @@ export interface CacheStatsData {
   hitRate: number;
 }
 
-/** Write cache stats to cache.json. Only writes when there is actual data. */
+/** Write cache stats to cache.json. Always writes to keep monitor UI updated. */
 export function writeCacheStats(stats: CacheStatsData): void {
-  if (stats.turnCount === 0 && stats.totalHits === 0 && stats.totalMisses === 0) return;
   writeFile('cache.json', {
     updatedAt: stats.updatedAt,
     totalHits: stats.totalHits,

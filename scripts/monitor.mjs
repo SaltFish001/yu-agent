@@ -102,13 +102,15 @@ function render() {
   }
 
   // ── Cache stats ──────────────────────────────────────
-  if (cache && cache.turnCount > 0) {
-    const hitRate = (cache.hitRate * 100).toFixed(1);
+  if (cache) {
+    const hitRate = cache.turnCount > 0
+      ? `${(cache.hitRate * 100).toFixed(1)}%`
+      : '0%';
     lines.push(`│`);
     lines.push(`│ ${BOLD}Session Cache${RESET}`);
-    lines.push(`│  ${GREEN}✓${RESET} Hits:   ${cache.totalHits}  ${DIM}(${hitRate}%)${RESET}`);
-    lines.push(`│  ${RED}✗${RESET} Misses: ${cache.totalMisses}`);
-    lines.push(`│  ${DIM}  Turns:  ${cache.turnCount}  ·  Cost: ${cache.totalCost}${RESET}`);
+    lines.push(`│  ${GREEN}✓${RESET} Hits:   ${cache.totalHits ?? 0}  ${DIM}(${hitRate})${RESET}`);
+    lines.push(`│  ${RED}✗${RESET} Misses: ${cache.totalMisses ?? 0}`);
+    lines.push(`│  ${DIM}  Turns:  ${cache.turnCount ?? 0}  ·  Cost: ${cache.totalCost ?? 0}${RESET}`);
   }
 
   // ── Sub-agents ───────────────────────────────────────
