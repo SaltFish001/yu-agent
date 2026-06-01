@@ -6,7 +6,6 @@
  * shell command runner, and test framework auto-detection.
  */
 
-import { spawnAgent, type SpawnConfig } from './spawn.js';
 import {
   spawnAgentWithTimeout,
   runParallelGroup,
@@ -14,7 +13,7 @@ import {
 } from './executor.js';
 import { parseAgentOutput } from './template.js';
 import type { LspOutput } from './template.js';
-import { writeTeamStatus, type AgentStatus } from './status.js';
+import { writeTeamStatus } from './status.js';
 import { trackAgent } from './tracker.js';
 import { readFileSync, existsSync } from 'fs';
 import { spawnSync } from 'child_process';

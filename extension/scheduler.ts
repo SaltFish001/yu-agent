@@ -9,8 +9,8 @@
  *   4. If programming → spawn sub-agents in parallel groups, handle results
  *   5. LSP verification → test run → decisions → merge → return
  *
- * Status: writes runtime telemetry to ~/yu-agent/status/ for
- *         the standalone yu-agent monitor.
+ * Timeout: sub-agents use AGENT_TIMEOUT_MS (120s, from executor.ts).
+ *          The scheduler agent itself also uses AGENT_TIMEOUT_MS (classifier.ts).
  */
 
 import type { SpawnResult } from './spawn.js';
@@ -22,11 +22,11 @@ import {
 } from './executor.js';
 
 import type { SchedulerContext } from './types.js';
-import { parseAgentOutput, parseSchedulerOutput } from './template.js';
+import { parseAgentOutput } from './template.js';
 import type { CodingOutput } from './template.js';
 
-import { resetTracker, trackAgent, getAgentStatusList, flushFinalStatus, loadDecisions, saveDecision } from './tracker.js';
-import { verifyWithLsp, findProjectRoot, runCommand, runTests } from './verifier.js';
+import { resetTracker, trackAgent, flushFinalStatus, loadDecisions, saveDecision } from './tracker.js';
+import { verifyWithLsp, runTests } from './verifier.js';
 import { runTeamMode } from './team-orchestrator.js';
 
 // ── Main handler ───────────────────────────────────────
@@ -115,7 +115,7 @@ export async function handler(
     if (modifiedFiles.length > 0 && lspOk) {
       await runTests(modifiedFiles);
     } else if (modifiedFiles.length > 0 && !lspOk) {
-      console.warn('[yu-agent] Skipping tests due to unresolved LSP errors');
+      console.log('[yu-agent] Skipping tests due to unresolved LSP errors');
     }
 
     // Step 7: Save decision

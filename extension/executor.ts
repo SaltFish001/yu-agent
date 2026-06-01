@@ -7,7 +7,6 @@
 
 import { spawnAgent, type SpawnConfig } from './spawn.js';
 import type { SpawnResult } from './spawn.js';
-import type { AgentStatus } from './status.js';
 import { writeAgentStatus } from './status.js';
 import { trackAgent } from './tracker.js';
 
@@ -110,7 +109,7 @@ export async function runParallelGroup(
     if (result.status === 'fulfilled') {
       resultMap.set(result.value[0], result.value[1]);
     } else {
-      console.warn('[yu-agent] Agent failed:', result.reason);
+      console.log('[yu-agent] Agent failed:', result.reason);
     }
   }
 

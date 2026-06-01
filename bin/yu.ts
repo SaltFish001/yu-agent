@@ -21,20 +21,20 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { homedir } from 'node:os';
 
-/** Print cache hit-rate summary from cache.json if available. */
-function printCacheStats(): void {
-  const cachePath = resolve(homedir(), 'yu-agent', 'status', 'cache.json');
-  if (!existsSync(cachePath)) return;
+/** Print cache hit-rate summary from SQLite sessions.db if available. */
+async function printCacheStats(): Promise<void> {
   try {
-    const data: Record<string, unknown> = JSON.parse(readFileSync(cachePath, 'utf-8'));
-    if (data && typeof data.hitRate === 'number' && (data as { turnCount?: number }).turnCount! > 0) {
-      const pct = Math.round((data.hitRate as number) * 100);
-      const hits = (data.totalHits as number) ?? 0;
-      const total = hits + ((data.totalMisses as number) ?? 0);
-      console.log(`\nCache: ${pct}% hit rate (${hits} hits / ${total} total)`);
-    }
+    const { getDbPath, getCache } = await import('../extension/db.js');
+    const { getSessionTag } = await import('../extension/session-context.js');
+    const tag = getSessionTag();
+    if (!tag || tag === 'shared') return;
+    const cache = getCache(tag);
+    if (!cache || cache.turnCount === 0) return;
+    const pct = Math.round(cache.hitRate * 100);
+    const total = cache.totalHits + cache.totalMisses;
+    console.log(`\nCache: ${pct}% hit rate (${cache.totalHits} hits / ${total} total, ${cache.turnCount} turns)`);
   } catch {
-    // ignore — no data yet
+    // ignore — no data yet or SQLite unavailable
   }
 }
 
@@ -92,6 +92,11 @@ async function mainCli(): Promise<void> {
     process.exit(0);
   }
 
+  // Use yu-specific config directory (separate from pi)
+  process.env.PI_CODING_AGENT_DIR = resolve(homedir(), '.yu', 'agent');
+  // Suppress Pi's version check — yu-agent manages its own updates
+  process.env.PI_SKIP_VERSION_CHECK = '1';
+
   // `yu team <subcommand>` — handled directly, no Pi session needed
   if (args[0] === 'team') {
     const subcommand = args[1] || 'help';
@@ -114,8 +119,18 @@ async function mainCli(): Promise<void> {
     if (result !== null) {
       console.log(result);
     }
-    printCacheStats();
+    await printCacheStats();
     return;
+  }
+
+  // `yu session <subcommand>` — manage session status files
+  if (args[0] === 'session') {
+    const subcommand = args[1] || 'help';
+    const sessionArgs = args.slice(2);
+    const { sessionCommand } = await import('../extension/session-cli.js');
+    const result = await sessionCommand(subcommand, sessionArgs);
+    console.log(result);
+    process.exit(0);
   }
 
   // `yu monitor` — live dashboard
@@ -141,7 +156,7 @@ async function mainCli(): Promise<void> {
     await main(piArgs, {
       extensionFactories: [subagents, yuAgent],
     });
-    printCacheStats();
+    await printCacheStats();
     return;
   }
 
@@ -149,7 +164,7 @@ async function mainCli(): Promise<void> {
   await main(args, {
     extensionFactories: [subagents, yuAgent],
   });
-  printCacheStats();
+  await printCacheStats();
 }
 
 mainCli().catch((err) => {

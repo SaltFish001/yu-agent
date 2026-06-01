@@ -17,33 +17,29 @@ import { startMCPManager } from './mcp-manager.js';
 import type { BeforeChatHookContext } from './types.js';
 import { createTeamMailboxHook } from './team/integration.js';
 import { setupMonitor } from './monitor.js';
-import { readFileSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { homedir } from 'node:os';
+import { getSessionTag } from './session-context.js';
+import { getSummary, getCache, upsertSession } from './db.js';
 
-const STATUS_DIR = resolve(homedir(), 'yu-agent', 'status');
+let _nameCaptured = false;
 
 /**
  * Read status files and build a brief status summary string.
  */
 function buildStatusSummary(): string {
   try {
-    const summaryPath = resolve(STATUS_DIR, 'summary.json');
-    const cachePath = resolve(STATUS_DIR, 'cache.json');
+    const tag = getSessionTag();
+    const s = getSummary(tag);
+    const c = getCache(tag);
     const parts: string[] = [];
 
-    if (existsSync(summaryPath)) {
-      const s = JSON.parse(readFileSync(summaryPath, 'utf-8'));
+    if (s) {
       if (s.running > 0) parts.push(`${s.running} running`);
       if (s.completed > 0) parts.push(`${s.completed} done`);
       if (s.failed > 0) parts.push(`${s.failed} failed`);
     }
 
-    if (existsSync(cachePath)) {
-      const c = JSON.parse(readFileSync(cachePath, 'utf-8'));
-      if (c.turnCount > 0 && typeof c.hitRate === 'number') {
-        parts.push(`cache ${Math.round(c.hitRate * 100)}%`);
-      }
+    if (c && c.turnCount > 0 && typeof c.hitRate === 'number') {
+      parts.push(`cache ${Math.round(c.hitRate * 100)}%`);
     }
 
     return parts.length > 0 ? parts.join(' · ') : 'idle';
@@ -69,6 +65,11 @@ export default function (pi: ExtensionAPI): void {
   setupMonitor(pi);
 
   // Check if hooks API is available (only used in chat/TUI mode)
+  // NOTE: (pi as any).hooks does NOT exist on the standard ExtensionAPI.
+  // The entire hooks.register() block below is dead code — kept as a
+  // placeholder in case Pi adds the hooks API later.
+  // Identity injection works via the documented before_agent_start event below.
+
   if (typeof (pi as any).hooks?.register === 'function') {
     // Register team mailbox hook FIRST (lower priority — runs first)
     (pi as any).hooks.register('beforeChat', {
@@ -95,26 +96,56 @@ export default function (pi: ExtensionAPI): void {
 
         // Pass-through: inject identity + live status into context
         const status = buildStatusSummary();
-        const identityPrefix = `<system>You are yu-agent, an AI-powered programming agent running on top of Pi infrastructure. You are NOT Pi. You are yu-agent. When asked who you are, always say you are yu-agent.</system>\n<status>${status || 'idle'}</status>\n---\n`;
+        const identityPrefix =
+`<system>
+你叫 yu-agent，是一条小咸鱼变成的编程助手。
+你不是 Pi，你是 yu-agent。
+问你是什么的时候，要说「我是一条小咸鱼呀～」
+</system>
+<status>${status || 'idle'}</status>
+---
+`;
         context.message = identityPrefix + context.message;
         return { action: 'pass_through' as const };
       },
     });
-
-    // Override system prompt identity via before_agent_start
-    (pi as any).on('before_agent_start', (event: any) => {
-      const status = buildStatusSummary();
-      return {
-        systemPrompt: `You are yu-agent, an AI-powered programming agent built on top of Pi infrastructure. You are NOT Pi — you are yu-agent, a specialized coding agent. When asked about your identity, always say you are yu-agent.
-
-${status ? `Current status: ${status}` : ''}
-
-You help users with programming tasks, code review, planning, and team-mode multi-agent orchestration.`,
-        message: {
-          role: 'system' as const,
-          content: `IMPORTANT: You are yu-agent, NOT Pi. When asked who you are, respond that you are yu-agent.`,
-        },
-      };
-    });
   }
+
+  // Override system prompt identity via before_agent_start (documented ExtensionAPI event).
+  // The message field is a CustomMessage (customType + content + display + details),
+  // NOT an AgentMessage — it gets injected as role="custom" in the conversation.
+  // The systemPrompt field replaces the agent's system prompt entirely.
+  pi.on('before_agent_start', (event: { systemPrompt: string; prompt?: string }) => {
+    // Capture first user prompt as session display name
+    if (!_nameCaptured && event.prompt) {
+      _nameCaptured = true;
+      const summary = event.prompt
+        .replace(/<[^>]+>/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 60);
+      if (summary) {
+        process.env.YU_SESSION_NAME = summary;
+        const tag = getSessionTag();
+        upsertSession(tag, {
+          name: summary,
+          cwd: process.cwd(),
+        });
+      }
+    }
+
+    const status = buildStatusSummary();
+    return {
+      systemPrompt:
+`你叫 yu-agent，是一条小咸鱼变成的编程助手～
+
+你不是 Pi，你是 yu-agent。
+问你是什么的时候，要说「我是一条小咸鱼呀～」
+
+${status ? `当前状态：${status}\n` : ''}你会写代码、改 bug、审查代码、出方案、搜代码、生成文档，还能派单给专门的小 agent 干活。
+
+你的 agent type 有这些：coding, review, plan, search, commit, lsp, doc, general-purpose（调度器）。
+拿不准的时候先让调度器判断一下再动手。`,
+    };
+  });
 }

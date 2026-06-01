@@ -1,26 +1,24 @@
 /**
  * yu-agent — Status reporter.
  *
- * Writes runtime status to JSON files in ~/yu-agent/status/
- * for the standalone yu-agent monitor.
+ * Writes runtime status to SQLite database (sessions.db) in the
+ * per-project .yu-agent/status/ directory.
  *
- * File-based IPC: zero coupling, any process can read the JSON files.
+ * SQLite-based IPC: any process on the same machine can query the DB.
  *
- * Status files (all optional — missing = no data yet):
- *   agents.json   — spawned sub-agent statuses
- *   mcp.json      — MCP server connections
- *   lsp.json      — LSP server statuses
- *   team.json     — team mode state
- *   summary.json  — aggregated quick-view summary
+ * Tables:
+ *   agents   — spawned sub-agent statuses
+ *   mcp      — MCP server connections
+ *   lsp      — LSP server statuses
+ *   team     — team mode state
+ *   summary  — aggregated quick-view summary
  */
 
-import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { homedir } from 'node:os';
-
-// ── Constants ──────────────────────────────────────────
-
-const STATUS_DIR = resolve(homedir(), 'yu-agent', 'status');
+import { getSessionTag } from './session-context.js';
+import {
+  upsertAgents, upsertMCP, upsertLSP, upsertTeam,
+  upsertSummary, upsertCache,
+} from './db.js';
 
 // ── Types ──────────────────────────────────────────────
 
@@ -81,52 +79,22 @@ export interface YuStatusSnapshot {
   };
 }
 
-// ── Helpers ────────────────────────────────────────────
-
-function ensureDir(): void {
-  if (!existsSync(STATUS_DIR)) {
-    try {
-      mkdirSync(STATUS_DIR, { recursive: true });
-    } catch (err) {
-      console.warn(`[yu-agent/status] Failed to create ${STATUS_DIR}:`, err);
-    }
-  }
-}
-
-function writeFile(name: string, data: unknown): void {
-  ensureDir();
-  try {
-    writeFileSync(
-      resolve(STATUS_DIR, name),
-      JSON.stringify(data, null, 2),
-      'utf-8',
-    );
-  } catch (err) {
-    console.warn(`[yu-agent/status] Failed to write ${name}:`, err);
-  }
-}
-
 // ── Public API ─────────────────────────────────────────
 
 /** Write the full status snapshot. Called after any state change. */
 export function writeSnapshot(snapshot: YuStatusSnapshot): void {
-  writeFile('agents.json', {
-    updatedAt: snapshot.updatedAt,
-    agents: snapshot.agents,
-  });
-  writeFile('mcp.json', {
-    updatedAt: snapshot.updatedAt,
-    servers: snapshot.mcp,
-  });
-  writeFile('lsp.json', {
-    updatedAt: snapshot.updatedAt,
-    servers: snapshot.lsp,
-  });
-  writeFile('team.json', snapshot.team ?? { active: false });
-  writeFile('summary.json', {
-    updatedAt: snapshot.updatedAt,
-    ...snapshot.summary,
-  });
+  const tag = getSessionTag();
+  upsertAgents(tag, JSON.stringify({ updatedAt: snapshot.updatedAt, agents: snapshot.agents }), snapshot.updatedAt);
+  upsertMCP(tag, JSON.stringify({ updatedAt: snapshot.updatedAt, servers: snapshot.mcp }), snapshot.updatedAt);
+  upsertLSP(tag, JSON.stringify({ updatedAt: snapshot.updatedAt, servers: snapshot.lsp }), snapshot.updatedAt);
+  upsertTeam(tag, JSON.stringify({ ...snapshot.team ?? { active: false }, updatedAt: snapshot.updatedAt }), snapshot.updatedAt);
+  upsertSummary(tag, {
+    running: snapshot.summary.running,
+    completed: snapshot.summary.completed,
+    failed: snapshot.summary.failed,
+    mcpConnected: snapshot.summary.mcpConnected,
+    lspReady: snapshot.summary.lspReady,
+  }, snapshot.updatedAt);
 }
 
 /** Quick shorthand: write agents only (most common update path). */
@@ -134,7 +102,8 @@ export function writeAgentStatus(
   agents: AgentStatus[],
   updatedAt: number = Date.now(),
 ): void {
-  writeFile('agents.json', { updatedAt, agents });
+  const tag = getSessionTag();
+  upsertAgents(tag, JSON.stringify({ updatedAt, agents }), updatedAt);
 }
 
 /** Write MCP status independently (updated by Pi MCP watcher). */
@@ -142,7 +111,8 @@ export function writeMCPStatus(
   servers: MCPServerStatus[],
   updatedAt: number = Date.now(),
 ): void {
-  writeFile('mcp.json', { updatedAt, servers });
+  const tag = getSessionTag();
+  upsertMCP(tag, JSON.stringify({ updatedAt, servers }), updatedAt);
 }
 
 /** Write LSP status independently. */
@@ -150,7 +120,8 @@ export function writeLSPStatus(
   servers: LSPServerStatus[],
   updatedAt: number = Date.now(),
 ): void {
-  writeFile('lsp.json', { updatedAt, servers });
+  const tag = getSessionTag();
+  upsertLSP(tag, JSON.stringify({ updatedAt, servers }), updatedAt);
 }
 
 /** Write team mode status independently. */
@@ -158,7 +129,8 @@ export function writeTeamStatus(
   team: TeamStatus,
   updatedAt: number = Date.now(),
 ): void {
-  writeFile('team.json', { ...team, updatedAt });
+  const tag = getSessionTag();
+  upsertTeam(tag, JSON.stringify({ ...team, updatedAt }), updatedAt);
 }
 
 /** Build a summary from agent list. */
@@ -173,17 +145,16 @@ export interface CacheStatsData {
   hitRate: number;
 }
 
-/** Write cache stats to cache.json. Only writes when there is actual data. */
+/** Write cache stats to cache table. Only writes when there is actual data. */
 export function writeCacheStats(stats: CacheStatsData): void {
   if (stats.turnCount === 0 && stats.totalHits === 0 && stats.totalMisses === 0) return;
-  writeFile('cache.json', {
-    updatedAt: stats.updatedAt,
+  upsertCache(getSessionTag(), {
     totalHits: stats.totalHits,
     totalMisses: stats.totalMisses,
     totalCost: stats.totalCost,
     turnCount: stats.turnCount,
     hitRate: stats.hitRate,
-  });
+  }, stats.updatedAt);
 }
 
 export function buildSummary(agents: AgentStatus[]): YuStatusSnapshot['summary'] {
