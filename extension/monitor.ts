@@ -263,10 +263,12 @@ export function setupMonitor(pi: ExtensionAPI): void {
     upsertAgents(tag, JSON.stringify({ updatedAt: now, agents: [] }), now);
     upsertSummary(tag, { running: 0, completed: 0, failed: 0, mcpConnected: 0, lspReady: 0 }, now);
     if (_initialTagSet) {
+      const piSessionPath = ctx.sessionManager?.getSessionFile();
       // Write initial session metadata (name will be updated on first user message)
       upsertSession(tag, {
         name: tag.slice(0, 20),
         cwd: process.cwd(),
+        metadata: piSessionPath ? JSON.stringify({ piSessionPath }) : undefined,
       });
     }
 

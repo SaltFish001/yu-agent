@@ -10,10 +10,12 @@
 import { getStatusDir } from './session-context.js';
 import {
   listSessions, getSessionMeta, getAgents, getSummary, getCache,
-  deleteOldSessions, getDbPath, getStatusDirPath, sessionCount,
+  deleteOldSessions, archiveSession, unarchiveSession,
+  getDbPath, getStatusDirPath, sessionCount,
 } from './db.js';
-import { existsSync, statSync, copyFileSync } from 'node:fs';
-import { resolve, basename } from 'node:path';
+import { existsSync, statSync, copyFileSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { homedir } from 'node:os';
 
 function fmtTime(ts: number): string {
   const d = new Date(ts);
@@ -48,25 +50,23 @@ export async function sessionCommand(subcommand: string, args: string[]): Promis
       return cmdBackup(args);
     case 'restore':
       return cmdRestore(args);
+    case 'archive':
+      return cmdArchive(args);
+    case 'unarchive':
+      return cmdUnarchive(args);
+    case 'resume':
+      return cmdResume(args);
     default:
       return `Usage:
-  yu session list              列出当前目录下的所有 session
-  yu session show <tag>        查看指定 session 的状态
-  yu session info              显示数据库路径、会话数等信息
-  yu session backup [path]     备份 sessions.db 到指定路径（默认带时间戳）
-  yu session restore <path>    从备份文件恢复 sessions.db
-  yu session clean [--days N]  清理 N 天前的 session（默认 7 天）`;
-  }
-}
-
-function getAgentCount(tag: string): number {
-  try {
-    const data = getAgents(tag);
-    if (!data) return 0;
-    const parsed = JSON.parse(data);
-    return parsed.agents?.length ?? 0;
-  } catch {
-    return 0;
+  yu session list                   列出当前目录下的所有 session
+  yu session show <tag>             查看指定 session 的状态
+  yu session resume <tag>           从指定 session 恢复上下文（读取 Pi session 文件历史消息）
+  yu session archive <tag>          归档 session（软删除）
+  yu session unarchive <tag>        取消归档 session
+  yu session info                   显示数据库路径、会话数等信息
+  yu session backup [path]          备份 sessions.db 到指定路径（默认带时间戳）
+  yu session restore <path>         从备份文件恢复 sessions.db
+  yu session clean [--days N]       清理 N 天前的 session（默认 7 天）`;
   }
 }
 
@@ -77,15 +77,15 @@ function cmdList(): string {
   const lines: string[] = [];
 
   // Table header
-  lines.push('Session                                 Agents  Created         Updated         Age  ');
-  lines.push('────────────────────────────────────── ─────── ─────────────── ─────────────── ─────');
+  lines.push('Session                                 Agent           Created         Updated         Age  ');
+  lines.push('────────────────────────────────────── ─────────────── ─────────────── ─────────────── ─────');
 
   for (const s of sessions) {
     const name = trunc(s.name || s.tag.slice(0, 14), 38);
-    const agentCount = getAgentCount(s.tag);
+    const agent = trunc(s.agent || '-', 14);
 
     lines.push(
-      `${name.padEnd(38)} ${String(agentCount).padStart(5)}   ${fmtTime(s.createdAt).padEnd(15)} ${fmtTime(s.updatedAt).padEnd(15)} ${fmtAgo(s.updatedAt).padEnd(5)}`
+      `${name.padEnd(38)} ${agent.padEnd(14)}   ${fmtTime(s.createdAt).padEnd(15)} ${fmtTime(s.updatedAt).padEnd(15)} ${fmtAgo(s.updatedAt).padEnd(5)}`
     );
   }
 
@@ -200,6 +200,109 @@ function fmtSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function cmdArchive(args: string[]): string {
+  if (args.length === 0) return 'Usage: yu session archive <tag>';
+  const tag = args[0];
+  const meta = getSessionMeta(tag);
+  if (!meta) return `Session "${tag}" not found.`;
+  if (meta.archivedAt > 0) return `Session "${tag}" is already archived.`;
+  archiveSession(tag);
+  return `Session "${tag}" archived.`;
+}
+
+function cmdUnarchive(args: string[]): string {
+  if (args.length === 0) return 'Usage: yu session unarchive <tag>';
+  const tag = args[0];
+  const meta = getSessionMeta(tag);
+  if (!meta) return `Session "${tag}" not found.`;
+  if (meta.archivedAt === 0) return `Session "${tag}" is not archived.`;
+  unarchiveSession(tag);
+  return `Session "${tag}" unarchived.`;
+}
+
+/**
+ * Resume a session: read Pi session file history and prepare resume context.
+ * Sets YU_RESUME_TAG env var and writes resume_context.json for before_agent_start to pick up.
+ * The caller (bin/yu.ts) should continue to launch Pi after this succeeds.
+ */
+function cmdResume(args: string[]): string {
+  if (args.length === 0) return 'Usage: yu session resume <tag>';
+  const tag = args[0];
+
+  // 1. Look up session metadata
+  const meta = getSessionMeta(tag);
+  if (!meta) return `Session "${tag}" not found.`;
+
+  // 2. Extract piSessionPath from metadata
+  let piSessionPath: string | undefined;
+  try {
+    const md = JSON.parse(meta.metadata || '{}');
+    piSessionPath = md.piSessionPath;
+  } catch {
+    return `Session "${tag}" has unparseable metadata.`;
+  }
+  if (!piSessionPath) {
+    return `Session "${tag}" has no Pi session file path stored in metadata.`;
+  }
+
+  // 3. Read and parse the Pi session JSONL file
+  if (!existsSync(piSessionPath)) {
+    return `Pi session file not found: ${piSessionPath}`;
+  }
+
+  const raw = readFileSync(piSessionPath, 'utf-8');
+  const messages: { role: string; content: string }[] = [];
+
+  // JSONL: each line is a JSON event, filter type === 'message'
+  for (const line of raw.trim().split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const event = JSON.parse(line);
+      if (event.type === 'message' && event.message) {
+        const role = event.message.role;
+        // Extract text content from content array
+        const contentParts: string[] = [];
+        if (Array.isArray(event.message.content)) {
+          for (const block of event.message.content) {
+            if (block.type === 'text' && block.text) {
+              contentParts.push(block.text);
+            }
+          }
+        } else if (typeof event.message.content === 'string') {
+          contentParts.push(event.message.content);
+        }
+        const text = contentParts.join('\n');
+        if (text.trim()) {
+          messages.push({ role, content: text });
+        }
+      }
+    } catch {
+      // skip malformed lines
+    }
+  }
+
+  if (messages.length === 0) {
+    return 'No message history found in Pi session file.';
+  }
+
+  // 4. Take last N messages (recent history, max 30)
+  const MAX_RESUME_MSGS = 30;
+  const recent = messages.slice(-MAX_RESUME_MSGS);
+
+  // 5. Write resume context to ~/.yu/resume_context.json
+  const resumeDir = resolve(homedir(), '.yu');
+  if (!existsSync(resumeDir)) {
+    mkdirSync(resumeDir, { recursive: true });
+  }
+  const resumeFile = resolve(resumeDir, 'resume_context.json');
+  writeFileSync(resumeFile, JSON.stringify({ tag, messages: recent }, null, 2));
+
+  // 6. Set env var so before_agent_start can detect
+  process.env.YU_RESUME_TAG = tag;
+
+  return `✅ Resume context ready. Restoring ${recent.length} messages from session "${tag}". Starting new session...`;
+}
+
 function cmdShow(args: string[]): string {
   if (args.length === 0) return 'Usage: yu session show <tag>';
 
@@ -211,10 +314,43 @@ function cmdShow(args: string[]): string {
     `Session: ${meta.name || tag}`,
     `  tag: ${tag}`,
     `  cwd: ${meta.cwd}`,
-    `  created: ${new Date(meta.createdAt).toLocaleString()}`,
-    `  updated: ${new Date(meta.updatedAt).toLocaleString()}`,
-    '',
+    `  agent: ${meta.agent || '(not set)'}`,
   ];
+
+  // Show model (prettify JSON if present)
+  if (meta.model && meta.model !== '{}') {
+    try {
+      const modelObj = JSON.parse(meta.model);
+      lines.push(`  model: ${JSON.stringify(modelObj)}`);
+    } catch {
+      lines.push(`  model: ${meta.model}`);
+    }
+  }
+
+  // Show parent if set
+  if (meta.parentId) {
+    lines.push(`  parent: ${meta.parentId}`);
+  }
+
+  // Show archival status
+  if (meta.archivedAt > 0) {
+    lines.push(`  archived: ${new Date(meta.archivedAt).toLocaleString()}`);
+  }
+
+  // Show metadata
+  if (meta.metadata && meta.metadata !== '{}') {
+    try {
+      const md = JSON.parse(meta.metadata);
+      const mdStr = JSON.stringify(md).slice(0, 200);
+      lines.push(`  metadata: ${mdStr}`);
+    } catch {
+      // skip unparseable metadata
+    }
+  }
+
+  lines.push(`  created: ${new Date(meta.createdAt).toLocaleString()}`);
+  lines.push(`  updated: ${new Date(meta.updatedAt).toLocaleString()}`);
+  lines.push('');
 
   // Show agents
   const agentsJson = getAgents(tag);

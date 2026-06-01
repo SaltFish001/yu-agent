@@ -71,6 +71,8 @@ Scheduler & Monitor:
 Session Management:
   yu session list              List all sessions
   yu session show <tag>        Show session details
+  yu session archive <tag>     Archive a session (soft-delete)
+  yu session unarchive <tag>   Unarchive a session
   yu session info              Show session database info
   yu session backup [path]     Backup sessions database
   yu session restore <path>    Restore sessions from backup
@@ -144,6 +146,8 @@ function showHelpForCommand(command: string): string {
 Usage:
   yu session list               List all sessions
   yu session show <tag>         Show session details
+  yu session archive <tag>      Archive a session (soft-delete)
+  yu session unarchive <tag>    Unarchive a session
   yu session info               Show database path, session count, etc.
   yu session backup [path]      Backup sessions.db (default: ./sessions-backup-<timestamp>.db)
   yu session restore <path>     Restore sessions.db from backup file
@@ -275,7 +279,20 @@ async function mainCli(): Promise<void> {
     const { sessionCommand } = await import('../extension/session-cli.js');
     const result = await sessionCommand(subcommand, sessionArgs);
     console.log(result);
-    process.exit(0);
+
+    // For `yu session resume <tag>`, continue to Pi session instead of exiting
+    if (subcommand === 'resume') {
+      // Check if resume was successful by looking for the env var
+      if (process.env.YU_RESUME_TAG) {
+        // Replace args to start interactive session
+        args.length = 0;
+        args.push('--chat');
+      } else {
+        process.exit(0);
+      }
+    } else {
+      process.exit(0);
+    }
   }
 
   // `yu monitor` — live dashboard
@@ -295,6 +312,10 @@ async function mainCli(): Promise<void> {
     } else {
       piArgs.push(`/${command}`);
     }
+
+    // Set session agent info for the CLI command
+    const { setSessionAgent } = await import('../extension/session-context.js');
+    setSessionAgent(command);
 
     await main(piArgs, {
       extensionFactories: [subagents, yuAgent],

@@ -31,6 +31,36 @@ export function setSessionTag(id: string): void {
   process.env.YU_PROJECT_DIR = process.cwd();
 }
 
+/** 获取当前 session 的 agent 类型 */
+export function getSessionAgent(): string {
+  return process.env.YU_SESSION_AGENT || '';
+}
+
+/** 设置当前 session 的 agent 类型 */
+export function setSessionAgent(agent: string): void {
+  process.env.YU_SESSION_AGENT = agent;
+}
+
+/** 获取当前 session 的 model 信息 */
+export function getSessionModel(): string {
+  return process.env.YU_SESSION_MODEL || '{}';
+}
+
+/** 设置当前 session 的 model 信息（JSON string） */
+export function setSessionModel(model: string): void {
+  process.env.YU_SESSION_MODEL = model;
+}
+
+/** 获取当前 session 的 parent tag */
+export function getSessionParent(): string {
+  return process.env.YU_SESSION_PARENT || '';
+}
+
+/** 设置当前 session 的 parent tag */
+export function setSessionParent(tag: string): void {
+  process.env.YU_SESSION_PARENT = tag;
+}
+
 /** 获取当前 project 的 status 目录（按 cwd 隔离） */
 export function getStatusDir(): string {
   // 优先级1：当前目录下已有 .yu-agent/status/ → 项目本地 session

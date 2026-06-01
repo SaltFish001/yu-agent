@@ -7,7 +7,8 @@
  * DB path: {getStatusDir()}/sessions.db
  *
  * Schema:
- *   sessions — metadata (name, cwd, created_at, updated_at)
+ *   sessions — metadata (name, cwd, agent, model, parent_id,
+ *              archived_at, metadata JSON, created_at, updated_at)
  *   agents   — sub-agent state (JSON array)
  *   mcp      — MCP server connections (JSON array)
  *   lsp      — LSP server status (JSON array)
@@ -27,6 +28,11 @@ export interface SessionMeta {
   tag: string;
   name: string;
   cwd: string;
+  agent: string;
+  model: string;
+  parentId: string;
+  archivedAt: number;
+  metadata: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -76,16 +82,33 @@ function getDb(): DatabaseSync {
   db.exec('PRAGMA journal_mode=WAL');
   db.exec('PRAGMA synchronous=NORMAL');
   initSchema(db);
+  runMigrations(db);
   _dbs.set(path, db);
   return db;
 }
 
+// ── Schema versions — used for migration ─────────────────
+const SCHEMA_VERSION = 2;
+
 function initSchema(db: DatabaseSync): void {
+  // Create schema version tracking
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_version (
+      version INTEGER PRIMARY KEY,
+      applied_at INTEGER NOT NULL
+    );
+  `);
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
       tag TEXT PRIMARY KEY,
       name TEXT DEFAULT '',
       cwd TEXT DEFAULT '',
+      agent TEXT DEFAULT '',
+      model TEXT DEFAULT '{}',
+      parent_id TEXT DEFAULT '',
+      archived_at INTEGER DEFAULT 0,
+      metadata TEXT DEFAULT '{}',
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -142,49 +165,134 @@ function initSchema(db: DatabaseSync): void {
   `);
 }
 
+// ── Schema migration ────────────────────────────────────
+// Handles adding new columns to existing databases.
+
+function runMigrations(db: DatabaseSync): void {
+  const currentVersion = (() => {
+    try {
+      const row = db.prepare('SELECT MAX(version) AS v FROM schema_version').get() as { v: number | null } | undefined;
+      return row?.v ?? 0;
+    } catch {
+      return 0;
+    }
+  })();
+
+  if (currentVersion >= SCHEMA_VERSION) return;
+
+  // Migration 1 → 2: Add new columns to sessions table
+  if (currentVersion < 2) {
+    const newColumns = [
+      ['agent', 'TEXT DEFAULT \'\''],
+      ['model', 'TEXT DEFAULT \'{}\''],
+      ['parent_id', 'TEXT DEFAULT \'\''],
+      ['archived_at', 'INTEGER DEFAULT 0'],
+      ['metadata', 'TEXT DEFAULT \'{}\''],
+    ] as const;
+
+    for (const [col, def] of newColumns) {
+      try {
+        db.exec(`ALTER TABLE sessions ADD COLUMN ${col} ${def}`);
+      } catch {
+        // column already exists — ignore
+      }
+    }
+  }
+
+  db.prepare(
+    'INSERT INTO schema_version (version, applied_at) VALUES (?, ?)',
+  ).run(SCHEMA_VERSION, Date.now());
+}
+
 // ── Session metadata ─────────────────────────────────────
 
 export function upsertSession(
   tag: string,
-  data: { name?: string; cwd?: string },
+  data: {
+    name?: string;
+    cwd?: string;
+    agent?: string;
+    model?: string;
+    parentId?: string;
+    metadata?: string;
+  },
 ): void {
   const db = getDb();
   const now = Date.now();
   db.prepare(`
-    INSERT INTO sessions (tag, name, cwd, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO sessions (tag, name, cwd, agent, model, parent_id, archived_at, metadata, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
     ON CONFLICT(tag) DO UPDATE SET
       name = COALESCE(NULLIF(?, ''), sessions.name),
       cwd = COALESCE(NULLIF(?, ''), sessions.cwd),
+      agent = COALESCE(NULLIF(?, ''), sessions.agent),
+      model = COALESCE(NULLIF(?, ''), sessions.model),
+      parent_id = COALESCE(NULLIF(?, ''), sessions.parent_id),
+      metadata = COALESCE(NULLIF(?, ''), sessions.metadata),
       updated_at = ?
-  `).run(tag, data.name ?? '', data.cwd ?? '', now, now,
-        data.name ?? '', data.cwd ?? '', now);
+  `).run(
+    tag, data.name ?? '', data.cwd ?? '', data.agent ?? '', data.model ?? '',
+    data.parentId ?? '', data.metadata ?? '{}', now, now,
+    data.name ?? '', data.cwd ?? '', data.agent ?? '', data.model ?? '',
+    data.parentId ?? '', data.metadata ?? '{}', now,
+  );
 }
 
 export function getSessionMeta(tag: string): SessionMeta | null {
   const db = getDb();
   const row = db.prepare(
-    'SELECT tag, name, cwd, created_at, updated_at FROM sessions WHERE tag = ?',
+    'SELECT tag, name, cwd, agent, model, parent_id, archived_at, metadata, created_at, updated_at FROM sessions WHERE tag = ?',
   ).get(tag) as Record<string, unknown> | undefined;
   if (!row) return null;
   return {
     tag: row.tag as string,
     name: row.name as string,
     cwd: row.cwd as string,
+    agent: row.agent as string,
+    model: row.model as string,
+    parentId: row.parent_id as string,
+    archivedAt: row.archived_at as number,
+    metadata: row.metadata as string,
     createdAt: row.created_at as number,
     updatedAt: row.updated_at as number,
   };
 }
 
+/** Archive a session (soft-delete with timestamp). */
+export function archiveSession(tag: string): void {
+  const db = getDb();
+  db.prepare('UPDATE sessions SET archived_at = ?, updated_at = ? WHERE tag = ?')
+    .run(Date.now(), Date.now(), tag);
+}
+
+/** Un-archive a session. */
+export function unarchiveSession(tag: string): void {
+  const db = getDb();
+  db.prepare('UPDATE sessions SET archived_at = 0, updated_at = ? WHERE tag = ?')
+    .run(Date.now(), tag);
+}
+
+/** Set the parent session (for session forking/branching). */
+export function setSessionParent(tag: string, parentTag: string): void {
+  const db = getDb();
+  db.prepare('UPDATE sessions SET parent_id = ?, updated_at = ? WHERE tag = ?')
+    .run(parentTag, Date.now(), tag);
+}
+
 export function listSessions(): SessionMeta[] {
   const db = getDb();
   const rows = db.prepare(
-    'SELECT tag, name, cwd, created_at, updated_at FROM sessions ORDER BY updated_at DESC',
+    'SELECT tag, name, cwd, agent, model, parent_id, archived_at, metadata, created_at, updated_at FROM sessions ORDER BY updated_at DESC',
   ).all() as Record<string, unknown>[];
   return rows.map(r => ({
     tag: r.tag as string,
     name: r.name as string,
     cwd: r.cwd as string,
+    agent: r.agent as string,
+    model: r.model as string,
+    parentId: r.parent_id as string,
+    archivedAt: r.archived_at as number,
+    metadata: r.metadata as string,
     createdAt: r.created_at as number,
     updatedAt: r.updated_at as number,
   }));
@@ -210,8 +318,9 @@ export function deleteSession(tag: string): void {
 
 export function deleteOldSessions(cutoffMs: number): number {
   const db = getDb();
+  // Skip archived sessions — they are soft-deleted and preserved
   const rows = db.prepare(
-    'SELECT tag FROM sessions WHERE updated_at < ?',
+    'SELECT tag FROM sessions WHERE updated_at < ? AND archived_at = 0',
   ).all(cutoffMs) as { tag: string }[];
   for (const r of rows) {
     deleteSession(r.tag);

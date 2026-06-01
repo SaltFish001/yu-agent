@@ -18,7 +18,11 @@ import type { BeforeChatHookContext } from './types.js';
 import { createTeamMailboxHook } from './team/integration.js';
 import { setupMonitor } from './monitor.js';
 import { getSessionTag } from './session-context.js';
+import { getSessionAgent, getSessionModel, getSessionParent } from './session-context.js';
 import { getSummary, getCache, upsertSession } from './db.js';
+import { existsSync, readFileSync, unlinkSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { homedir } from 'node:os';
 
 let _nameCaptured = false;
 
@@ -130,11 +134,45 @@ export default function (pi: ExtensionAPI): void {
         upsertSession(tag, {
           name: summary,
           cwd: process.cwd(),
+          agent: getSessionAgent() || undefined,
+          model: getSessionModel() !== '{}' ? getSessionModel() : undefined,
+          parentId: getSessionParent() || undefined,
         });
       }
     }
 
     const status = buildStatusSummary();
+
+    // ── Resume context injection ─────────────────────────────
+    // Check for resume_context.json written by `yu session resume <tag>`
+    let resumeBlock = '';
+    const resumeFile = resolve(homedir(), '.yu', 'resume_context.json');
+    if (existsSync(resumeFile) || process.env.YU_RESUME_TAG) {
+      try {
+        if (existsSync(resumeFile)) {
+          const ctx = JSON.parse(readFileSync(resumeFile, 'utf-8'));
+          if (ctx.messages && Array.isArray(ctx.messages) && ctx.messages.length > 0) {
+            const historyLines: string[] = ['<history>'];
+            for (const msg of ctx.messages) {
+              const role = msg.role === 'user' ? 'User' : 'Assistant';
+              // Truncate very long messages to avoid token blowup
+              const content = (msg.content || '').slice(0, 4000);
+              historyLines.push(`<${role}>${content}</${role}>`);
+            }
+            historyLines.push('</history>');
+            resumeBlock = `\n\n以下是你之前会话中的历史消息（从 session "${ctx.tag || process.env.YU_RESUME_TAG}" 恢复）：\n${historyLines.join('\n')}\n\n请基于以上历史上下文继续帮助用户。如果你发现有中断的未完成任务，优先继续完成它。\n`;
+          }
+          // Clean up the temp file
+          unlinkSync(resumeFile);
+        }
+      } catch (e) {
+        console.warn('[yu-agent] Failed to load resume context:', e);
+        // Best-effort cleanup
+        try { if (existsSync(resumeFile)) unlinkSync(resumeFile); } catch { /* ignore */ }
+      }
+      delete process.env.YU_RESUME_TAG;
+    }
+
     return {
       systemPrompt:
 `你叫 yu-agent，是一条小咸鱼变成的编程助手～
@@ -145,7 +183,8 @@ export default function (pi: ExtensionAPI): void {
 ${status ? `当前状态：${status}\n` : ''}你会写代码、改 bug、审查代码、出方案、搜代码、生成文档，还能派单给专门的小 agent 干活。
 
 你的 agent type 有这些：coding, review, plan, search, commit, lsp, doc, general-purpose（调度器）。
-拿不准的时候先让调度器判断一下再动手。`,
+拿不准的时候先让调度器判断一下再动手。
+${resumeBlock}`,
     };
   });
 }
