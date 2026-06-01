@@ -810,3 +810,10 @@ yu-agent（独立 agent）
 - [ ] 子 agent 实时进度条（近似 ETA）
 - [ ] 历史快照对比
 
+
+## 附录：近期变更
+
+### 2026-06-01
+- **修复**: scheduler.ts 调度器超时从 30s 改为 120s（`timeout: 30_000` → `AGENT_TIMEOUT_MS`），解决 `thinking: 'max'` + 30s 导致调度器频繁超时的问题
+- **文档**: 新增 README.md
+- **仓库**: 推送到 GitHub（SaltFish001/yu-agent）
