@@ -90,6 +90,7 @@ function render() {
   const lsp = readJSON('lsp.json');
   const team = readJSON('team.json');
   const summary = readJSON('summary.json');
+  const cache = readJSON('cache.json');
 
   const lines = [];
 
@@ -98,6 +99,16 @@ function render() {
   lines.push(`│ ${DIM}Updated: ${agents?.updatedAt ? fmtTime(agents.updatedAt) : 'never'}${RESET}`);
   if (agents) {
     lines.push(`│ ${DIM}Status:  ${agents.agents?.length || 0} agents tracked${RESET}`);
+  }
+
+  // ── Cache stats ──────────────────────────────────────
+  if (cache && cache.turnCount > 0) {
+    const hitRate = (cache.hitRate * 100).toFixed(1);
+    lines.push(`│`);
+    lines.push(`│ ${BOLD}Session Cache${RESET}`);
+    lines.push(`│  ${GREEN}✓${RESET} Hits:   ${cache.totalHits}  ${DIM}(${hitRate}%)${RESET}`);
+    lines.push(`│  ${RED}✗${RESET} Misses: ${cache.totalMisses}`);
+    lines.push(`│  ${DIM}  Turns:  ${cache.turnCount}  ·  Cost: ${cache.totalCost}${RESET}`);
   }
 
   // ── Sub-agents ───────────────────────────────────────

@@ -4,7 +4,8 @@
  * Registers the beforeChat hook that intercepts all user input
  * and routes programming tasks through the yu-agent scheduler.
  *
- * Also registers the team mailbox hook for team-aware sessions.
+ * Also registers the team mailbox hook for team-aware sessions,
+ * and injects yu-agent identity/status into pass-through messages.
  *
  * Installation:  pi install ~/yu-agent
  * Standalone:    npm install -g yu-agent (via bin/yu.ts)
@@ -16,6 +17,40 @@ import { startMCPManager } from './mcp-manager.js';
 import type { BeforeChatHookContext } from './types.js';
 import { createTeamMailboxHook } from './team/integration.js';
 import { setupMonitor } from './monitor.js';
+import { readFileSync, existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { homedir } from 'node:os';
+
+const STATUS_DIR = resolve(homedir(), 'yu-agent', 'status');
+
+/**
+ * Read status files and build a brief status summary string.
+ */
+function buildStatusSummary(): string {
+  try {
+    const summaryPath = resolve(STATUS_DIR, 'summary.json');
+    const cachePath = resolve(STATUS_DIR, 'cache.json');
+    const parts: string[] = [];
+
+    if (existsSync(summaryPath)) {
+      const s = JSON.parse(readFileSync(summaryPath, 'utf-8'));
+      if (s.running > 0) parts.push(`${s.running} running`);
+      if (s.completed > 0) parts.push(`${s.completed} done`);
+      if (s.failed > 0) parts.push(`${s.failed} failed`);
+    }
+
+    if (existsSync(cachePath)) {
+      const c = JSON.parse(readFileSync(cachePath, 'utf-8'));
+      if (c.turnCount > 0 && typeof c.hitRate === 'number') {
+        parts.push(`cache ${Math.round(c.hitRate * 100)}%`);
+      }
+    }
+
+    return parts.length > 0 ? parts.join(' · ') : 'idle';
+  } catch {
+    return '';
+  }
+}
 
 /**
  * yu-agent extension factory.
@@ -58,7 +93,10 @@ export default function (pi: ExtensionAPI): void {
           return { action: 'respond' as const, content: result };
         }
 
-        return { action: 'pass_through' as const };
+        // Pass-through: inject yu-agent identity and live status into context
+        const status = buildStatusSummary();
+        const identityBlock = `[yu-agent] You are yu-agent, an AI-powered programming agent. You are a specialized layer on top of Pi — not Pi itself. When asked who you are, say you are yu-agent.\n${status ? `[Status] ${status}` : ''}\n---\n`;
+        return { action: 'pass_through' as const, content: identityBlock + context.message };
       },
     });
   }

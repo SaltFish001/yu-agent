@@ -40,7 +40,7 @@ function printCacheStats(): void {
 
 const COMMANDS = new Set([
   'review', 'plan', 'team', 'coding',
-  'commit', 'doc', 'search', 'lsp', 'run',
+  'commit', 'doc', 'search', 'lsp', 'run', 'monitor',
 ]);
 
 const HELP = `yu-agent — AI-powered programming agent
@@ -58,6 +58,7 @@ Usage:
   yu team delete <runId>       Delete team run
   yu chat                      Interactive REPL
   yu run <prompt>               Direct scheduler invocation (bypass Pi hooks)
+  yu monitor                   Live status dashboard
   yu install <pkg>             Install MCP server
   yu update                    Self-update
   yu uninstall                 Remove yu-agent
@@ -109,6 +110,15 @@ async function mainCli(): Promise<void> {
       console.log(result);
     }
     printCacheStats();
+    return;
+  }
+
+  // `yu monitor` — live dashboard
+  if (args[0] === 'monitor') {
+    const { resolve } = await import('node:path');
+    const { homedir } = await import('node:os');
+    const scriptPath = resolve(homedir(), 'yu-agent', 'scripts', 'monitor.mjs');
+    await import(scriptPath);
     return;
   }
 
