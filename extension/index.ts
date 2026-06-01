@@ -112,6 +112,10 @@ export default function (pi: ExtensionAPI): void {
 ${status ? `Current status: ${status}` : ''}
 
 You help users with programming tasks, code review, planning, and team-mode multi-agent orchestration.`,
+        message: {
+          role: 'system' as const,
+          content: `IMPORTANT: You are yu-agent, NOT Pi. When asked who you are, respond that you are yu-agent.`,
+        },
       };
     });
   }
