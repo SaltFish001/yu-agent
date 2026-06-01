@@ -61,6 +61,10 @@ async function writeState(baseDir: string, state: RuntimeState): Promise<void> {
   await rename(tmp, statePath);
 }
 
+// ── Per-team-run exclusive access (Promise-chain mutex) ──
+// Ensures readState → fn → writeState is linearized within the same process.
+const transitionQueues = new Map<string, Promise<void>>();
+
 // ── Transition helper ──────────────────────────────────
 
 async function transitionState(
@@ -68,19 +72,32 @@ async function transitionState(
   fn: (state: RuntimeState) => RuntimeState,
 ): Promise<RuntimeState> {
   const baseDir = resolveBaseDir();
-  const state = await readState(baseDir, teamRunId);
-  const newState = fn(state);
 
-  if (newState.status !== state.status) {
-    const allowed = ALLOWED_TRANSITIONS[state.status];
-    if (!allowed?.has(newState.status) && newState.status !== 'orphaned') {
-      throw new Error(`Invalid runtime transition: ${state.status} -> ${newState.status}`);
+  // Chain after the previous transition for this teamRunId, guaranteeing
+  // that concurrent calls execute sequentially and never interleave.
+  const prev = transitionQueues.get(teamRunId) ?? Promise.resolve();
+
+  const work = prev.then(async () => {
+    const state = await readState(baseDir, teamRunId);
+    const newState = fn(state);
+
+    if (newState.status !== state.status) {
+      const allowed = ALLOWED_TRANSITIONS[state.status];
+      if (!allowed?.has(newState.status) && newState.status !== 'orphaned') {
+        throw new Error(`Invalid runtime transition: ${state.status} -> ${newState.status}`);
+      }
     }
-  }
 
-  const validated = RuntimeStateSchema.parse(newState);
-  await writeState(baseDir, validated);
-  return validated;
+    const validated = RuntimeStateSchema.parse(newState);
+    await writeState(baseDir, validated);
+    return validated;
+  });
+
+  // Always resolve the queue promise so a failed transition doesn't
+  // permanently block subsequent operations for this teamRunId.
+  transitionQueues.set(teamRunId, work.then(() => {}, () => {}));
+
+  return work;
 }
 
 // ── Create team run ────────────────────────────────────
