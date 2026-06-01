@@ -47,8 +47,13 @@ const HELP = `yu-agent — AI-powered programming agent
 
 Usage:
   yu <prompt>                  One-shot programming task
+  yu coding <prompt>           Start a coding task
   yu review <path>             Review code
   yu plan <task>               Generate implementation plan
+  yu commit <msg>              Generate commit message
+  yu doc <task>                Generate documentation
+  yu search <query>            Search codebase
+  yu lsp <path>                LSP type check & fix
   yu team create <name> ...    Create a team for multi-agent work
   yu team list                 List active teams
   yu team status <runId>       Show team status
@@ -58,7 +63,7 @@ Usage:
   yu team delete <runId>       Delete team run
   yu chat                      Interactive REPL
   yu run <prompt>               Direct scheduler invocation (bypass Pi hooks)
-  yu monitor                   Live status dashboard
+  yu monitor [--once]           Live status dashboard (--once for single snapshot)
   yu install <pkg>             Install MCP server
   yu update                    Self-update
   yu uninstall                 Remove yu-agent
