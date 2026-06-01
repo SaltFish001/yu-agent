@@ -45,6 +45,6 @@ export function getStatusDir(): string {
     return projectStatusDir;
   }
 
-  // fallback: 全局目录
-  return resolve(homedir(), 'yu-agent', 'status');
+  // fallback: 全局目录（~/.yu/）
+  return resolve(homedir(), '.yu');
 }
