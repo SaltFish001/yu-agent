@@ -95,12 +95,24 @@ export default function (pi: ExtensionAPI): void {
           return { action: 'respond' as const, content: result };
         }
 
-        // Pass-through: inject yu-agent identity and live status into context
+        // Pass-through: inject live status into context
         const status = buildStatusSummary();
-        const identityBlock = `[yu-agent] You are yu-agent, an AI-powered programming agent. You are a specialized layer on top of Pi — not Pi itself. When asked who you are, say you are yu-agent.\n${status ? `[Status] ${status}` : ''}\n---\n`;
-        context.message = identityBlock + context.message;
+        const statusBlock = status ? `[yu-agent status] ${status}\n---\n` : '';
+        context.message = statusBlock + context.message;
         return { action: 'pass_through' as const };
       },
+    });
+
+    // Override system prompt identity via before_agent_start
+    (pi as any).on('before_agent_start', (event: any) => {
+      const status = buildStatusSummary();
+      return {
+        systemPrompt: `You are yu-agent, an AI-powered programming agent built on top of Pi infrastructure. You are NOT Pi — you are yu-agent, a specialized coding agent. When asked about your identity, always say you are yu-agent.
+
+${status ? `Current status: ${status}` : ''}
+
+You help users with programming tasks, code review, planning, and team-mode multi-agent orchestration.`,
+      };
     });
   }
 }
