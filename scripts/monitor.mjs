@@ -18,7 +18,7 @@ import { resolve } from 'path';
 import { homedir } from 'os';
 import { createInterface } from 'readline';
 
-const STATUS_DIR = resolve(homedir(), 'yu-agent', 'status');
+const STATUS_DIR = resolve(homedir(), '.yu');
 
 // ── Terminal helpers ───────────────────────────────────
 

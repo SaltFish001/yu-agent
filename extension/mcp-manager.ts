@@ -22,15 +22,14 @@
 import { spawn, type ChildProcess } from 'child_process';
 import { readFileSync, existsSync } from 'fs';
 import { resolve } from 'path';
-import { homedir } from 'os';
 import {
   type MCPServerStatus,
   writeMCPStatus,
 } from './status.js';
+import { MCP_CONFIG_PATH } from './paths.js';
 
 // ── 常量 ──────────────────────────────────────────────
 
-const CONFIG_PATH = resolve(homedir(), 'yu-agent', 'mcp.config.json');
 const STATUS_WRITE_INTERVAL_MS = 5_000;
 const PING_INTERVAL_MS = 10_000;
 const RESPONSE_TIMEOUT_MS = 5_000;
@@ -389,14 +388,14 @@ function pingAll(): void {
 // ── 配置读取 ──────────────────────────────────────────
 
 function loadConfig(): McpConfig {
-  if (!existsSync(CONFIG_PATH)) {
+  if (!existsSync(MCP_CONFIG_PATH)) {
     return { servers: {} };
   }
   try {
-    const raw = readFileSync(CONFIG_PATH, 'utf-8');
+    const raw = readFileSync(MCP_CONFIG_PATH, 'utf-8');
     return JSON.parse(raw) as McpConfig;
   } catch (err) {
-    console.warn(`[yu-agent/mcp] Failed to parse ${CONFIG_PATH}:`, err);
+    console.warn(`[yu-agent/mcp] Failed to parse ${MCP_CONFIG_PATH}:`, err);
     return { servers: {} };
   }
 }

@@ -12,12 +12,10 @@ import { writeAgentStatus, writeSnapshot, buildSummary, writeCacheStats } from '
 import { getAllPoolsStats } from './spawn.js';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { resolve } from 'path';
-import { homedir } from 'os';
+import { DATA_DIR, DECISIONS_FILE } from './paths.js';
 
 // ── Constants ──────────────────────────────────────────
 
-const DATA_DIR = resolve(homedir(), 'yu-agent', 'data');
-const DECISIONS_FILE = resolve(DATA_DIR, 'decisions.json');
 const MAX_DECISIONS = 50;
 
 // ── In-memory agent tracker ────────────────────────────

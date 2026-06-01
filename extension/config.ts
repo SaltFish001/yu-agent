@@ -10,8 +10,8 @@
 
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
-import { homedir } from 'os';
 import { registerAgents as registerPiSubagents } from '@tintinweb/pi-subagents/dist/agent-types.js';
+import { PROMPTS_DIR } from './paths.js';
 
 // ── Agent type definition ─────────────────────────────
 
@@ -26,8 +26,6 @@ export interface AgentTypeConfig {
 }
 
 // ── Prompt loader ──────────────────────────────────────
-
-const PROMPTS_DIR = resolve(homedir(), 'yu-agent', 'prompts');
 
 function loadPrompt(name: string): string {
   try {

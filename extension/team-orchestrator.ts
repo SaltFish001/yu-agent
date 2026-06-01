@@ -19,14 +19,12 @@ import { trackAgent, loadDecisions } from './tracker.js';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, watch } from 'fs';
 import { resolve, join } from 'path';
 import { execSync } from 'child_process';
-import { homedir } from 'os';
 import type { SchedulerContext } from './types.js';
 import type { SchedulerPlan } from './classifier.js';
+import { DATA_DIR, TEMP_DIR } from './paths.js';
 
 // ── Constants ──────────────────────────────────────────
 
-const DATA_DIR = resolve(homedir(), 'yu-agent', 'data');
-const TEMP_DIR = resolve(DATA_DIR, 'temp');
 const MAX_RETRY_TEAM = 2;
 const TEAM_FILE_TIMEOUT_MS = 120_000;
 

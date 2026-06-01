@@ -23,6 +23,7 @@ import { createAgentSession, DefaultResourceLoader, SessionManager, SettingsMana
 import { join } from 'path';
 import { mkdirSync } from 'fs';
 import { homedir } from 'os';
+import { PI_AGENT_DIR, POOL_SESSIONS_DIR } from './paths.js';
 
 // ── 配置常量 ──────────────────────────────────────────
 
@@ -406,7 +407,7 @@ export class SessionPool {
     // 而非 user message——让指令本身也参与 API 层前缀缓存。
     const typeConfig = getAgentTypeConfig(cfg.type);
     if (typeConfig) {
-      const agentDir = join(homedir(), '.pi', 'agent');
+      const agentDir = PI_AGENT_DIR;
       const typePrompt = typeConfig.systemPrompt;
       options.resourceLoader = new DefaultResourceLoader({
         cwd: process.cwd(),
@@ -450,7 +451,7 @@ export class SessionPool {
 // 消息层缓存该 type 的历史对话（每 pool 独立）。
 
 const globalPools = new Map<string, SessionPool>();
-const POOL_SESSIONS_DIR = join(homedir(), '.yu-agent', 'pool-sessions');
+// POOL_SESSIONS_DIR defined in paths.ts
 
 /** 所有 pool 共用同一套 tools——IMMUTABLE PREFIX 恒定的关键 */
 const UNIFIED_TOOLS = [
