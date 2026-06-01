@@ -143,14 +143,10 @@ function buildStatusText(): string {
     text = 'yu-agent';
   }
 
-  if (cacheFile && typeof cacheFile.hitRate === 'number') {
+  if (cacheFile && typeof cacheFile.hitRate === 'number' && (cacheFile.turnCount ?? 0) > 0) {
     const pct = Math.round(cacheFile.hitRate * 100);
     const total = (cacheFile.totalHits ?? 0) + (cacheFile.totalMisses ?? 0);
-    if ((cacheFile.turnCount ?? 0) > 0) {
-      text += ` · cache: ${pct}% (${cacheFile.totalHits}h/${total}t)`;
-    } else {
-      text += ` · cache: 0%`;
-    }
+    text += ` · cache: ${pct}% (${cacheFile.totalHits}h/${total}t)`;
   }
 
   return text;
@@ -208,15 +204,10 @@ function renderWidgetContent(): string[] {
   }
 
   // Append cache info if available
-  if (cacheFile && typeof cacheFile.hitRate === 'number') {
+  if (cacheFile && typeof cacheFile.hitRate === 'number' && (cacheFile.turnCount ?? 0) > 0) {
     const pct = Math.round(cacheFile.hitRate * 100);
     const total = (cacheFile.totalHits ?? 0) + (cacheFile.totalMisses ?? 0);
-    const turns = cacheFile.turnCount ?? 0;
-    if (turns > 0) {
-      statusLine += `  \u00B7  cache: ${pct}% (${cacheFile.totalHits} hits / ${total} total)`;
-    } else {
-      statusLine += `  \u00B7  cache: 0%`;
-    }
+    statusLine += `  \u00B7  cache: ${pct}% (${cacheFile.totalHits} hits / ${total} total)`;
   }
 
   lines.push(statusLine);

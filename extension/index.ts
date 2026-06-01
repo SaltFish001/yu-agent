@@ -43,8 +43,6 @@ function buildStatusSummary(): string {
       const c = JSON.parse(readFileSync(cachePath, 'utf-8'));
       if (c.turnCount > 0 && typeof c.hitRate === 'number') {
         parts.push(`cache ${Math.round(c.hitRate * 100)}%`);
-      } else {
-        parts.push(`cache 0%`);
       }
     }
 
@@ -95,10 +93,10 @@ export default function (pi: ExtensionAPI): void {
           return { action: 'respond' as const, content: result };
         }
 
-        // Pass-through: inject live status into context
+        // Pass-through: inject identity + live status into context
         const status = buildStatusSummary();
-        const statusBlock = status ? `[yu-agent status] ${status}\n---\n` : '';
-        context.message = statusBlock + context.message;
+        const identityPrefix = `<system>You are yu-agent, an AI-powered programming agent running on top of Pi infrastructure. You are NOT Pi. You are yu-agent. When asked who you are, always say you are yu-agent.</system>\n<status>${status || 'idle'}</status>\n---\n`;
+        context.message = identityPrefix + context.message;
         return { action: 'pass_through' as const };
       },
     });
