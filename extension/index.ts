@@ -98,7 +98,8 @@ export default function (pi: ExtensionAPI): void {
         // Pass-through: inject yu-agent identity and live status into context
         const status = buildStatusSummary();
         const identityBlock = `[yu-agent] You are yu-agent, an AI-powered programming agent. You are a specialized layer on top of Pi — not Pi itself. When asked who you are, say you are yu-agent.\n${status ? `[Status] ${status}` : ''}\n---\n`;
-        return { action: 'pass_through' as const, content: identityBlock + context.message };
+        context.message = identityBlock + context.message;
+        return { action: 'pass_through' as const };
       },
     });
   }
