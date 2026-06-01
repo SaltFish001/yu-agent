@@ -133,7 +133,6 @@ export function writeTeamStatus(
   upsertTeam(tag, JSON.stringify({ ...team, updatedAt }), updatedAt);
 }
 
-/** Build a summary from agent list. */
 // ── Cache stats ────────────────────────────────────────────
 
 export interface CacheStatsData {
@@ -157,6 +156,7 @@ export function writeCacheStats(stats: CacheStatsData): void {
   }, stats.updatedAt);
 }
 
+/** Build a summary from agent list. */
 export function buildSummary(agents: AgentStatus[]): YuStatusSnapshot['summary'] {
   let running = 0;
   let completed = 0;

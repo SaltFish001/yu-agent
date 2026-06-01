@@ -7,14 +7,17 @@
  * DB path: {getStatusDir()}/sessions.db
  *
  * Schema:
- *   sessions — metadata (name, cwd, agent, model, parent_id,
- *              archived_at, metadata JSON, created_at, updated_at)
+ *   sessions — metadata (name, cwd, agent, model, parent_id, slug,
+ *              archived_at, metadata JSON, created_at, updated_at,
+ *              summary_* stats)
  *   agents   — sub-agent state (JSON array)
  *   mcp      — MCP server connections (JSON array)
  *   lsp      — LSP server status (JSON array)
  *   team     — team mode state (JSON object)
  *   summary  — aggregated counts (running, completed, failed)
  *   cache    — cache stats (hits, misses, hit_rate, turn_count)
+ *   messages — conversation messages (session_id, role, content)
+ *   todos    — per-session task list
  */
 
 import { DatabaseSync } from 'node:sqlite';
@@ -31,10 +34,33 @@ export interface SessionMeta {
   agent: string;
   model: string;
   parentId: string;
+  slug: string;
   archivedAt: number;
   metadata: string;
   createdAt: number;
   updatedAt: number;
+  summaryFiles?: number;
+  summaryAdditions?: number;
+  summaryDeletions?: number;
+}
+
+export interface MessageRow {
+  id: number;
+  sessionId: string;
+  role: string;
+  content: string;
+  timeCreated: number;
+}
+
+export interface TodoRow {
+  id: number;
+  sessionId: string;
+  content: string;
+  status: string;
+  priority: string;
+  position: number;
+  timeCreated: number;
+  timeUpdated: number;
 }
 
 export interface SummaryRow {
@@ -88,7 +114,7 @@ function getDb(): DatabaseSync {
 }
 
 // ── Schema versions — used for migration ─────────────────
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 4;
 
 function initSchema(db: DatabaseSync): void {
   // Create schema version tracking
@@ -107,8 +133,12 @@ function initSchema(db: DatabaseSync): void {
       agent TEXT DEFAULT '',
       model TEXT DEFAULT '{}',
       parent_id TEXT DEFAULT '',
+      slug TEXT DEFAULT '',
       archived_at INTEGER DEFAULT 0,
       metadata TEXT DEFAULT '{}',
+      summary_files INTEGER DEFAULT 0,
+      summary_additions INTEGER DEFAULT 0,
+      summary_deletions INTEGER DEFAULT 0,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -163,6 +193,38 @@ function initSchema(db: DatabaseSync): void {
       updated_at INTEGER NOT NULL
     );
   `);
+  // ── Messages table (P0 — conversation history) ──────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL DEFAULT '',
+      time_created INTEGER NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES sessions(tag) ON DELETE CASCADE
+    );
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
+  `);
+
+  // ── Todos table (P1 — per-session task list) ────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS todos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      content TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      priority TEXT NOT NULL DEFAULT 'medium',
+      position INTEGER NOT NULL DEFAULT 0,
+      time_created INTEGER NOT NULL,
+      time_updated INTEGER NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES sessions(tag) ON DELETE CASCADE
+    );
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_todos_session_id ON todos(session_id);
+  `);
 }
 
 // ── Schema migration ────────────────────────────────────
@@ -183,11 +245,11 @@ function runMigrations(db: DatabaseSync): void {
   // Migration 1 → 2: Add new columns to sessions table
   if (currentVersion < 2) {
     const newColumns = [
-      ['agent', 'TEXT DEFAULT \'\''],
-      ['model', 'TEXT DEFAULT \'{}\''],
-      ['parent_id', 'TEXT DEFAULT \'\''],
+      ['agent', "TEXT DEFAULT ''"],
+      ['model', "TEXT DEFAULT '{}'"],
+      ['parent_id', "TEXT DEFAULT ''"],
       ['archived_at', 'INTEGER DEFAULT 0'],
-      ['metadata', 'TEXT DEFAULT \'{}\''],
+      ['metadata', "TEXT DEFAULT '{}'"],
     ] as const;
 
     for (const [col, def] of newColumns) {
@@ -197,6 +259,60 @@ function runMigrations(db: DatabaseSync): void {
         // column already exists — ignore
       }
     }
+  }
+
+  // Migration 2 → 3: Add messages table, slug column, summary stats
+  if (currentVersion < 3) {
+    try {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS messages (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          content TEXT NOT NULL DEFAULT '',
+          time_created INTEGER NOT NULL
+        );
+      `);
+    } catch { /* ignore if exists */ }
+    try {
+      db.exec('CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)');
+    } catch { /* ignore */ }
+
+    // Add slug column to sessions
+    try {
+      db.exec("ALTER TABLE sessions ADD COLUMN slug TEXT DEFAULT ''");
+    } catch { /* ignore */ }
+    // Add summary stats columns
+    try {
+      db.exec('ALTER TABLE sessions ADD COLUMN summary_files INTEGER DEFAULT 0');
+    } catch { /* ignore */ }
+    try {
+      db.exec('ALTER TABLE sessions ADD COLUMN summary_additions INTEGER DEFAULT 0');
+    } catch { /* ignore */ }
+    try {
+      db.exec('ALTER TABLE sessions ADD COLUMN summary_deletions INTEGER DEFAULT 0');
+    } catch { /* ignore */ }
+  }
+
+  // Migration 3 → 4: Add todos table
+  if (currentVersion < 4) {
+    try {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS todos (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_id TEXT NOT NULL,
+          content TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          priority TEXT NOT NULL DEFAULT 'medium',
+          position INTEGER NOT NULL DEFAULT 0,
+          time_created INTEGER NOT NULL,
+          time_updated INTEGER NOT NULL
+        );
+      `);
+    } catch { /* ignore if exists */ }
+    try {
+      db.exec('CREATE INDEX IF NOT EXISTS idx_todos_session_id ON todos(session_id)');
+    } catch { /* ignore */ }
   }
 
   db.prepare(
@@ -214,34 +330,36 @@ export function upsertSession(
     agent?: string;
     model?: string;
     parentId?: string;
+    slug?: string;
     metadata?: string;
   },
 ): void {
   const db = getDb();
   const now = Date.now();
   db.prepare(`
-    INSERT INTO sessions (tag, name, cwd, agent, model, parent_id, archived_at, metadata, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+    INSERT INTO sessions (tag, name, cwd, agent, model, parent_id, slug, archived_at, metadata, summary_files, summary_additions, summary_deletions, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, 0, 0, 0, ?, ?)
     ON CONFLICT(tag) DO UPDATE SET
       name = COALESCE(NULLIF(?, ''), sessions.name),
       cwd = COALESCE(NULLIF(?, ''), sessions.cwd),
       agent = COALESCE(NULLIF(?, ''), sessions.agent),
       model = COALESCE(NULLIF(?, ''), sessions.model),
       parent_id = COALESCE(NULLIF(?, ''), sessions.parent_id),
+      slug = COALESCE(NULLIF(?, ''), sessions.slug),
       metadata = COALESCE(NULLIF(?, ''), sessions.metadata),
       updated_at = ?
   `).run(
     tag, data.name ?? '', data.cwd ?? '', data.agent ?? '', data.model ?? '',
-    data.parentId ?? '', data.metadata ?? '{}', now, now,
+    data.parentId ?? '', data.slug ?? '', data.metadata ?? '{}', now, now,
     data.name ?? '', data.cwd ?? '', data.agent ?? '', data.model ?? '',
-    data.parentId ?? '', data.metadata ?? '{}', now,
+    data.parentId ?? '', data.slug ?? '', data.metadata ?? '{}', now,
   );
 }
 
 export function getSessionMeta(tag: string): SessionMeta | null {
   const db = getDb();
   const row = db.prepare(
-    'SELECT tag, name, cwd, agent, model, parent_id, archived_at, metadata, created_at, updated_at FROM sessions WHERE tag = ?',
+    'SELECT tag, name, cwd, agent, model, parent_id, slug, archived_at, metadata, summary_files, summary_additions, summary_deletions, created_at, updated_at FROM sessions WHERE tag = ?',
   ).get(tag) as Record<string, unknown> | undefined;
   if (!row) return null;
   return {
@@ -251,8 +369,12 @@ export function getSessionMeta(tag: string): SessionMeta | null {
     agent: row.agent as string,
     model: row.model as string,
     parentId: row.parent_id as string,
+    slug: (row.slug as string) || '',
     archivedAt: row.archived_at as number,
     metadata: row.metadata as string,
+    summaryFiles: row.summary_files as number || 0,
+    summaryAdditions: row.summary_additions as number || 0,
+    summaryDeletions: row.summary_deletions as number || 0,
     createdAt: row.created_at as number,
     updatedAt: row.updated_at as number,
   };
@@ -282,7 +404,7 @@ export function setSessionParent(tag: string, parentTag: string): void {
 export function listSessions(): SessionMeta[] {
   const db = getDb();
   const rows = db.prepare(
-    'SELECT tag, name, cwd, agent, model, parent_id, archived_at, metadata, created_at, updated_at FROM sessions ORDER BY updated_at DESC',
+    'SELECT tag, name, cwd, agent, model, parent_id, slug, archived_at, metadata, summary_files, summary_additions, summary_deletions, created_at, updated_at FROM sessions ORDER BY updated_at DESC',
   ).all() as Record<string, unknown>[];
   return rows.map(r => ({
     tag: r.tag as string,
@@ -291,8 +413,12 @@ export function listSessions(): SessionMeta[] {
     agent: r.agent as string,
     model: r.model as string,
     parentId: r.parent_id as string,
+    slug: (r.slug as string) || '',
     archivedAt: r.archived_at as number,
     metadata: r.metadata as string,
+    summaryFiles: r.summary_files as number || 0,
+    summaryAdditions: r.summary_additions as number || 0,
+    summaryDeletions: r.summary_deletions as number || 0,
     createdAt: r.created_at as number,
     updatedAt: r.updated_at as number,
   }));
@@ -309,6 +435,8 @@ export function deleteSession(tag: string): void {
     db.prepare('DELETE FROM team WHERE tag = ?').run(tag);
     db.prepare('DELETE FROM summary WHERE tag = ?').run(tag);
     db.prepare('DELETE FROM cache WHERE tag = ?').run(tag);
+    db.prepare('DELETE FROM messages WHERE session_id = ?').run(tag);
+    db.prepare('DELETE FROM todos WHERE session_id = ?').run(tag);
     db.exec('COMMIT');
   } catch (e) {
     db.exec('ROLLBACK');
@@ -490,6 +618,230 @@ export function getCache(tag: string): CacheRow | null {
     hitRate: row.hit_rate as number,
     updatedAt: row.updated_at as number,
   };
+}
+
+// ── Messages (P0 — conversation history) ────────────────
+
+export function insertMessage(
+  sessionId: string,
+  role: string,
+  content: string,
+  timeCreated: number = Date.now(),
+): number {
+  const db = getDb();
+  const result = db.prepare(
+    'INSERT INTO messages (session_id, role, content, time_created) VALUES (?, ?, ?, ?)',
+  ).run(sessionId, role, content, timeCreated);
+  return Number(result.lastInsertRowid);
+}
+
+export function getMessages(sessionId: string, limit?: number): MessageRow[] {
+  const db = getDb();
+  const sql = limit
+    ? 'SELECT id, session_id, role, content, time_created FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?'
+    : 'SELECT id, session_id, role, content, time_created FROM messages WHERE session_id = ? ORDER BY id ASC';
+  const params: any[] = [sessionId];
+  if (limit) params.push(limit);
+  const rows = db.prepare(sql).all(...params) as Record<string, unknown>[];
+  const result = rows.map(r => ({
+    id: r.id as number,
+    sessionId: r.session_id as string,
+    role: r.role as string,
+    content: r.content as string,
+    timeCreated: r.time_created as number,
+  }));
+  // If limit was used, reverse to chronological order
+  if (limit) result.reverse();
+  return result;
+}
+
+export function getMessageCount(sessionId: string): number {
+  const db = getDb();
+  const row = db.prepare('SELECT COUNT(*) AS cnt FROM messages WHERE session_id = ?').get(sessionId) as { cnt: number };
+  return row.cnt;
+}
+
+// ── Todos (P1 — per-session task list) ──────────────────
+
+export function insertTodo(
+  sessionId: string,
+  content: string,
+  priority: string = 'medium',
+  position?: number,
+  timeCreated: number = Date.now(),
+): number {
+  const db = getDb();
+  // Auto-assign position if not given
+  if (position === undefined) {
+    const maxRow = db.prepare('SELECT COALESCE(MAX(position), -1) + 1 AS pos FROM todos WHERE session_id = ?').get(sessionId) as { pos: number };
+    position = maxRow.pos;
+  }
+  const result = db.prepare(
+    'INSERT INTO todos (session_id, content, status, priority, position, time_created, time_updated) VALUES (?, ?, ?, ?, ?, ?, ?)',
+  ).run(sessionId, content, 'pending', priority, position, timeCreated, timeCreated);
+  return Number(result.lastInsertRowid);
+}
+
+export function getTodos(sessionId: string): TodoRow[] {
+  const db = getDb();
+  const rows = db.prepare(
+    'SELECT id, session_id, content, status, priority, position, time_created, time_updated FROM todos WHERE session_id = ? ORDER BY position ASC',
+  ).all(sessionId) as Record<string, unknown>[];
+  return rows.map(r => ({
+    id: r.id as number,
+    sessionId: r.session_id as string,
+    content: r.content as string,
+    status: r.status as string,
+    priority: r.priority as string,
+    position: r.position as number,
+    timeCreated: r.time_created as number,
+    timeUpdated: r.time_updated as number,
+  }));
+}
+
+export function updateTodoStatus(id: number, status: string): void {
+  const db = getDb();
+  db.prepare('UPDATE todos SET status = ?, time_updated = ? WHERE id = ?')
+    .run(status, Date.now(), id);
+}
+
+export function updateTodoPriority(id: number, priority: string): void {
+  const db = getDb();
+  db.prepare('UPDATE todos SET priority = ?, time_updated = ? WHERE id = ?')
+    .run(priority, Date.now(), id);
+}
+
+export function deleteTodo(id: number): void {
+  const db = getDb();
+  db.prepare('DELETE FROM todos WHERE id = ?').run(id);
+}
+
+// ── Slug generation (P3) ────────────────────────────────
+
+const ADJECTIVES = [
+  'curious', 'brave', 'calm', 'eager', 'fancy', 'golden', 'happy', 'jolly',
+  'keen', 'lucky', 'merry', 'neat', 'proud', 'quick', 'quiet', 'rapid',
+  'shy', 'silent', 'sunny', 'swift', 'tiny', 'warm', 'wise', 'young',
+  'bold', 'bright', 'cool', 'crisp', 'dapper', 'droll', 'faint', 'fresh',
+  'gentle', 'grand', 'humble', 'jolly', 'kind', 'lively', 'mellow', 'mild',
+  'noble', 'odd', 'peppy', 'plain', 'regal', 'royal', 'sharp', 'smooth',
+  'spry', 'stark', 'sturdy', 'subtle', 'sweet', 'tame', 'taut', 'vast',
+];
+
+const NOUNS = [
+  'cabin', 'brook', 'cloud', 'dawn', 'delta', 'dune', 'echo', 'ember',
+  'frost', 'glade', 'glen', 'harbor', 'haven', 'islet', 'knoll', 'lagoon',
+  'marsh', 'meadow', 'mirth', 'moss', 'oasis', 'pixel', 'pond', 'prairie',
+  'reef', 'ridge', 'rivet', 'rock', 'shallows', 'shard', 'spark', 'stone',
+  'surge', 'swamp', 'swirl', 'thaw', 'torch', 'tower', 'trace', 'vale',
+  'vertex', 'vista', 'vortex', 'wisp', 'yield', 'zenith', 'bloom', 'cove',
+];
+
+/**
+ * Generate a random readable slug like "curious-cabin".
+ */
+export function generateSlug(): string {
+  const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
+  const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
+  return `${adj}-${noun}`;
+}
+
+/**
+ * Ensure a session has a slug. If empty, generate one and save it.
+ */
+export function ensureSlug(tag: string): string {
+  const meta = getSessionMeta(tag);
+  if (meta && meta.slug) return meta.slug;
+  const slug = generateSlug();
+  const db = getDb();
+  db.prepare('UPDATE sessions SET slug = ?, updated_at = ? WHERE tag = ?')
+    .run(slug, Date.now(), tag);
+  return slug;
+}
+
+// ── Session fork (P2) ───────────────────────────────────
+
+/**
+ * Fork a session: create a new session with the same messages.
+ * Returns the new session tag.
+ */
+export function forkSession(
+  sourceTag: string,
+  newTag: string,
+  newName?: string,
+): SessionMeta | null {
+  const source = getSessionMeta(sourceTag);
+  if (!source) return null;
+
+  const db = getDb();
+  const now = Date.now();
+  const slug = generateSlug();
+
+  // Create new session
+  upsertSession(newTag, {
+    name: newName || `${source.name} (fork)` || slug,
+    cwd: source.cwd,
+    agent: source.agent || undefined,
+    model: source.model !== '{}' ? source.model : undefined,
+    parentId: sourceTag,
+    slug,
+  });
+
+  // Copy messages
+  const messages = getMessages(sourceTag);
+  for (const msg of messages) {
+    insertMessage(newTag, msg.role, msg.content, msg.timeCreated);
+  }
+
+  // Copy todos
+  const todos = getTodos(sourceTag);
+  for (const todo of todos) {
+    db.prepare(
+      'INSERT INTO todos (session_id, content, status, priority, position, time_created, time_updated) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ).run(newTag, todo.content, 'pending', todo.priority, todo.position, now, now);
+  }
+
+  return getSessionMeta(newTag);
+}
+
+// ── Summary stats (P4) ──────────────────────────────────
+
+export function updateSessionSummary(
+  tag: string,
+  data: {
+    files?: number;
+    additions?: number;
+    deletions?: number;
+  },
+): void {
+  const db = getDb();
+  db.prepare(`
+    UPDATE sessions SET
+      summary_files = summary_files + ?,
+      summary_additions = summary_additions + ?,
+      summary_deletions = summary_deletions + ?,
+      updated_at = ?
+    WHERE tag = ?
+  `).run(data.files ?? 0, data.additions ?? 0, data.deletions ?? 0, Date.now(), tag);
+}
+
+export function updateSessionSummaryStats(
+  tag: string,
+  data: {
+    files?: number;
+    additions?: number;
+    deletions?: number;
+  },
+): void {
+  const db = getDb();
+  db.prepare(`
+    UPDATE sessions SET
+      summary_files = ?,
+      summary_additions = ?,
+      summary_deletions = ?,
+      updated_at = ?
+    WHERE tag = ?
+  `).run(data.files ?? 0, data.additions ?? 0, data.deletions ?? 0, Date.now(), tag);
 }
 
 // ── Cleanup ──────────────────────────────────────────────

@@ -14,13 +14,14 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { mkdir, readdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { MessageSchema, type Message } from './types.js';
+import { YU_HOME } from '../paths.js';
 
 // ── Path helpers ───────────────────────────────────────
 
-export const YU_TEAMS_BASE = path.join(process.env.HOME || '/tmp', '.yu');
+export const YU_TEAMS_BASE = YU_HOME;
 export const TEAM_RUNTIME_DIR = 'runtime';
 
 export function resolveBaseDir(): string {

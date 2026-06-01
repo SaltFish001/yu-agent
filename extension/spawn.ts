@@ -22,7 +22,6 @@ import { createAgentSession, DefaultResourceLoader, SessionManager, SettingsMana
 
 import { join } from 'path';
 import { mkdirSync } from 'fs';
-import { homedir } from 'os';
 import { PI_AGENT_DIR, POOL_SESSIONS_DIR } from './paths.js';
 
 // ── 配置常量 ──────────────────────────────────────────

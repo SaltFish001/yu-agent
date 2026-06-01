@@ -70,7 +70,10 @@ Scheduler & Monitor:
 
 Session Management:
   yu session list              List all sessions
-  yu session show <tag>        Show session details
+  yu session show <tag>        Show session details and message history
+  yu session resume <tag>      Resume session context
+  yu session fork <tag>        Fork/branch from a session
+  yu session todo <tag> ...    Manage session task list
   yu session archive <tag>     Archive a session (soft-delete)
   yu session unarchive <tag>   Unarchive a session
   yu session info              Show session database info
@@ -145,13 +148,22 @@ function showHelpForCommand(command: string): string {
 
 Usage:
   yu session list               List all sessions
-  yu session show <tag>         Show session details
+  yu session show <tag>         Show session details and message history
+  yu session resume <tag>       Resume session context
+  yu session fork <tag>         Fork/branch from a session
+  yu session todo <tag> ...     Manage session task list (add/list/done/delete)
   yu session archive <tag>      Archive a session (soft-delete)
   yu session unarchive <tag>    Unarchive a session
   yu session info               Show database path, session count, etc.
   yu session backup [path]      Backup sessions.db (default: ./sessions-backup-<timestamp>.db)
   yu session restore <path>     Restore sessions.db from backup file
   yu session clean [--days N]   Remove sessions older than N days (default 7)
+
+Todo actions:
+  yu session todo <tag> list             List all tasks
+  yu session todo <tag> add <text>       Add a new task
+  yu session todo <tag> done <id>        Mark task as completed
+  yu session todo <tag> delete <id>      Delete a task
 
 Data stored in ~/.yu/sessions.db (SQLite).`;
 

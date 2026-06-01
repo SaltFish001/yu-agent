@@ -12,10 +12,13 @@ import {
   listSessions, getSessionMeta, getAgents, getSummary, getCache,
   deleteOldSessions, archiveSession, unarchiveSession,
   getDbPath, getStatusDirPath, sessionCount,
+  getMessages, getTodos, insertTodo, updateTodoStatus, updateTodoPriority, deleteTodo,
+  forkSession, generateSlug, ensureSlug,
+  updateSessionSummary, updateSessionSummaryStats,
 } from './db.js';
 import { existsSync, statSync, copyFileSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { homedir } from 'node:os';
+import { YU_HOME } from './paths.js';
 
 function fmtTime(ts: number): string {
   const d = new Date(ts);
@@ -56,17 +59,29 @@ export async function sessionCommand(subcommand: string, args: string[]): Promis
       return cmdUnarchive(args);
     case 'resume':
       return cmdResume(args);
+    case 'todo':
+      return cmdTodo(args);
+    case 'fork':
+      return cmdFork(args);
     default:
       return `Usage:
   yu session list                   列出当前目录下的所有 session
-  yu session show <tag>             查看指定 session 的状态
-  yu session resume <tag>           从指定 session 恢复上下文（读取 Pi session 文件历史消息）
+  yu session show <tag>             查看指定 session 的详情和消息历史
+  yu session resume <tag>           从指定 session 恢复上下文
   yu session archive <tag>          归档 session（软删除）
   yu session unarchive <tag>        取消归档 session
+  yu session fork <tag>             从历史 session 创建新 session（分支）
+  yu session todo <tag> [action]    管理 session 的任务列表（add/list/done/delete）
   yu session info                   显示数据库路径、会话数等信息
   yu session backup [path]          备份 sessions.db 到指定路径（默认带时间戳）
   yu session restore <path>         从备份文件恢复 sessions.db
-  yu session clean [--days N]       清理 N 天前的 session（默认 7 天）`;
+  yu session clean [--days N]       清理 N 天前的 session（默认 7 天）
+
+Todo actions:
+  yu session todo <tag> list        列出所有任务
+  yu session todo <tag> add <text>  添加新任务
+  yu session todo <tag> done <id>   标记任务完成
+  yu session todo <tag> delete <id> 删除任务`;
   }
 }
 
@@ -77,15 +92,16 @@ function cmdList(): string {
   const lines: string[] = [];
 
   // Table header
-  lines.push('Session                                 Agent           Created         Updated         Age  ');
-  lines.push('────────────────────────────────────── ─────────────── ─────────────── ─────────────── ─────');
+  lines.push('Session                                 Slug                            Agent           Age  ');
+  lines.push('────────────────────────────────────── ──────────────────────────────── ─────────────── ─────');
 
   for (const s of sessions) {
     const name = trunc(s.name || s.tag.slice(0, 14), 38);
+    const slug = trunc(s.slug || '-', 32);
     const agent = trunc(s.agent || '-', 14);
 
     lines.push(
-      `${name.padEnd(38)} ${agent.padEnd(14)}   ${fmtTime(s.createdAt).padEnd(15)} ${fmtTime(s.updatedAt).padEnd(15)} ${fmtAgo(s.updatedAt).padEnd(5)}`
+      `${name.padEnd(38)} ${slug.padEnd(32)} ${agent.padEnd(14)} ${fmtAgo(s.updatedAt).padEnd(5)}`
     );
   }
 
@@ -290,11 +306,10 @@ function cmdResume(args: string[]): string {
   const recent = messages.slice(-MAX_RESUME_MSGS);
 
   // 5. Write resume context to ~/.yu/resume_context.json
-  const resumeDir = resolve(homedir(), '.yu');
-  if (!existsSync(resumeDir)) {
-    mkdirSync(resumeDir, { recursive: true });
+  if (!existsSync(YU_HOME)) {
+    mkdirSync(YU_HOME, { recursive: true });
   }
-  const resumeFile = resolve(resumeDir, 'resume_context.json');
+  const resumeFile = resolve(YU_HOME, 'resume_context.json');
   writeFileSync(resumeFile, JSON.stringify({ tag, messages: recent }, null, 2));
 
   // 6. Set env var so before_agent_start can detect
@@ -313,6 +328,7 @@ function cmdShow(args: string[]): string {
   const lines: string[] = [
     `Session: ${meta.name || tag}`,
     `  tag: ${tag}`,
+    `  slug: ${meta.slug || '(not set)'}`,
     `  cwd: ${meta.cwd}`,
     `  agent: ${meta.agent || '(not set)'}`,
   ];
@@ -350,6 +366,11 @@ function cmdShow(args: string[]): string {
 
   lines.push(`  created: ${new Date(meta.createdAt).toLocaleString()}`);
   lines.push(`  updated: ${new Date(meta.updatedAt).toLocaleString()}`);
+
+  // Show summary stats (P4)
+  if (meta.summaryFiles || meta.summaryAdditions || meta.summaryDeletions) {
+    lines.push(`  changes: ${meta.summaryFiles} files, +${meta.summaryAdditions} / -${meta.summaryDeletions} lines`);
+  }
   lines.push('');
 
   // Show agents
@@ -376,5 +397,127 @@ function cmdShow(args: string[]): string {
     lines.push(`  cache: ${pct}% hit rate (${cache.totalHits} hits / ${cache.totalMisses} misses, ${cache.turnCount} turns)`);
   }
 
+  // Show messages (P0)
+  lines.push('');
+  const messages = getMessages(tag);
+  if (messages.length > 0) {
+    lines.push(`  Messages (${messages.length}):`);
+    for (const msg of messages) {
+      const time = new Date(msg.timeCreated).toLocaleTimeString();
+      const role = msg.role === 'user' ? 'User' : msg.role === 'assistant' ? 'Assistant' : msg.role;
+      const content = msg.content.slice(0, 200).replace(/\n/g, '\\n');
+      lines.push(`    [${time}] ${role}: ${content}${msg.content.length > 200 ? '…' : ''}`);
+    }
+  } else {
+    lines.push('  Messages: (none)');
+  }
+
+  // Show todos (P1)
+  const todos = getTodos(tag);
+  if (todos.length > 0) {
+    lines.push('');
+    lines.push(`  Todos (${todos.length}):`);
+    for (const todo of todos) {
+      const status = todo.status === 'pending' ? '○' : '✓';
+      const prio = todo.priority === 'high' ? '❗' : todo.priority === 'low' ? '↓' : '·';
+      lines.push(`    #${todo.id} ${status} ${prio} ${todo.content}`);
+    }
+  }
+
   return lines.join('\n');
+}
+
+/**
+ * `yu session todo <tag>` — manage todos.
+ * Actions: list (default), add <text>, done <id>, delete <id>
+ */
+function cmdTodo(args: string[]): string {
+  if (args.length === 0) {
+    return 'Usage: yu session todo <tag> [action] [args...]\n\nActions:\n  list                 列出所有任务\n  add <text>           添加新任务\n  done <id>            标记任务完成\n  delete <id>          删除任务\n  priority <id> <low|medium|high>  设置优先级';
+  }
+
+  const tag = args[0];
+  const meta = getSessionMeta(tag);
+  if (!meta) return `Session "${tag}" not found.`;
+
+  const action = args[1] || 'list';
+
+  switch (action) {
+    case 'list': {
+      const todos = getTodos(tag);
+      if (todos.length === 0) return `No todos for session "${tag}".`;
+      const lines: string[] = [`Todos for session "${tag}" (${meta.name || tag}):`];
+      for (const todo of todos) {
+        const status = todo.status === 'pending' ? '○' : '✓';
+        const prio = todo.priority === 'high' ? '❗' : todo.priority === 'low' ? '↓' : '·';
+        const ago = fmtAgo(todo.timeUpdated);
+        lines.push(`  #${todo.id} ${status} ${prio} ${todo.content} (${ago})`);
+      }
+      return lines.join('\n');
+    }
+
+    case 'add': {
+      const content = args.slice(2).join(' ').trim();
+      if (!content) return 'Usage: yu session todo <tag> add <text>';
+      const id = insertTodo(tag, content);
+      return `Todo #${id} added to session "${tag}".`;
+    }
+
+    case 'done': {
+      const idStr = args[2];
+      if (!idStr) return 'Usage: yu session todo <tag> done <id>';
+      const id = parseInt(idStr, 10);
+      if (isNaN(id)) return `Invalid id: ${idStr}`;
+      updateTodoStatus(id, 'completed');
+      return `Todo #${id} marked as completed.`;
+    }
+
+    case 'delete': {
+      const idStr = args[2];
+      if (!idStr) return 'Usage: yu session todo <tag> delete <id>';
+      const id = parseInt(idStr, 10);
+      if (isNaN(id)) return `Invalid id: ${idStr}`;
+      deleteTodo(id);
+      return `Todo #${id} deleted.`;
+    }
+
+    case 'priority': {
+      const idStr = args[2];
+      const priority = args[3];
+      if (!idStr || !priority) return 'Usage: yu session todo <tag> priority <id> <low|medium|high>';
+      const id = parseInt(idStr, 10);
+      if (isNaN(id)) return `Invalid id: ${idStr}`;
+      if (!['low', 'medium', 'high'].includes(priority)) return 'Priority must be low, medium, or high.';
+      updateTodoPriority(id, priority);
+      return `Todo #${id} priority set to ${priority}.`;
+    }
+
+    default:
+      return `Unknown action: ${action}. Use: list, add, done, delete, priority`;
+  }
+}
+
+/**
+ * `yu session fork <tag>` — create a new session branching from an existing one.
+ * Copies messages and todos to the new session.
+ * Usage: yu session fork <tag> [new-name]
+ */
+function cmdFork(args: string[]): string {
+  if (args.length === 0) return 'Usage: yu session fork <tag> [new-name]';
+
+  const sourceTag = args[0];
+  const newName = args.slice(1).join(' ') || undefined;
+
+  // Generate a new unique tag
+  const newTag = `sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+  const result = forkSession(sourceTag, newTag, newName);
+  if (!result) return `Session "${sourceTag}" not found.`;
+
+  return [
+    `✅ Forked session "${sourceTag}" -> "${newTag}"`,
+    `  name: ${result.name}`,
+    `  slug: ${result.slug}`,
+    `  parent: ${sourceTag}`,
+  ].join('\n');
 }

@@ -7,7 +7,7 @@
 
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { homedir } from 'node:os';
+import { YU_HOME } from './paths.js';
 
 /** 获取当前 session 标识，用于文件隔离 */
 export function getSessionTag(): string {
@@ -76,5 +76,5 @@ export function getStatusDir(): string {
   }
 
   // fallback: 全局目录（~/.yu/）
-  return resolve(homedir(), '.yu');
+  return YU_HOME;
 }
