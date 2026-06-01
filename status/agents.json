@@ -1,0 +1,88 @@
+{
+  "updatedAt": 1780277849016,
+  "agents": [
+    {
+      "id": "scheduler",
+      "type": "scheduler",
+      "model": "",
+      "status": "completed",
+      "goal": "classify intent & generate plan",
+      "startedAt": 1780277748479,
+      "durationMs": 14120
+    },
+    {
+      "id": "team-architect",
+      "type": "plan",
+      "model": "",
+      "status": "completed",
+      "goal": "分析现有代码结构并出方案。将方案写入 /home/saltfish/yu-agent/data/temp/team-1780277762599/plan.md",
+      "startedAt": 1780277762600,
+      "durationMs": 55371
+    },
+    {
+      "id": "team-searcher",
+      "type": "search",
+      "model": "",
+      "status": "completed",
+      "goal": "搜索相关信息。结果写入 /home/saltfish/yu-agent/data/temp/team-1780277762599/context.md",
+      "startedAt": 1780277762601,
+      "durationMs": 86413
+    },
+    {
+      "id": "team-coder-0",
+      "type": "coding",
+      "model": "v4-flash",
+      "status": "running",
+      "goal": "实现模块: Hook 层 (extension/index.ts)。遵循 plan.md 的方案。\n\n模块文件: extension/index.ts\n\n约束: 只实现本模块 Hook 层 (extension/index.ts) 的内容，",
+      "files": [
+        "extension/index.ts"
+      ],
+      "startedAt": 1780277849016
+    },
+    {
+      "id": "team-coder-1",
+      "type": "coding",
+      "model": "v4-flash",
+      "status": "running",
+      "goal": "实现模块: 调度器层 (extension/scheduler.ts)。遵循 plan.md 的方案。\n\n模块文件: extension/scheduler.ts\n\n约束: 只实现本模块 调度器层 (extension/scheduler.",
+      "files": [
+        "extension/scheduler.ts"
+      ],
+      "startedAt": 1780277849016
+    },
+    {
+      "id": "team-coder-2",
+      "type": "coding",
+      "model": "v4-flash",
+      "status": "running",
+      "goal": "实现模块: Agent 层 (config/spawn/template/status/mcp-manager)。遵循 plan.md 的方案。\n\n模块文件: extension/config.ts, extension/spawn.ts,",
+      "files": [
+        "extension/config.ts",
+        "extension/spawn.ts",
+        "extension/template.ts",
+        "extension/status.ts",
+        "extension/mcp-manager.ts",
+        "extension/types.ts"
+      ],
+      "startedAt": 1780277849016
+    },
+    {
+      "id": "team-coder-3",
+      "type": "coding",
+      "model": "v4-flash",
+      "status": "running",
+      "goal": "实现模块: 团队协作层 (extension/team/)。遵循 plan.md 的方案。\n\n模块文件: extension/team/types.ts, extension/team/mailbox.ts, extension/team/",
+      "files": [
+        "extension/team/types.ts",
+        "extension/team/mailbox.ts",
+        "extension/team/session.ts",
+        "extension/team/runtime.ts",
+        "extension/team/registry.ts",
+        "extension/team/tasklist.ts",
+        "extension/team/integration.ts",
+        "extension/team/index.ts"
+      ],
+      "startedAt": 1780277849016
+    }
+  ]
+}

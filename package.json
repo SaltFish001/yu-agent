@@ -1,0 +1,41 @@
+{
+  "name": "yu-agent",
+  "version": "0.1.0",
+  "description": "DeepSeek-native programming agent dispatcher for Pi — scheduler + sub-agents + team mode",
+  "type": "module",
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "url": "https://github.com/SaltFish001/yu-agent.git"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-extension",
+    "coding-agent",
+    "deepseek"
+  ],
+  "pi": {
+    "extensions": [
+      "./extension/index.ts"
+    ]
+  },
+  "bin": {
+    "yu": "./dist/bin/yu.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@colbymchenry/codegraph": "latest",
+    "@earendil-works/pi-coding-agent": ">=0.74.0",
+    "@tintinweb/pi-subagents": "^0.8.0",
+    "opencode-codebase-index": "latest",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.19",
+    "typescript": "^6.0.3"
+  }
+}
