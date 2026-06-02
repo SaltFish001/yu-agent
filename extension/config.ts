@@ -101,7 +101,7 @@ export const AGENT_TYPES: Record<string, AgentTypeConfig> = {
 
   search: {
     displayName: 'Search Agent',
-    description: '代码库搜索 + 网页搜索',
+    description: '语义代码搜索 (CodeGraph) + 网页搜索',
     model: 'v4-flash',
     thinking: 'high',
     maxTurns: 15,
