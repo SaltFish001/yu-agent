@@ -9,23 +9,30 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { z } from 'zod';
 import { YU_HOME } from '../paths.js';
 
-// ── Types ──────────────────────────────────────────────
+// ── Zod schemas ────────────────────────────────────────
 
-export type FactCategory = 'counter' | 'pref' | 'secret' | 'milestone';
+const FactCategorySchema = z.enum(['counter', 'pref', 'secret', 'milestone']);
 
-export interface FactEntry {
-  key: string;
-  value: unknown;
-  category: FactCategory;
-  created_at: number;
-  ttl_days: number | null; // null = permanent
-}
+export type FactCategory = z.infer<typeof FactCategorySchema>;
 
-export interface FactsStore {
-  entries: FactEntry[];
-}
+const FactEntrySchema = z.object({
+  key: z.string(),
+  value: z.unknown(),
+  category: FactCategorySchema,
+  created_at: z.number(),
+  ttl_days: z.number().nullable(),
+});
+
+export type FactEntry = z.infer<typeof FactEntrySchema>;
+
+const FactsStoreSchema = z.object({
+  entries: z.array(FactEntrySchema),
+});
+
+export type FactsStore = z.infer<typeof FactsStoreSchema>;
 
 // ── Constants ──────────────────────────────────────────
 
@@ -36,7 +43,10 @@ const FACTS_PATH = resolve(YU_HOME, 'facts.json');
 function loadRaw(): FactsStore {
   try {
     if (existsSync(FACTS_PATH)) {
-      return JSON.parse(readFileSync(FACTS_PATH, 'utf-8'));
+      const raw = JSON.parse(readFileSync(FACTS_PATH, 'utf-8'));
+      const result = FactsStoreSchema.safeParse(raw);
+      if (result.success) return result.data;
+      console.warn('[yu-memory] facts.json validation failed, resetting:', result.error.issues);
     }
   } catch (err) {
     console.warn('[yu-memory] facts.json corrupted or unreadable, resetting:', err);
@@ -192,9 +202,12 @@ export function factHealth(): { ok: boolean; issues: string[]; total: number; fi
 
   let store: FactsStore;
   try {
-    store = JSON.parse(readFileSync(FACTS_PATH, 'utf-8'));
-    if (!Array.isArray(store.entries)) {
-      issues.push('facts.json: entries is not an array');
+    const raw = JSON.parse(readFileSync(FACTS_PATH, 'utf-8'));
+    const result = FactsStoreSchema.safeParse(raw);
+    if (result.success) {
+      store = result.data;
+    } else {
+      issues.push(`facts.json: schema validation failed: ${result.error.issues.map(i => i.message).join('; ')}`);
       store = { entries: [] };
     }
   } catch (err) {

@@ -15,6 +15,8 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { loadAppConfig } from './config.js';
+import { YU_HOME } from './paths.js';
 import { getSessionTag } from './session-context.js';
 import { getSummary, getCache } from './db.js';
 import { ringStats, sceneGet, factStats } from './memory/index.js';
@@ -42,10 +44,16 @@ interface PersonalityProfile {
   };
 }
 
-const PROFILE_PATH = resolve(
-  import.meta.dirname || __dirname,
-  'personality.json',
-);
+function getProfilePath(): string {
+  const cfg = loadAppConfig();
+  if (cfg.identity?.personalityPath) {
+    return resolve(YU_HOME, cfg.identity.personalityPath);
+  }
+  // default: ~/.yu/personality.json
+  return resolve(YU_HOME, 'personality.json');
+}
+
+const PROFILE_PATH = getProfilePath();
 
 let _profile: PersonalityProfile | null = null;
 

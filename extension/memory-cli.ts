@@ -30,10 +30,29 @@ import {
   memoryHealth,
 } from './memory/index.js';
 
+// ── Input sanitizer ────────────────────────────────────
+
+const MAX_INPUT_LENGTH = 512;
+const CONTROL_CHAR_RE = /[\x00-\x1F\x7F]/g;
+
+function sanitizeInput(value: string): string {
+  return value
+    .replace(CONTROL_CHAR_RE, '')       // remove control characters
+    .slice(0, MAX_INPUT_LENGTH);         // truncate
+}
+
+/** Sanitize all elements of a string array in place. */
+function sanitizeArgsArray(arr: string[]): string[] {
+  return arr.map(sanitizeInput);
+}
+
 export async function memoryCommand(
   subcommand: string,
   args: string[],
 ): Promise<string> {
+  subcommand = sanitizeInput(subcommand);
+  args = sanitizeArgsArray(args);
+
   switch (subcommand) {
     // ── stats ────────────────────────────────────────
     case 'stats': {
@@ -100,7 +119,7 @@ export async function memoryCommand(
       for (const arg of args) {
         const eqIdx = arg.indexOf('=');
         if (eqIdx > 0) {
-          updates[arg.slice(0, eqIdx)] = arg.slice(eqIdx + 1);
+          updates[sanitizeInput(arg.slice(0, eqIdx))] = sanitizeInput(arg.slice(eqIdx + 1));
         }
       }
       if (Object.keys(updates).length === 0) {
@@ -115,12 +134,12 @@ export async function memoryCommand(
       if (args.length < 2) {
         return 'Usage: yu memory fact-set <key> <value> [--ttl N] [--cat counter|pref|secret|milestone]';
       }
-      const key = args[0];
-      const valStr = args[1];
+      const key = sanitizeInput(args[0]);
+      const valStr = sanitizeInput(args[1]);
       const ttlIdx = args.indexOf('--ttl');
       const catIdx = args.indexOf('--cat');
       const ttlDays = ttlIdx >= 0 ? parseInt(args[ttlIdx + 1]) || null : null;
-      const category = catIdx >= 0 ? args[catIdx + 1] as any : 'milestone';
+      const category = catIdx >= 0 ? sanitizeInput(args[catIdx + 1]) as any : 'milestone';
 
       // Try to parse as number
       const val = isNaN(Number(valStr)) ? valStr : Number(valStr);
@@ -134,7 +153,7 @@ export async function memoryCommand(
       if (args.length < 1) {
         return 'Usage: yu memory fact-inc <key> [by]';
       }
-      const key = args[0];
+      const key = sanitizeInput(args[0]);
       const by = parseInt(args[1]) || 1;
       const newVal = factIncrement(key, by);
       return `Counter "${key}" = ${newVal}`;
@@ -145,8 +164,9 @@ export async function memoryCommand(
       if (args.length < 1) {
         return 'Usage: yu memory fact-del <key>';
       }
-      const ok = factDelete(args[0]);
-      return ok ? `Deleted: ${args[0]}` : `Not found: ${args[0]}`;
+      const key = sanitizeInput(args[0]);
+      const ok = factDelete(key);
+      return ok ? `Deleted: ${key}` : `Not found: ${key}`;
     }
 
     // ── health ──────────────────────────────────────

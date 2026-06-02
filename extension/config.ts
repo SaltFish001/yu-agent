@@ -8,10 +8,95 @@
  * through pi-subagents' API. This config provides the type definitions.
  */
 
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 import { registerAgents as registerPiSubagents } from '@tintinweb/pi-subagents/dist/agent-types.js';
-import { PROMPTS_DIR } from './paths.js';
+import { z } from 'zod';
+import { MCP_CONFIG_PATH, PROMPTS_DIR, YU_HOME } from './paths.js';
+
+// ── MCP config schema ─────────────────────────────────
+
+const McpServerConfigSchema = z.object({
+  command: z.string().min(1, 'command is required'),
+  args: z.array(z.string()).optional(),
+  env: z.record(z.string()).optional(),
+});
+
+const McpConfigSchema = z.object({
+  servers: z.record(McpServerConfigSchema),
+});
+
+export type McpConfig = z.infer<typeof McpConfigSchema>;
+
+/**
+ * Validate ~/.yu/mcp.config.json at startup.
+ * On failure, prints a clear error and exits the process.
+ */
+export function validateMcpConfig(): void {
+  if (!existsSync(MCP_CONFIG_PATH)) {
+    return; // no config is fine
+  }
+
+  let raw: string;
+  try {
+    raw = readFileSync(MCP_CONFIG_PATH, 'utf-8');
+  } catch (err) {
+    console.error(`[yu-agent] Failed to read ${MCP_CONFIG_PATH}: ${err}`);
+    process.exit(1);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    console.error(`[yu-agent] ${MCP_CONFIG_PATH} is not valid JSON: ${err}`);
+    process.exit(1);
+  }
+
+  const result = McpConfigSchema.safeParse(parsed);
+  if (!result.success) {
+    console.error(`[yu-agent] ${MCP_CONFIG_PATH} failed validation:`);
+    for (const issue of result.error.issues) {
+      console.error(`  - ${issue.path.join('.')}: ${issue.message}`);
+    }
+    process.exit(1);
+  }
+}
+
+// ── General application config ─────────────────────────
+
+/**
+ * Full application configuration read from ~/.yu/config.json.
+ */
+export interface AppConfig {
+  identity?: {
+    /** Path to personality.json profile. Defaults to ~/.yu/personality.json. */
+    personalityPath?: string;
+  };
+}
+
+const APP_CONFIG_PATH = resolve(YU_HOME, 'config.json');
+
+let _appConfig: AppConfig | null = null;
+
+/**
+ * Load ~/.yu/config.json (cached after first call).
+ * Returns an empty object if the file doesn't exist or is invalid.
+ */
+export function loadAppConfig(): AppConfig {
+  if (_appConfig) return _appConfig;
+  try {
+    if (existsSync(APP_CONFIG_PATH)) {
+      const raw = readFileSync(APP_CONFIG_PATH, 'utf-8');
+      _appConfig = JSON.parse(raw) as AppConfig;
+      return _appConfig;
+    }
+  } catch (err) {
+    console.warn('[yu-agent] Failed to load app config, using defaults:', err);
+  }
+  _appConfig = {};
+  return _appConfig;
+}
 
 // ── Agent type definition ─────────────────────────────
 

@@ -13,11 +13,14 @@
  */
 
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { registerAgents } from './config.js';
+import { registerAgents, validateMcpConfig } from './config.js';
 import { startMCPManager } from './mcp-manager.js';
 import { setupMonitor } from './monitor.js';
 
 export default function (pi: ExtensionAPI): void {
+  // Validate mcp.config.json before anything else
+  validateMcpConfig();
+
   // Register all 7 agent types with pi-subagents
   registerAgents();
 
