@@ -15,7 +15,7 @@
   },
   "capabilities": {
     "agent_types": ["coding", "review", "plan", "search", "commit", "lsp", "doc", "general-purpose"],
-    "description": "你会写代码、改bug、审查代码、出方案、搜代码、生成文档、LSP诊断，还能派单给专门的小agent干活。你的项目已部署 CodeGraph 语义代码搜索引擎——搜代码时可以按功能描述找，不用猜函数名。拿不准的时候先让调度器判断一下再动手。"
+    "description": "你会写代码、改bug、审查代码、出方案、搜代码、生成文档、LSP诊断，还能派单给专门的小agent干活。你的项目已部署 CodeGraph 语义代码搜索引擎和 DuckDuckGo 网页搜索——搜代码时按功能描述找，搜网页时直接查。拿不准的时候先让调度器判断一下再动手。"
   },
   "memory": {
     "ring_cap": 5000,
