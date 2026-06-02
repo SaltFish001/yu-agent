@@ -7,7 +7,8 @@
  *   2. Parse JSON output → determine intent, agents, parallel groups
  *   3. If non-programming → pass through to Pi native agent
  *   4. If programming → spawn sub-agents in parallel groups, handle results
- *   5. LSP verification → test run → decisions → merge → return
+ *   5. Diff review — git diff surfaced for agent self-review
+ *   6. LSP verification → test run → decisions → merge → return
  *
  * Timeout: sub-agents use AGENT_TIMEOUT_MS (120s, from executor.ts).
  *          The scheduler agent itself also uses AGENT_TIMEOUT_MS (classifier.ts).
@@ -17,6 +18,8 @@ import type { SpawnResult } from './spawn.js';
 import { classifyIntent, } from './classifier.js';
 import {
   runParallelGroup,
+  reviewDiff,
+  printDiffSummary,
 } from './executor.js';
 
 import type { SchedulerContext } from './types.js';
@@ -93,6 +96,12 @@ export async function handler(
       if (output && 'files_modified' in output && Array.isArray((output as CodingOutput).files_modified)) {
         modifiedFiles.push(...(output as CodingOutput).files_modified);
       }
+    }
+
+    // Step 4b: Diff review — show the agent what changed
+    if (modifiedFiles.length > 0) {
+      const diffInfo = reviewDiff();
+      printDiffSummary(diffInfo);
     }
 
     // Step 5: LSP verification

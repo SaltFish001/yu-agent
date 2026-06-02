@@ -8,6 +8,7 @@
 import { spawnAgent, type SpawnConfig } from './spawn.js';
 import type { SpawnResult } from './spawn.js';
 import { trackAgent } from './tracker.js';
+import { execSync } from 'node:child_process';
 
 // ── Constants ──────────────────────────────────────────
 
@@ -88,6 +89,76 @@ export async function runWithConcurrencyLimit<T>(
   const workers = Array.from({ length: workerCount }, () => worker());
   await Promise.all(workers);
   return results;
+}
+
+// ── Diff review ────────────────────────────────────────
+
+/**
+ * Run git diff and print the changes.
+ * Used as a quality gate: after agents modify files, the diff is
+ * surfaced so the coding agent can review its own changes before
+ * moving to LSP verification → tests → commit.
+ *
+ * Returns an object with:
+ *   - diff: the raw git diff output (empty string if no changes)
+ *   - hasChanges: boolean indicating if there are uncommitted changes
+ *   - stats: short stat summary (files changed, insertions, deletions)
+ */
+export function reviewDiff(): { diff: string; hasChanges: boolean; stats: string } {
+  try {
+    const stats = execSync('git diff --stat', {
+      encoding: 'utf-8',
+      timeout: 5000,
+      cwd: process.cwd(),
+    }).trim();
+
+    const diff = execSync('git diff', {
+      encoding: 'utf-8',
+      timeout: 5000,
+      cwd: process.cwd(),
+    });
+
+    // Also check for staged changes (in case of partial commits)
+    const stagedDiff = execSync('git diff --cached --stat', {
+      encoding: 'utf-8',
+      timeout: 5000,
+      cwd: process.cwd(),
+    }).trim();
+
+    const hasChanges = diff.length > 0 || stagedDiff.length > 0;
+
+    return { diff, hasChanges, stats };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn('[yu-agent] git diff failed:', msg);
+    return { diff: '', hasChanges: false, stats: '' };
+  }
+}
+
+/**
+ * Log a summary of the diff to the console.
+ * This is called automatically after agents finish modifying files,
+ * giving the user (and the agent) visibility into what changed.
+ */
+export function printDiffSummary(diffResult: { diff: string; hasChanges: boolean; stats: string }): void {
+  if (!diffResult.hasChanges) {
+    console.log('[yu-agent] No changes detected after agent execution.');
+    return;
+  }
+
+  console.log('');
+  console.log('═ y u - a g e n t   D i f f   R e v i e w ═══════════════════════');
+  console.log('');
+
+  if (diffResult.stats) {
+    console.log(`  ${diffResult.stats}`);
+    console.log('');
+  }
+
+  // Show the full diff
+  console.log(diffResult.diff);
+  console.log('════════════════════════════════════════════════════════════════');
+  console.log('');
 }
 
 export async function runParallelGroup(
