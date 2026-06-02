@@ -107,6 +107,9 @@ function getDb(): DatabaseSync {
   db = new DatabaseSync(path);
   db.exec('PRAGMA journal_mode=WAL');
   db.exec('PRAGMA synchronous=NORMAL');
+  // Wait up to 3 seconds for lock instead of immediately failing
+  // Handles concurrent writes from multiple yu-agent processes
+  db.exec('PRAGMA busy_timeout=3000');
   initSchema(db);
   runMigrations(db);
   _dbs.set(path, db);
@@ -482,12 +485,18 @@ export function getAgents(tag: string): string | null {
 // ── MCP ──────────────────────────────────────────────────
 
 export function upsertMCP(tag: string, dataJson: string, updatedAt: number = Date.now()): void {
-  const db = getDb();
-  db.prepare(`
-    INSERT INTO mcp (tag, data, updated_at)
-    VALUES (?, ?, ?)
-    ON CONFLICT(tag) DO UPDATE SET data = ?, updated_at = ?
-  `).run(tag, dataJson, updatedAt, dataJson, updatedAt);
+  try {
+    const db = getDb();
+    db.prepare(`
+      INSERT INTO mcp (tag, data, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(tag) DO UPDATE SET data = ?, updated_at = ?
+    `).run(tag, dataJson, updatedAt, dataJson, updatedAt);
+  } catch (err: unknown) {
+    // MCP status writing is non-critical — log and move on
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[yu-agent/db] upsertMCP failed (non-critical): ${msg}`);
+  }
 }
 
 export function getMCP(tag: string): string | null {
