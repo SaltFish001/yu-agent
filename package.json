@@ -22,6 +22,7 @@
       "./extension/resumer.ts",
       "./extension/session-cmd.ts",
       "./extension/monitor.ts",
+      "./extension/memory-plugin.ts",
       "./extension/index.ts"
     ]
   },

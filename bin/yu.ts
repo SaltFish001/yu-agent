@@ -44,7 +44,7 @@ async function printCacheStats(): Promise<void> {
 
 const COMMANDS = new Set([
   'review', 'plan', 'team', 'coding',
-  'commit', 'doc', 'search', 'lsp', 'run', 'monitor', 'session',
+  'commit', 'doc', 'search', 'lsp', 'run', 'monitor', 'session', 'memory',
 ]);
 
 // ── Help text ──────────────────────────────────────────
@@ -80,6 +80,12 @@ Session Management:
   yu session backup [path]     Backup sessions database
   yu session restore <path>    Restore sessions from backup
   yu session clean [--days N]  Clean sessions older than N days (default 7)
+
+Memory System:
+  yu memory stats              Show memory stats (ring + facts + scene)
+  yu memory recent [n]         Show recent ring memory entries
+  yu memory facts [category]   List facts by category
+  yu memory scene              Show current scene state
 
 Team Mode:
   yu team create <name> ...    Create a team for multi-agent work
@@ -305,6 +311,16 @@ async function mainCli(): Promise<void> {
     } else {
       process.exit(0);
     }
+  }
+
+  // `yu memory <subcommand>` — memory system management
+  if (args[0] === 'memory') {
+    const subcommand = args[1] || 'stats';
+    const memArgs = args.slice(2);
+    const { memoryCommand } = await import('../extension/memory-cli.js');
+    const result = await memoryCommand(subcommand, memArgs);
+    console.log(result);
+    process.exit(0);
   }
 
   // `yu monitor` — live dashboard
