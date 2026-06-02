@@ -8,8 +8,8 @@
  * through pi-subagents' API. This config provides the type definitions.
  */
 
-import { existsSync, readFileSync } from 'fs';
-import { resolve } from 'path';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { registerAgents as registerPiSubagents } from '@tintinweb/pi-subagents/dist/agent-types.js';
 import { z } from 'zod';
 import { MCP_CONFIG_PATH, PROMPTS_DIR, YU_HOME } from './paths.js';

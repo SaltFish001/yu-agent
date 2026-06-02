@@ -1,37 +1,26 @@
-/**
- * yu-agent — Team mode orchestrator.
- *
- * Extracted from scheduler.ts for maintainability.
- * Handles the architect-searcher → coder-reviewer → conflict-detection
- * multi-agent orchestration pipeline.
- */
 
-import { spawnAgent, type SpawnConfig } from './spawn.js';
 import {
   runParallelGroup,
   type AgentTask,
-  AGENT_TIMEOUT_MS,
 } from './executor.js';
 import { parseAgentOutput } from './template.js';
-import type { CodingOutput, ReviewOutput } from './template.js';
+import type { ReviewOutput } from './template.js';
 import { writeTeamStatus } from './status.js';
-import { trackAgent, loadDecisions } from './tracker.js';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, watch } from 'fs';
-import { resolve, join } from 'path';
-import { execSync } from 'child_process';
-import type { SchedulerContext } from './types.js';
+import { readFileSync, existsSync, mkdirSync, watch } from 'node:fs';
+import { resolve, } from 'node:path';
+import { execSync } from 'node:child_process';
 import type { SchedulerPlan } from './classifier.js';
-import { DATA_DIR, TEMP_DIR } from './paths.js';
+import { TEMP_DIR } from './paths.js';
 
 // ── Constants ──────────────────────────────────────────
 
-const MAX_RETRY_TEAM = 2;
+const _MAX_RETRY_TEAM = 2;
 const TEAM_FILE_TIMEOUT_MS = 120_000;
 
 // ── Team mode orchestrator ─────────────────────────────
 
 export async function runTeamMode(
-  plan: SchedulerPlan,
+  _plan: SchedulerPlan,
   context: Record<string, unknown>,
 ): Promise<string> {
   const taskId = `team-${Date.now()}`;
@@ -79,7 +68,7 @@ export async function runTeamMode(
   // Wait for plan.md with fs.watch timeout
   if (!existsSync(planFile)) {
     await new Promise<void>((resolveTimeout, reject) => {
-      const watcher = watch(sharedDir, (eventType, filename) => {
+      const watcher = watch(sharedDir, (_eventType, filename) => {
         if (filename === 'plan.md' && existsSync(planFile)) {
           watcher.close();
           resolveTimeout();
@@ -118,9 +107,9 @@ export async function runTeamMode(
   if (modules.length === 0) {
     // Fallback: extract modules from markdown headings (## Module Name)
     const headingRegex = /^##\s+(.+)/gm;
-    let match;
-    while ((match = headingRegex.exec(planContent)) !== null) {
-      modules.push({ name: match[1].trim(), files: [], independent: true });
+    const matchResult = planContent.matchAll(headingRegex);
+    for (const m of matchResult) {
+      modules.push({ name: m[1].trim(), files: [], independent: true });
     }
   }
   if (modules.length === 0) {

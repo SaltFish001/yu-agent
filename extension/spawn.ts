@@ -20,8 +20,8 @@ import { createAgentSession, DefaultResourceLoader, SessionManager, SettingsMana
   type CreateAgentSessionOptions,
 } from '@earendil-works/pi-coding-agent';
 
-import { join } from 'path';
-import { mkdirSync } from 'fs';
+import { join } from 'node:path';
+import { mkdirSync } from 'node:fs';
 import { PI_AGENT_DIR, POOL_SESSIONS_DIR } from './paths.js';
 
 // ── 配置常量 ──────────────────────────────────────────
@@ -124,11 +124,9 @@ export class SessionPool {
    * Each pool type gets its own subdirectory for isolation.
    */
   private persistDir: string | null = null;
-  private poolType: string = 'default';
 
   /** Enable disk persistence for this pool. Sessions survive process restarts. */
-  setPersist(poolType: string, dir: string): void {
-    this.poolType = poolType;
+  setPersist(_poolType: string, dir: string): void {
     this.persistDir = dir;
   }
   /** Serialization mutex: prevents concurrent call() from corrupting shared session */
@@ -386,7 +384,7 @@ export class SessionPool {
    * 用于 scheduler 等需要强制输出格式的 agent 类型。
    * 利用 recency effect——LLM 倾向于以最后看到的指令为准。
    */
-  private buildTaskSuffix(cfg: SpawnConfig): string {
+  private buildTaskSuffix(_cfg: SpawnConfig): string {
     // 格式提醒已注入 system prompt，user message 不再需要
     return '';
   }

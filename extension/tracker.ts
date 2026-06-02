@@ -7,11 +7,9 @@
  */
 
 import type { AgentStatus } from './status.js';
-import type { SchedulerPlan } from './classifier.js';
 import { writeAgentStatus, writeSnapshot, buildSummary, writeCacheStats } from './status.js';
 import { getAllPoolsStats } from './spawn.js';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { resolve } from 'path';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { DATA_DIR, DECISIONS_FILE } from './paths.js';
 
 // ── Constants ──────────────────────────────────────────

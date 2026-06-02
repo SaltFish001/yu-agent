@@ -8,13 +8,10 @@
  * Hook registration happens via extension/index.ts.
  */
 
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { pollAndInject, ackMessages } from './mailbox.js';
 import {
   registerTeamSession,
   unregisterTeamSession,
   getTeamSession,
-  type TeamContext,
 } from './session.js';
 
 export { registerTeamSession, unregisterTeamSession, getTeamSession } from './session.js';

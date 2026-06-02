@@ -14,11 +14,9 @@
  */
 
 import type { SpawnResult } from './spawn.js';
-import { classifyIntent, type SchedulerPlan } from './classifier.js';
+import { classifyIntent, } from './classifier.js';
 import {
   runParallelGroup,
-  type AgentTask,
-  AGENT_TIMEOUT_MS,
 } from './executor.js';
 
 import type { SchedulerContext } from './types.js';
@@ -76,7 +74,7 @@ export async function handler(
     const agentMap = new Map(agentTasks.map((t) => [t.id, t]));
 
     // Step 3: Execute parallel groups in order
-    let allResults = new Map<string, SpawnResult>();
+    const allResults = new Map<string, SpawnResult>();
     const groups = plan.parallel_groups || agentTasks.map((t) => [t.id]);
 
     const context = { decisions: loadDecisions() };

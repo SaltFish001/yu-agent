@@ -13,10 +13,9 @@
  * Zero external dependencies — uses only Node.js built-ins.
  */
 
-import { readFileSync, watch, existsSync } from 'fs';
-import { resolve } from 'path';
-import { homedir } from 'os';
-import { createInterface } from 'readline';
+import { readFileSync, watch, existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { homedir } from 'node:os';
 
 const STATUS_DIR = resolve(homedir(), '.yu');
 
@@ -29,7 +28,7 @@ const RESET = '\x1B[0m';
 const RED = '\x1B[31m';
 const GREEN = '\x1B[32m';
 const YELLOW = '\x1B[33m';
-const BLUE = '\x1B[34m';
+const _BLUE = '\x1B[34m';
 const CYAN = '\x1B[36m';
 const GRAY = '\x1B[90m';
 
@@ -188,7 +187,7 @@ console.log(render());
 
 // Watch for any JSON change in status dir
 try {
-  watch(STATUS_DIR, (eventType, filename) => {
+  watch(STATUS_DIR, (_eventType, filename) => {
     if (filename?.endsWith('.json')) {
       console.log(CLEAR);
       console.log(render());

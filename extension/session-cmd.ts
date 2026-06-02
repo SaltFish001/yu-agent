@@ -18,6 +18,7 @@ import { listSessions, getSessionMeta, getMessages } from './db.js';
 export default function (pi: ExtensionAPI): void {
   pi.registerCommand('session', {
     description: '查看/恢复历史 session。用法：/session list, /session resume <tag>, /session show <tag>',
+    // biome-ignore lint/suspicious/noExplicitAny: ExtensionCommandContext type not exported
     handler: async (args: string, ctx: any) => {
       const parts = args.trim().split(/\s+/);
       const sub = parts[0]?.toLowerCase() || '';
@@ -63,8 +64,9 @@ export default function (pi: ExtensionAPI): void {
           try {
             await ctx.switchSession(piPath);
             ctx.ui.notify(`Switched to session: ${meta.name || picked.tag}`, 'info');
-          } catch (e: any) {
-            ctx.ui.notify(`Failed to switch session: ${e.message}`, 'error');
+          } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
+            ctx.ui.notify(`Failed to switch session: ${msg}`, 'error');
           }
           return;
         }
@@ -103,8 +105,9 @@ export default function (pi: ExtensionAPI): void {
         try {
           await ctx.switchSession(piPath);
           ctx.ui.notify(`Switched to session: ${meta.name || tag}`, 'info');
-        } catch (e: any) {
-          ctx.ui.notify(`Failed to switch session: ${e.message}`, 'error');
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          ctx.ui.notify(`Failed to switch session: ${msg}`, 'error');
         }
         return;
       }

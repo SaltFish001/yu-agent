@@ -11,9 +11,8 @@
  *   const result = await teamSession.call(task, spawnCfg);
  */
 
-import type { SpawnConfig, SpawnResult } from '../spawn.js';
+import type { SpawnResult } from '../spawn.js';
 import { pollAndInject, ackMessages, resolveBaseDir, getStatePath } from './mailbox.js';
-import { updateMemberSession } from './runtime.js';
 import { readFile } from 'node:fs/promises';
 import { RuntimeStateSchema } from './types.js';
 

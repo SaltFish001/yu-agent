@@ -223,7 +223,7 @@ async function acquireInboxLock(inboxDir: string): Promise<string> {
       }
 
       if (i >= maxRetries - 1) {
-        throw new Error('Failed to acquire inbox lock after ' + maxRetries + ' retries');
+        throw new Error(`Failed to acquire inbox lock after ${maxRetries} retries`);
       }
       await new Promise((r) => setTimeout(r, 100));
     }

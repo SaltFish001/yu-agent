@@ -16,16 +16,12 @@
 import {
   ringRecent,
   ringStats,
-  ringHealth,
   sceneGet,
   sceneSet,
-  sceneSetClothing,
-  sceneHealth,
   factSet,
   factIncrement,
   factList,
   factStats,
-  factHealth,
   factDelete,
   memoryHealth,
 } from './memory/index.js';
@@ -33,7 +29,8 @@ import {
 // ── Input sanitizer ────────────────────────────────────
 
 const MAX_INPUT_LENGTH = 512;
-const CONTROL_CHAR_RE = /[\x00-\x1F\x7F]/g;
+// biome-ignore lint/complexity/useRegexLiterals: need RegExp to avoid control char lint
+const CONTROL_CHAR_RE = new RegExp('[\\x00-\\x1F\\x7F]', 'g');
 
 function sanitizeInput(value: string): string {
   return value
@@ -73,7 +70,7 @@ export async function memoryCommand(
 
     // ── recent ───────────────────────────────────────
     case 'recent': {
-      const n = parseInt(args[0]) || 15;
+      const n = parseInt(args[0], 10) || 15;
       const msgs = ringRecent(n);
       if (msgs.length === 0) return 'No ring memory entries.';
       return msgs
@@ -87,7 +84,7 @@ export async function memoryCommand(
 
     // ── facts ────────────────────────────────────────
     case 'facts': {
-      const cat = args[0] as any;
+      const cat = args[0] as 'counter' | 'pref' | 'secret' | 'milestone' | undefined;
       const entries = factList(cat);
       if (entries.length === 0) return 'No facts found.';
       return entries
@@ -125,7 +122,7 @@ export async function memoryCommand(
       if (Object.keys(updates).length === 0) {
         return 'Usage: yu memory scene-set location=办公室 mode=omote';
       }
-      const s = sceneSet(updates as any);
+      const s = sceneSet(updates as Record<string, string>);
       return `Scene updated: ${s.scene.location} (${s.scene.mode})`;
     }
 
@@ -138,11 +135,11 @@ export async function memoryCommand(
       const valStr = sanitizeInput(args[1]);
       const ttlIdx = args.indexOf('--ttl');
       const catIdx = args.indexOf('--cat');
-      const ttlDays = ttlIdx >= 0 ? parseInt(args[ttlIdx + 1]) || null : null;
-      const category = catIdx >= 0 ? sanitizeInput(args[catIdx + 1]) as any : 'milestone';
+      const ttlDays = ttlIdx >= 0 ? parseInt(args[ttlIdx + 1], 10) || null : null;
+      const category: 'counter' | 'pref' | 'secret' | 'milestone' = catIdx >= 0 ? sanitizeInput(args[catIdx + 1]) as 'counter' | 'pref' | 'secret' | 'milestone' : 'milestone';
 
       // Try to parse as number
-      const val = isNaN(Number(valStr)) ? valStr : Number(valStr);
+      const val = Number.isNaN(Number(valStr)) ? valStr : Number(valStr);
 
       factSet(key, val, category, ttlDays);
       return `Fact set: ${key} = ${JSON.stringify(val)} (${category})`;
@@ -154,7 +151,7 @@ export async function memoryCommand(
         return 'Usage: yu memory fact-inc <key> [by]';
       }
       const key = sanitizeInput(args[0]);
-      const by = parseInt(args[1]) || 1;
+      const by = parseInt(args[1], 10) || 1;
       const newVal = factIncrement(key, by);
       return `Counter "${key}" = ${newVal}`;
     }
@@ -216,6 +213,6 @@ function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  const val = bytes / Math.pow(1024, i);
+  const val = bytes / 1024 ** i;
   return `${val.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }

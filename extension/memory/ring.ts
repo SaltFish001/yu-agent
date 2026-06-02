@@ -122,7 +122,7 @@ export function ringSearch(
   const like = `%${keyword}%`;
   return db.prepare(
     'SELECT * FROM ring_memory WHERE content LIKE ? ORDER BY created_at DESC LIMIT ?',
-  ).all(like, limit) as any[];
+  ).all(like, limit) as unknown as RingEntry[];
 }
 
 /**

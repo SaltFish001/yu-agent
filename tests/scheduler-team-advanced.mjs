@@ -225,7 +225,7 @@ test('saveDecision: creates dir and file', () => {
   const dir = join(TEST_TEMP, 'sd1'); const f = join(dir, 'decisions.json');
   saveDecision('k1', 42, dir, f);
   ok(existsSync(f));
-  strictEqual(JSON.parse(readFileSync(f, 'utf-8'))['k1'], 42);
+  strictEqual(JSON.parse(readFileSync(f, 'utf-8')).k1, 42);
 });
 
 test('saveDecision: appends to existing file', () => {
@@ -469,10 +469,10 @@ test('e2e: create → task → delete cycle', async () => {
   const { teamCommand } = await import('../dist/extension/team/index.js');
   const createOut = await teamCommand('create', ['e2e-cycle', 'lead:plan', 'dev:coding']);
   const runId = createOut.match(/runId: ([^\s)]+)/)?.[1];
-  ok(runId, 'should get runId: ' + createOut);
+  ok(runId, `should get runId: ${createOut}`);
 
   const taskOut = await teamCommand('task', [runId, 'create', 'Fix bug', 'Broken login']);
-  ok(taskOut.includes('Fix bug'), 'task created: ' + taskOut);
+  ok(taskOut.includes('Fix bug'), `task created: ${taskOut}`);
 
   const listOut = await teamCommand('task', [runId, 'list']);
   ok(listOut.includes('Fix bug'), 'task in list');

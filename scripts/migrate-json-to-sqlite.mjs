@@ -15,7 +15,7 @@ import { homedir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 
 const STATUS_DIR = resolve(homedir(), 'yu-agent', 'status');
-const ALT_STATUS_DIR = resolve(homedir(), '.yu-agent', 'status');
+const _ALT_STATUS_DIR = resolve(homedir(), '.yu-agent', 'status');
 const args = process.argv.slice(2);
 const dirIdx = args.indexOf('--dir');
 const targetDir = dirIdx !== -1 && dirIdx + 1 < args.length
@@ -136,7 +136,7 @@ const upsertTeamStmt = db.prepare(`
 let imported = 0;
 
 for (const [tag, entries] of tagMap) {
-  let updatedAt = Date.now();
+  const updatedAt = Date.now();
   const ups = [];
 
   // Session metadata

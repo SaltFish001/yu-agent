@@ -5,7 +5,7 @@
  * 用 node 直接跑：node tests/run.js
  */
 
-import { strictEqual, deepStrictEqual, ok } from 'node:assert';
+import { strictEqual, ok } from 'node:assert';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,7 +27,7 @@ function test(name, fn) {
   }
 }
 
-function assertContains(actual, expected) {
+function _assertContains(actual, expected) {
   if (!actual.includes(expected)) {
     throw new Error(`Expected "${actual}" to contain "${expected}"`);
   }

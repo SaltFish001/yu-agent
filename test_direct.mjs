@@ -1,5 +1,4 @@
-// Direct test of general-purpose agent
-import { getAgentTypeConfig } from './dist/extension/config.js';
+
 import { getSessionPool } from './dist/extension/spawn.js';
 import { parseSchedulerOutput } from './dist/extension/template.js';
 

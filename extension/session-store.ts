@@ -24,8 +24,8 @@ function extractText(msg: { content?: unknown; role?: string }): string {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
     return content
-      .filter((b: any) => b?.type === 'text' && typeof b.text === 'string')
-      .map((b: any) => b.text)
+      .filter((b: Record<string, unknown>) => b?.type === 'text' && typeof b.text === 'string')
+      .map((b: Record<string, unknown>) => b.text as string)
       .join('\n');
   }
   return '';

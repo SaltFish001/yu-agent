@@ -118,7 +118,7 @@ export async function teamCommand(subcommand: string, args: string[]): Promise<s
         `Status: ${state.status}`,
         'Members:',
         ...state.members.map((m) =>
-          `  ${m.agentType === 'leader' ? '★' : ' '} ${m.name} — ${m.status}${m.sessionId ? ' (session: ' + m.sessionId.slice(0, 8) + '…)' : ''}`,
+          `  ${m.agentType === 'leader' ? '★' : ' '} ${m.name} — ${m.status}${m.sessionId ? ` (session: ${m.sessionId.slice(0, 8)}…)` : ''}`,
         ),
       ].join('\n');
     }

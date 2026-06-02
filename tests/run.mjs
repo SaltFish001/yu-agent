@@ -249,7 +249,7 @@ test('pi-coding-agent 在 dependencies 中', () => {
 // 11. 类型声明中的类型完整性
 console.log('\n🔍 scheduler — 类型完整性检查（编译验证）');
 test('scheduler.js 不包含 as any', () => {
-  const content = readFileSync(resolve(ROOT, 'dist/extension/scheduler.js'), 'utf-8');
+  const _content = readFileSync(resolve(ROOT, 'dist/extension/scheduler.js'), 'utf-8');
   // 编译后的 JS 可能会有少量类型擦除残留，但重点检查源码
   const srcContent = readFileSync(resolve(ROOT, 'extension/scheduler.ts'), 'utf-8');
   // 我们的代码中不应该有 as any 了（除了极少数合理的）

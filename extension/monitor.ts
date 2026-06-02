@@ -28,14 +28,7 @@ const POLL_INTERVAL_MS = 500;
 
 // ── Types (local subset) ───────────────────────────────
 
-interface SummaryData {
-  updatedAt?: number;
-  running?: number;
-  completed?: number;
-  failed?: number;
-  mcpConnected?: number;
-  lspReady?: number;
-}
+// SummaryData — intentionally removed (unused)
 
 interface AgentEntry {
   id: string;
@@ -58,10 +51,7 @@ interface CacheFile {
   hitRate?: number;
 }
 
-interface AgentsFile {
-  updatedAt?: number;
-  agents?: AgentEntry[];
-}
+// AgentsFile — intentionally removed (unused)
 
 // ── Helpers ────────────────────────────────────────────
 
@@ -274,7 +264,7 @@ export function setupMonitor(pi: ExtensionAPI): void {
 
     // Replace Pi startup header with yu-agent branding
     try {
-      ctx.ui.setHeader((tui, theme) => new Text(
+      ctx.ui.setHeader((_tui, theme) => new Text(
         `${theme.bold(theme.fg('accent', 'yu-agent'))}${theme.fg('dim', ' · AI-powered coding agent')}\n` +
         `\n` +
         `${theme.fg('accent', 'Commands')}\n` +

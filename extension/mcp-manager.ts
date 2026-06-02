@@ -19,9 +19,8 @@
  *   }
  */
 
-import { spawn, type ChildProcess } from 'child_process';
-import { readFileSync, existsSync } from 'fs';
-import { resolve } from 'path';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { readFileSync, existsSync } from 'node:fs';
 import {
   type MCPServerStatus,
   writeMCPStatus,
@@ -40,7 +39,7 @@ const RESPONSE_TIMEOUT_MS = 5_000;
  * 白名单正则：只允许字母、数字、_ - . : / = @ % + ~ , # ! 以及空格。
  * 禁止 shell 敏感字符：; | $ ( ) ` { } [ ] & > < \n \r \0
  */
-const SAFE_VALUE_RE = /^[a-zA-Z0-9_\-.:\/=@%+~,#! ]+$/;
+const SAFE_VALUE_RE = /^[a-zA-Z0-9_\-.:/=@%+~,#! ]+$/;
 
 /**
  * 禁止覆盖的危险环境变量（校验时转大写比较）。
@@ -172,12 +171,12 @@ function jsonRpcCall(
     }
 
     const id = nextId();
-    const request = JSON.stringify({
+    const request = `${JSON.stringify({
       jsonrpc: '2.0',
       id,
       method,
       params,
-    }) + '\n';
+    })}\n`;
 
     // 收集响应行
     let buffer = '';
@@ -305,7 +304,7 @@ async function initServer(name: string): Promise<MCPServerStatus> {
 
   // 初始化
   try {
-    const result = await jsonRpcCall(state.process!, 'initialize', {
+    const _result = await jsonRpcCall(state.process!, 'initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
       clientInfo: {
@@ -354,7 +353,7 @@ function writeAllStatus(): void {
 function pingAll(): void {
   for (const [name, state] of _servers) {
     const proc = state.process;
-    if (!proc || !proc.pid || proc.exitCode !== null) {
+    if (!proc?.pid || proc.exitCode !== null) {
       // 进程死了，标记断开
       if (state.status.status !== 'error') {
         state.status = { name, status: 'disconnected' };
@@ -461,7 +460,7 @@ export async function stopMCPManager(): Promise<void> {
     _statusTimer = null;
   }
 
-  for (const [name, state] of _servers) {
+  for (const [_name, state] of _servers) {
     try {
       state.process?.kill();
     } catch {

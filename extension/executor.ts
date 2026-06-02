@@ -7,7 +7,6 @@
 
 import { spawnAgent, type SpawnConfig } from './spawn.js';
 import type { SpawnResult } from './spawn.js';
-import { writeAgentStatus } from './status.js';
 import { trackAgent } from './tracker.js';
 
 // ── Constants ──────────────────────────────────────────

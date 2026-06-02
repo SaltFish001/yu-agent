@@ -13,14 +13,13 @@ import {
   deleteOldSessions, archiveSession, unarchiveSession,
   getDbPath, getStatusDirPath, sessionCount,
   getMessages, getTodos, insertTodo, updateTodoStatus, updateTodoPriority, deleteTodo,
-  forkSession, generateSlug, ensureSlug,
-  updateSessionSummary, updateSessionSummaryStats,
+  forkSession, 
 } from './db.js';
 import { existsSync, statSync, copyFileSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { YU_HOME } from './paths.js';
 
-function fmtTime(ts: number): string {
+function _fmtTime(ts: number): string {
   const d = new Date(ts);
   const pad = (n: number) => n.toString().padStart(2, '0');
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -36,7 +35,7 @@ function fmtAgo(ts: number): string {
 
 function trunc(s: string, max: number): string {
   if (s.length <= max) return s;
-  return s.slice(0, max - 1) + '\u2026';
+  return `${s.slice(0, max - 1)}\u2026`;
 }
 
 export async function sessionCommand(subcommand: string, args: string[]): Promise<string> {
@@ -115,7 +114,7 @@ function cmdClean(args: string[]): string {
   const daysIdx = args.indexOf('--days');
   if (daysIdx !== -1 && daysIdx + 1 < args.length) {
     days = parseInt(args[daysIdx + 1], 10);
-    if (isNaN(days) || days < 0) return 'Invalid --days value. Use a positive number.';
+    if (Number.isNaN(days) || days < 0) return 'Invalid --days value. Use a positive number.';
   }
 
   const cutoff = Date.now() - days * 86400 * 1000;
@@ -162,8 +161,9 @@ function cmdBackup(args: string[]): string {
   try {
     copyFileSync(dbPath, resolved);
     return `Backup created: ${resolved} (${fmtSize(statSync(resolved).size)})`;
-  } catch (e: any) {
-    return `Backup failed: ${e.message}`;
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return `Backup failed: ${msg}`;
   }
 }
 
@@ -205,8 +205,9 @@ async function cmdRestore(args: string[]): Promise<string> {
       lines.push(`Pre-restore backup saved to ${preBackup}`);
     }
     return lines.join('\n');
-  } catch (e: any) {
-    return `Restore failed: ${e.message}`;
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return `Restore failed: ${msg}`;
   }
 }
 
@@ -467,7 +468,7 @@ function cmdTodo(args: string[]): string {
       const idStr = args[2];
       if (!idStr) return 'Usage: yu session todo <tag> done <id>';
       const id = parseInt(idStr, 10);
-      if (isNaN(id)) return `Invalid id: ${idStr}`;
+      if (Number.isNaN(id)) return `Invalid id: ${idStr}`;
       updateTodoStatus(id, 'completed');
       return `Todo #${id} marked as completed.`;
     }
@@ -476,7 +477,7 @@ function cmdTodo(args: string[]): string {
       const idStr = args[2];
       if (!idStr) return 'Usage: yu session todo <tag> delete <id>';
       const id = parseInt(idStr, 10);
-      if (isNaN(id)) return `Invalid id: ${idStr}`;
+      if (Number.isNaN(id)) return `Invalid id: ${idStr}`;
       deleteTodo(id);
       return `Todo #${id} deleted.`;
     }
@@ -486,7 +487,7 @@ function cmdTodo(args: string[]): string {
       const priority = args[3];
       if (!idStr || !priority) return 'Usage: yu session todo <tag> priority <id> <low|medium|high>';
       const id = parseInt(idStr, 10);
-      if (isNaN(id)) return `Invalid id: ${idStr}`;
+      if (Number.isNaN(id)) return `Invalid id: ${idStr}`;
       if (!['low', 'medium', 'high'].includes(priority)) return 'Priority must be low, medium, or high.';
       updateTodoPriority(id, priority);
       return `Todo #${id} priority set to ${priority}.`;

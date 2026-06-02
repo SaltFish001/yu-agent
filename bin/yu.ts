@@ -31,7 +31,7 @@ const PROJECT_ROOT = resolve(__dirname, '..', '..');
 /** Print cache hit-rate summary from SQLite sessions.db if available. */
 async function printCacheStats(): Promise<void> {
   try {
-    const { getDbPath, getCache } = await import('../extension/db.js');
+    const { getCache } = await import('../extension/db.js');
     const { getSessionTag } = await import('../extension/session-context.js');
     const tag = getSessionTag();
     if (!tag || tag === 'shared') return;
@@ -153,8 +153,9 @@ async function runDoctor(): Promise<void> {
       const mcp = JSON.parse(raw);
       const servers = Object.keys(mcp.servers || {});
       mcpDetail = `${MCP_CONFIG_PATH} (${servers.length} servers: ${servers.join(', ') || 'none'})`;
-    } catch (e: any) {
-      mcpDetail = `${MCP_CONFIG_PATH} (解析失败: ${e.message})`;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      mcpDetail = `${MCP_CONFIG_PATH} (解析失败: ${msg})`;
     }
   } else {
     mcpDetail = `${MCP_CONFIG_PATH} (文件不存在)`;
@@ -206,8 +207,9 @@ async function runDoctor(): Promise<void> {
         ? formatBytes(memHealth.components.scene.fileSize)
         : memHealth.components.scene.issues.join('; '),
     });
-  } catch (e: any) {
-    results.push({ name: 'Memory', ok: false, detail: `诊断失败: ${e.message}` });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    results.push({ name: 'Memory', ok: false, detail: `诊断失败: ${msg}` });
   }
 
   // ── Session DB ──
@@ -223,8 +225,9 @@ async function runDoctor(): Promise<void> {
       dbDetail = `${dbPath} (文件不存在, 首次使用时会自动创建)`;
     }
     results.push({ name: 'Session DB', ok: dbExists || true, detail: dbDetail });
-  } catch (e: any) {
-    results.push({ name: 'Session DB', ok: false, detail: `诊断失败: ${e.message}` });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    results.push({ name: 'Session DB', ok: false, detail: `诊断失败: ${msg}` });
   }
 
   // ── Print results ──
@@ -246,7 +249,7 @@ function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  const val = bytes / Math.pow(1024, i);
+  const val = bytes / 1024 ** i;
   return `${val.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
@@ -569,8 +572,9 @@ async function mainCli(): Promise<void> {
         timeout: 15000,
       });
       console.log(result);
-    } catch (e: any) {
-      console.error('Search failed:', e.stderr || e.message);
+    } catch (e: unknown) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      console.error('Search failed:', errMsg);
     }
     process.exit(0);
   }
@@ -595,8 +599,9 @@ async function mainCli(): Promise<void> {
         cwd: PROJECT_ROOT, encoding: 'utf-8', timeout: 10000,
       });
       console.log(callees);
-    } catch (e: any) {
-      console.error('Graph query failed:', e.stderr || e.message);
+    } catch (e: unknown) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      console.error('Graph query failed:', errMsg);
     }
     process.exit(0);
   }
@@ -617,8 +622,9 @@ async function mainCli(): Promise<void> {
         timeout: 30000,
       });
       console.log(result);
-    } catch (e: any) {
-      console.error('Context build failed:', e.stderr || e.message);
+    } catch (e: unknown) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      console.error('Context build failed:', errMsg);
     }
     process.exit(0);
   }

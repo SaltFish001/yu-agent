@@ -70,7 +70,7 @@ export function buildInlineSpec(
   members: { name: string; role: string; prompt?: string; model?: string }[],
   leadIndex = 0,
 ): TeamSpec {
-  const parsedMembers: Member[] = members.map((m, i) => ({
+  const parsedMembers: Member[] = members.map((m, _i) => ({
     kind: 'subagent_type' as const,
     name: m.name,
     subagent_type: m.role,

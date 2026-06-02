@@ -12,7 +12,6 @@
 
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import {
-  ringAppend, ringRecent, ringStats, sceneGet, factStats, factList,
   memoryHealth, RingMemory, FactStore, SceneManager,
 } from './memory/index.js';
 import type { IMemoryRing, IFactStore, ISceneManager, MemoryPluginConfig } from './types.js';
@@ -179,13 +178,14 @@ export default function (pi: ExtensionAPI): void {
   // ── /memory slash command ──
   pi.registerCommand('memory', {
     description: '记忆系统查询。用法: /memory recent [n], /memory stats, /memory facts [category]',
+    // biome-ignore lint/suspicious/noExplicitAny: ExtensionCommandContext type not exported
     handler: async (args: string, ctx: any) => {
       const parts = args.trim().split(/\s+/);
       const sub = parts[0]?.toLowerCase() || '';
 
       // /memory recent [n]
       if (sub === 'recent' || (sub === '' && parts.length <= 1)) {
-        const n = parseInt(parts[1]) || 10;
+        const n = parseInt(parts[1], 10) || 10;
         const msgs = lifecycle.ring.recent(n);
         const lines = msgs.map(m => {
           const time = new Date(m.created_at).toLocaleTimeString();
@@ -219,7 +219,7 @@ export default function (pi: ExtensionAPI): void {
 
       // /memory facts [category]
       if (sub === 'facts') {
-        const cat = parts[1] as any;
+        const cat = parts[1] as 'counter' | 'pref' | 'secret' | 'milestone' | undefined;
         const entries = lifecycle.facts.list(cat);
         if (entries.length === 0) {
           ctx.ui.notify('No facts found.', 'info');
@@ -254,8 +254,8 @@ function extractText(msg: { content?: unknown; role?: string }): string {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
     return content
-      .filter((b: any) => b?.type === 'text' && typeof b.text === 'string')
-      .map((b: any) => b.text)
+      .filter((b: Record<string, unknown>) => b?.type === 'text' && typeof b.text === 'string')
+      .map((b: Record<string, unknown>) => b.text as string)
       .join('\n');
   }
   return '';

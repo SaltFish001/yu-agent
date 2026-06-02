@@ -5,7 +5,7 @@
  * bin/yu.ts 的 CLI 参数解析逻辑。
  */
 
-import { strictEqual, ok, deepStrictEqual } from 'node:assert';
+import { strictEqual, ok, } from 'node:assert';
 import { existsSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -209,7 +209,7 @@ console.log('\n📐 CLI 边界条件');
 test('空参数调用 yu 不崩溃', () => {
   // No args should either show help or start Pi
   try {
-    const proc = execSync('timeout 3 node dist/bin/yu.js 2>&1 || true', {
+    const _proc = execSync('timeout 3 node dist/bin/yu.js 2>&1 || true', {
       encoding: 'utf-8',
       timeout: 5000,
     });

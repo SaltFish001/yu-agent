@@ -13,11 +13,10 @@ import {
 } from './executor.js';
 import { parseAgentOutput } from './template.js';
 import type { LspOutput } from './template.js';
-import { writeTeamStatus } from './status.js';
 import { trackAgent } from './tracker.js';
-import { readFileSync, existsSync } from 'fs';
-import { spawnSync } from 'child_process';
-import { resolve, join, dirname } from 'path';
+import { readFileSync, existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { resolve, join, dirname } from 'node:path';
 
 // ── Constants ──────────────────────────────────────────
 

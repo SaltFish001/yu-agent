@@ -176,7 +176,7 @@ ${profile.capabilities.description}
 
     return {
       systemPrompt: event.systemPrompt
-        ? systemPrompt + '\n\n' + event.systemPrompt
+        ? `${systemPrompt}\n\n${event.systemPrompt}`
         : systemPrompt,
     };
   });

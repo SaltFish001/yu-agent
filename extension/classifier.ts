@@ -5,7 +5,6 @@
  */
 
 import { spawnAgent } from './spawn.js';
-import type { SpawnConfig } from './spawn.js';
 import { parseSchedulerOutput } from './template.js';
 import { trackAgent } from './tracker.js';
 import { loadDecisions } from './tracker.js';

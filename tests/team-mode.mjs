@@ -5,14 +5,14 @@
  * 用 node 直接跑：node tests/team-mode.mjs
  */
 
-import { strictEqual, deepStrictEqual, ok } from 'node:assert';
-import { existsSync, readFileSync, mkdirSync, rmSync, readdirSync } from 'node:fs';
+import { strictEqual, ok } from 'node:assert';
+import { mkdirSync, rmSync, } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = resolve(__dirname, '..');
+const _ROOT = resolve(__dirname, '..');
 
 let passed = 0;
 let failed = 0;

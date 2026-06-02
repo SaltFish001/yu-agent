@@ -649,7 +649,7 @@ export function getMessages(sessionId: string, limit?: number): MessageRow[] {
   const sql = limit
     ? 'SELECT id, session_id, role, content, time_created FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?'
     : 'SELECT id, session_id, role, content, time_created FROM messages WHERE session_id = ? ORDER BY id ASC';
-  const params: any[] = [sessionId];
+  const params: (string | number | null)[] = [sessionId];
   if (limit) params.push(limit);
   const rows = db.prepare(sql).all(...params) as Record<string, unknown>[];
   const result = rows.map(r => ({
@@ -760,7 +760,7 @@ export function generateSlug(): string {
  */
 export function ensureSlug(tag: string): string {
   const meta = getSessionMeta(tag);
-  if (meta && meta.slug) return meta.slug;
+  if (meta?.slug) return meta.slug;
   const slug = generateSlug();
   const db = getDb();
   db.prepare('UPDATE sessions SET slug = ?, updated_at = ? WHERE tag = ?')
@@ -856,7 +856,7 @@ export function updateSessionSummaryStats(
 // ── Cleanup ──────────────────────────────────────────────
 
 export function closeDb(): void {
-  for (const [path, db] of _dbs) {
+  for (const [_path, db] of _dbs) {
     try { db.close(); } catch { /* ignore */ }
   }
   _dbs.clear();
