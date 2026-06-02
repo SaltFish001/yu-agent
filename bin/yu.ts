@@ -8,6 +8,7 @@
  *   yu chat                → Interactive REPL (Pi interactive mode)
  *   yu review <path>       → Review code
  *   yu plan <task>         → Generate plan
+ *   yu doctor              → One-click health diagnosis
  *   yu team <subcommand>   → Team mode management
  *   yu install <package>   → Install MCP server
  *   yu update              → Self-update
@@ -49,6 +50,206 @@ const COMMANDS = new Set([
   'commit', 'doc', 'search', 'lsp', 'run', 'monitor', 'session', 'memory',
 ]);
 
+// ── Factory function ───────────────────────────────────
+
+/**
+ * Create a yu-agent application with memory lifecycle managed.
+ * Returns an object with run() for starting the CLI.
+ *
+ * This is the factory function for programmatic use.
+ * Instead of `new YuApp()`, call `createApp()`.
+ */
+export async function createApp(options?: {
+  /** Skip memory initialization (e.g. for read-only commands). */
+  skipMemory?: boolean;
+  /** Print startup config summary. */
+  printSummary?: boolean;
+}): Promise<{ run: () => Promise<void> }> {
+  if (!options?.skipMemory) {
+    const { getMemoryLifecycle } = await import('../extension/memory-plugin.js');
+    getMemoryLifecycle();
+  }
+
+  if (options?.printSummary) {
+    await printStartupSummary();
+  }
+
+  return {
+    run: async () => {
+      await mainCli();
+    },
+  };
+}
+
+// ── Startup summary ────────────────────────────────────
+
+/**
+ * Print a concise startup configuration summary.
+ */
+async function printStartupSummary(): Promise<void> {
+  try {
+    const { YU_HOME, MCP_CONFIG_PATH, PROMPTS_DIR } = await import('../extension/paths.js');
+    const { readdirSync } = await import('node:fs');
+    const osInfo = `${process.platform} ${process.version}`;
+
+    const lines: string[] = [
+      `yu-agent v${getVersion()} — ${osInfo}`,
+      `  Data dir: ${YU_HOME}`,
+    ];
+
+    // Check MCP config
+    if (existsSync(MCP_CONFIG_PATH)) {
+      try {
+        const mcpRaw = readFileSync(MCP_CONFIG_PATH, 'utf-8');
+        const mcp = JSON.parse(mcpRaw);
+        const serverCount = Object.keys(mcp.servers || {}).length;
+        lines.push(`  MCP servers: ${serverCount} configured`);
+      } catch {
+        lines.push(`  MCP config: unreadable`);
+      }
+    } else {
+      lines.push(`  MCP servers: none configured`);
+    }
+
+    // Check prompts
+    if (existsSync(PROMPTS_DIR)) {
+      const promptFiles = readdirSync(PROMPTS_DIR).filter((f: string) => f.endsWith('.md'));
+      lines.push(`  Prompts: ${promptFiles.length} files`);
+    }
+
+    console.log(lines.join('\n'));
+  } catch {
+    // Best-effort
+  }
+}
+
+// ── Health diagnosis (--doctor) ────────────────────────
+
+/**
+ * One-click health diagnosis.
+ * Checks all subsystems: memory, config, MCP, session DB.
+ */
+async function runDoctor(): Promise<void> {
+  console.log('═ yu-agent 健康诊断 ════════════════════════');
+  console.log(`Version: ${getVersion()}`);
+  console.log();
+
+  const results: Array<{ name: string; ok: boolean; detail: string }> = [];
+
+  // ── Paths ──
+  const { YU_HOME, MCP_CONFIG_PATH, PROMPTS_DIR } = await import('../extension/paths.js');
+  results.push({
+    name: '数据目录',
+    ok: existsSync(YU_HOME),
+    detail: existsSync(YU_HOME) ? YU_HOME : `${YU_HOME} (不存在)`,
+  });
+
+  // ── MCP config ──
+  const mcpOk = existsSync(MCP_CONFIG_PATH);
+  let mcpDetail = MCP_CONFIG_PATH;
+  if (mcpOk) {
+    try {
+      const raw = readFileSync(MCP_CONFIG_PATH, 'utf-8');
+      const mcp = JSON.parse(raw);
+      const servers = Object.keys(mcp.servers || {});
+      mcpDetail = `${MCP_CONFIG_PATH} (${servers.length} servers: ${servers.join(', ') || 'none'})`;
+    } catch (e: any) {
+      mcpDetail = `${MCP_CONFIG_PATH} (解析失败: ${e.message})`;
+    }
+  } else {
+    mcpDetail = `${MCP_CONFIG_PATH} (文件不存在)`;
+  }
+  results.push({ name: 'MCP 配置', ok: mcpOk, detail: mcpDetail });
+
+  // ── Prompt files ──
+  const promptsOk = existsSync(PROMPTS_DIR);
+  let promptCount = 0;
+  if (promptsOk) {
+    const { readdirSync } = await import('node:fs');
+    const files = readdirSync(PROMPTS_DIR).filter(f => f.endsWith('.md'));
+    promptCount = files.length;
+    results.push({
+      name: 'Prompt 文件',
+      ok: promptCount >= 8,
+      detail: `${PROMPTS_DIR} (${promptCount} files, expected >= 8)`,
+    });
+  } else {
+    results.push({
+      name: 'Prompt 文件',
+      ok: false,
+      detail: `${PROMPTS_DIR} (目录不存在)`,
+    });
+  }
+
+  // ── Memory subsystem ──
+  try {
+    const { memoryHealth } = await import('../extension/memory/index.js');
+    const memHealth = memoryHealth();
+    results.push({
+      name: 'Ring 缓冲',
+      ok: memHealth.components.ring.ok,
+      detail: memHealth.components.ring.ok
+        ? `${memHealth.components.ring.total} 条目, ${formatBytes(memHealth.components.ring.dbSize)}`
+        : memHealth.components.ring.issues.join('; '),
+    });
+    results.push({
+      name: 'Facts 存储',
+      ok: memHealth.components.facts.ok,
+      detail: memHealth.components.facts.ok
+        ? `${memHealth.components.facts.total} 条目, ${formatBytes(memHealth.components.facts.fileSize)}`
+        : memHealth.components.facts.issues.join('; '),
+    });
+    results.push({
+      name: 'Scene 状态',
+      ok: memHealth.components.scene.ok,
+      detail: memHealth.components.scene.ok
+        ? formatBytes(memHealth.components.scene.fileSize)
+        : memHealth.components.scene.issues.join('; '),
+    });
+  } catch (e: any) {
+    results.push({ name: 'Memory', ok: false, detail: `诊断失败: ${e.message}` });
+  }
+
+  // ── Session DB ──
+  try {
+    const { getDbPath } = await import('../extension/db.js');
+    const dbPath = getDbPath();
+    const dbExists = existsSync(dbPath);
+    let dbDetail = dbPath;
+    if (dbExists) {
+      const size = readFileSync(dbPath).length;
+      dbDetail = `${dbPath} (${formatBytes(size)})`;
+    } else {
+      dbDetail = `${dbPath} (文件不存在, 首次使用时会自动创建)`;
+    }
+    results.push({ name: 'Session DB', ok: dbExists || true, detail: dbDetail });
+  } catch (e: any) {
+    results.push({ name: 'Session DB', ok: false, detail: `诊断失败: ${e.message}` });
+  }
+
+  // ── Print results ──
+  let allOk = true;
+  for (const r of results) {
+    const icon = r.ok ? '✓' : '✗';
+    console.log(` ${icon} ${r.name}`);
+    console.log(`    ${r.detail}`);
+    if (!r.ok) allOk = false;
+  }
+
+  console.log();
+  console.log(allOk ? '✓ 全部正常' : '✗ 发现问题，请检查上方 ✗ 标记项');
+  console.log('═══════════════════════════════════════════');
+}
+
+/** Format bytes to human-readable string. */
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  const val = bytes / Math.pow(1024, i);
+  return `${val.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
 // ── Help text ──────────────────────────────────────────
 
 const HELP_TEXT = `yu-agent — AI-powered programming agent  (v${getVersion()})
@@ -65,6 +266,9 @@ Agent Commands:
   yu doc <task>                Generate documentation
   yu search <query>            Search codebase or web
   yu lsp <path>                LSP type check & fix
+
+Diagnostics:
+  yu doctor                    One-click health diagnosis
 
 Scheduler & Monitor:
   yu run <prompt>              Direct scheduler invocation (bypass Pi hooks)
@@ -88,6 +292,7 @@ Memory System:
   yu memory recent [n]         Show recent ring memory entries
   yu memory facts [category]   List facts by category
   yu memory scene              Show current scene state
+  yu memory health             Run memory subsystem health check
 
 Code Search (CodeGraph):
   yu search <query>            Semantic code search across the project
@@ -155,6 +360,18 @@ function showHelpForCommand(command: string): string {
   switch (command) {
     case 'help':
       return 'yu help [command]  —  Show this help, or help for a specific command.';
+
+    case 'doctor':
+      return `yu doctor — One-click health diagnosis
+
+Checks all yu-agent subsystems:
+  - Data directory (~/.yu/)
+  - MCP configuration file
+  - Prompt files
+  - Memory subsystem (ring buffer, facts store, scene state)
+  - Session database
+
+Reports any issues found. No arguments needed.`;
 
     case 'session':
       return `yu session — Session management
@@ -270,6 +487,12 @@ async function mainCli(): Promise<void> {
   process.env.PI_CODING_AGENT_DIR = resolve(homedir(), '.yu', 'agent');
   // Suppress Pi's version check — yu-agent manages its own updates
   process.env.PI_SKIP_VERSION_CHECK = '1';
+
+  // `yu doctor` — one-click health diagnosis
+  if (args[0] === 'doctor') {
+    await runDoctor();
+    process.exit(0);
+  }
 
   // `yu team <subcommand>` — handled directly, no Pi session needed
   if (args[0] === 'team') {
@@ -436,6 +659,9 @@ async function mainCli(): Promise<void> {
   await printCacheStats();
 }
 
+// ── Entry ──────────────────────────────────────────────
+// Direct invocation: run mainCli()
+// Programmatic: use createApp().then(app => app.run())
 mainCli().catch((err) => {
   console.error('yu-agent error:', err);
   process.exit(1);

@@ -3,22 +3,26 @@
  *
  * Auto-saves conversation messages to a capped SQLite ring buffer.
  * When the cap is reached, the oldest entries are evicted.
+ * Supports two overflow strategies:
+ *   - 'delete_oldest' (default): batch-delete excess oldest rows.
+ *   - 'sliding_window':  delete one oldest row before each insert.
  *
  * Schema:
  *   ring_memory(id, platform, role, content, created_at)
  *
- * Cap: 5000 entries (matching Hermes ring_memory.py)
+ * Default cap: 5000 entries (matching Hermes ring_memory.py)
  */
 
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { YU_HOME } from '../paths.js';
+import type { OverflowStrategy, IMemoryRing, RingEntry, RingStats, RingHealthReport } from '../types.js';
 
 // ── Constants ──────────────────────────────────────────
 
 const DB_PATH = resolve(YU_HOME, 'ring_memory.db');
-const MAX_ENTRIES = 5000;
+const DEFAULT_MAX_ENTRIES = 5000;
 
 // ── DB init (lazy singleton) ───────────────────────────
 
@@ -43,7 +47,22 @@ function getDb(): DatabaseSync {
   return _db;
 }
 
-// ── Public API ─────────────────────────────────────────
+function closeDb(): void {
+  try {
+    if (_db) {
+      _db.close();
+      _db = null;
+    }
+  } catch { /* best-effort */ }
+}
+
+/**
+ * Default ring buffer max entries.
+ * Used by both the standalone functions and the class.
+ */
+export const RING_DEFAULT_MAX_ENTRIES = DEFAULT_MAX_ENTRIES;
+
+// ── Public API (standalone functions) ──────────────────
 
 /**
  * Append a message to the ring buffer.
@@ -63,8 +82,8 @@ export function ringAppend(
 
   // Evict oldest if over cap
   const count = db.prepare('SELECT COUNT(*) AS c FROM ring_memory').get() as { c: number };
-  if (count.c > MAX_ENTRIES) {
-    const excess = count.c - MAX_ENTRIES;
+  if (count.c > DEFAULT_MAX_ENTRIES) {
+    const excess = count.c - DEFAULT_MAX_ENTRIES;
     db.prepare(
       'DELETE FROM ring_memory WHERE id IN (SELECT id FROM ring_memory ORDER BY created_at ASC LIMIT ?)',
     ).run(excess);
@@ -169,4 +188,81 @@ export function ringHealth(): { ok: boolean; issues: string[]; total: number; db
   }
 
   return { ok, issues, total, dbSize };
+}
+
+// ── RingMemory class (implements IMemoryRing) ──────────
+
+/**
+ * Class-based ring buffer memory with configurable overflow strategy.
+ * Wraps the same underlying SQLite storage.
+ *
+ * Use this when you need dependency injection or custom config.
+ * The standalone functions above use default config.
+ */
+export class RingMemory implements IMemoryRing {
+  readonly maxEntries: number;
+  readonly overflowStrategy: OverflowStrategy;
+
+  constructor(options?: { maxEntries?: number; overflowStrategy?: OverflowStrategy }) {
+    this.maxEntries = options?.maxEntries ?? DEFAULT_MAX_ENTRIES;
+    this.overflowStrategy = options?.overflowStrategy ?? 'delete_oldest';
+  }
+
+  append(role: 'user' | 'assistant' | 'system', content: string, platform: string = 'local'): void {
+    const db = getDb();
+    const now = Date.now();
+
+    db.prepare(
+      'INSERT INTO ring_memory (platform, role, content, created_at) VALUES (?, ?, ?, ?)',
+    ).run(platform, role, content, now);
+
+    const count = db.prepare('SELECT COUNT(*) AS c FROM ring_memory').get() as { c: number };
+    if (count.c > this.maxEntries) {
+      if (this.overflowStrategy === 'sliding_window') {
+        // Delete oldest entry before next insert is triggered
+        db.prepare(
+          'DELETE FROM ring_memory WHERE id = (SELECT id FROM ring_memory ORDER BY created_at ASC LIMIT 1)',
+        ).run();
+      } else {
+        // Batch delete all excess entries
+        const excess = count.c - this.maxEntries;
+        db.prepare(
+          'DELETE FROM ring_memory WHERE id IN (SELECT id FROM ring_memory ORDER BY created_at ASC LIMIT ?)',
+        ).run(excess);
+      }
+    }
+  }
+
+  recent(n: number = 20, platform?: string): RingEntry[] {
+    const db = getDb();
+    if (platform) {
+      return db.prepare(
+        'SELECT * FROM ring_memory WHERE platform = ? ORDER BY created_at DESC LIMIT ?',
+      ).all(platform, n) as unknown as RingEntry[];
+    }
+    return db.prepare(
+      'SELECT * FROM ring_memory ORDER BY created_at DESC LIMIT ?',
+    ).all(n) as unknown as RingEntry[];
+  }
+
+  search(keyword: string, limit: number = 10): RingEntry[] {
+    const db = getDb();
+    const like = `%${keyword}%`;
+    return db.prepare(
+      'SELECT * FROM ring_memory WHERE content LIKE ? ORDER BY created_at DESC LIMIT ?',
+    ).all(like, limit) as unknown as RingEntry[];
+  }
+
+  stats(): RingStats {
+    return ringStats();
+  }
+
+  health(): RingHealthReport {
+    return ringHealth();
+  }
+
+  /** Close the database connection (for clean shutdown). */
+  close(): void {
+    closeDb();
+  }
 }

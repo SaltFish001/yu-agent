@@ -14,6 +14,8 @@ import {
   ringSearch,
   ringStats,
   ringHealth as _ringHealth,
+  RingMemory,
+  RING_DEFAULT_MAX_ENTRIES,
 } from './ring.js';
 
 import {
@@ -26,6 +28,7 @@ import {
   sceneSwitch,
   sceneReset,
   sceneHealth as _sceneHealth,
+  SceneManager,
 } from './scene.js';
 
 import {
@@ -37,10 +40,25 @@ import {
   factCleanup,
   factStats,
   factHealth as _factHealth,
+  FactStore,
 } from './facts.js';
 
 import type { SceneState, TemporalEntry } from './scene.js';
 import type { FactEntry, FactCategory } from './facts.js';
+import type {
+  IMemoryRing,
+  IFactStore,
+  ISceneManager,
+  MemoryHealthReport,
+  MemoryPluginConfig,
+  OverflowStrategy,
+  RingEntry,
+  RingStats,
+  RingHealthReport,
+  FactHealthReport,
+  SceneHealthReport,
+  FactStats,
+} from '../types.js';
 
 export {
   ringAppend,
@@ -48,6 +66,8 @@ export {
   ringSearch,
   ringStats,
   _ringHealth as ringHealth,
+  RingMemory,
+  RING_DEFAULT_MAX_ENTRIES,
 };
 
 export {
@@ -60,6 +80,7 @@ export {
   sceneSwitch,
   sceneReset,
   _sceneHealth as sceneHealth,
+  SceneManager,
 };
 
 export type { SceneState, TemporalEntry };
@@ -73,23 +94,31 @@ export {
   factCleanup,
   factStats,
   _factHealth as factHealth,
+  FactStore,
 };
 
 export type { FactEntry, FactCategory };
+
+export type {
+  IMemoryRing,
+  IFactStore,
+  ISceneManager,
+  MemoryHealthReport,
+  MemoryPluginConfig,
+  OverflowStrategy,
+  RingEntry,
+  RingStats,
+  RingHealthReport,
+  FactHealthReport,
+  SceneHealthReport,
+  FactStats,
+};
 
 /**
  * Aggregate health check for the entire memory subsystem.
  * Runs ring, facts, and scene health checks and combines results.
  */
-export function memoryHealth(): {
-  ok: boolean;
-  issues: string[];
-  components: {
-    ring: { ok: boolean; issues: string[]; total: number; dbSize: number };
-    facts: { ok: boolean; issues: string[]; total: number; fileSize: number };
-    scene: { ok: boolean; issues: string[]; fileSize: number };
-  };
-} {
+export function memoryHealth(): MemoryHealthReport {
   const ring = _ringHealth();
   const facts = _factHealth();
   const scene = _sceneHealth();

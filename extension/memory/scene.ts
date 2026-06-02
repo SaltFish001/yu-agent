@@ -11,6 +11,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { YU_HOME } from '../paths.js';
+import type { ISceneManager, SceneHealthReport } from '../types.js';
 
 // ── Types ──────────────────────────────────────────────
 
@@ -243,4 +244,50 @@ export function sceneHealth(): { ok: boolean; issues: string[]; fileSize: number
   }
 
   return { ok, issues, fileSize };
+}
+
+// ── SceneManager class (implements ISceneManager) ──────
+
+/**
+ * Class-based scene state manager.
+ * Wraps the same underlying JSON file storage.
+ *
+ * Use this when you need dependency injection.
+ */
+export class SceneManager implements ISceneManager {
+  get(): SceneState {
+    return sceneGet();
+  }
+
+  set(updates: Partial<SceneState['scene']>): SceneState {
+    return sceneSet(updates);
+  }
+
+  setClothing(updates: Record<string, string | null>): SceneState {
+    return sceneSetClothing(updates);
+  }
+
+  temporalAdd(text: string, cat?: string, ttlMin?: number): SceneState {
+    return sceneTemporalAdd(text, cat, ttlMin);
+  }
+
+  temporalList(): TemporalEntry[] {
+    return sceneTemporalList();
+  }
+
+  temporalClear(): void {
+    sceneTemporalClear();
+  }
+
+  switch(name: 'home' | 'office' | 'reset'): SceneState {
+    return sceneSwitch(name);
+  }
+
+  reset(): SceneState {
+    return sceneReset();
+  }
+
+  health(): SceneHealthReport {
+    return sceneHealth();
+  }
 }

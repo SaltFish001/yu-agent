@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import { YU_HOME } from '../paths.js';
+import type { IFactStore, FactHealthReport, FactStats as FactStatsType } from '../types.js';
 
 // ── Zod schemas ────────────────────────────────────────
 
@@ -222,4 +223,46 @@ export function factHealth(): { ok: boolean; issues: string[]; total: number; fi
   }
 
   return { ok, issues, total, fileSize };
+}
+
+// ── FactStore class (implements IFactStore) ────────────
+
+/**
+ * Class-based facts store with configurable options.
+ * Wraps the same underlying JSON file storage.
+ *
+ * Use this when you need dependency injection or custom config.
+ */
+export class FactStore implements IFactStore {
+  get(key: string): unknown | undefined {
+    return factGet(key);
+  }
+
+  set(key: string, value: unknown, category?: FactCategory, ttlDays?: number | null): void {
+    factSet(key, value, category, ttlDays ?? null);
+  }
+
+  increment(key: string, by?: number): number {
+    return factIncrement(key, by);
+  }
+
+  delete(key: string): boolean {
+    return factDelete(key);
+  }
+
+  list(category?: FactCategory): FactEntry[] {
+    return factList(category);
+  }
+
+  cleanup(): number {
+    return factCleanup();
+  }
+
+  stats(): FactStatsType {
+    return factStats();
+  }
+
+  health(): FactHealthReport {
+    return factHealth();
+  }
 }

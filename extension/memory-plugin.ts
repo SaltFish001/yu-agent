@@ -5,14 +5,140 @@
  * - Auto-saves each user/assistant message to ring buffer
  * - Auto-loads scene state for identity injection
  * - Provides /memory CLI command for querying
+ * - Lifecycle management via MemoryLifecycle (init/shutdown)
  *
  * Installation: add to pi.extensions in package.json
  */
 
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { ringAppend, ringRecent, ringStats, sceneGet, factStats, factList, memoryHealth } from './memory/index.js';
+import {
+  ringAppend, ringRecent, ringStats, sceneGet, factStats, factList,
+  memoryHealth, RingMemory, FactStore, SceneManager,
+} from './memory/index.js';
+import type { IMemoryRing, IFactStore, ISceneManager, MemoryPluginConfig } from './types.js';
+import { resolve } from 'node:path';
+import { YU_HOME } from './paths.js';
+import { existsSync, readFileSync } from 'node:fs';
+
+// ── Default config ─────────────────────────────────────
+
+function loadPluginConfig(): MemoryPluginConfig {
+  const configPath = resolve(YU_HOME, 'config.json');
+  try {
+    if (existsSync(configPath)) {
+      const raw = JSON.parse(readFileSync(configPath, 'utf-8'));
+      return raw.memory ?? {};
+    }
+  } catch { /* best-effort */ }
+  return {};
+}
+
+// ── Memory lifecycle manager ───────────────────────────
+
+export class MemoryLifecycle {
+  private _ring: IMemoryRing;
+  private _facts: IFactStore;
+  private _scene: ISceneManager;
+  private _config: MemoryPluginConfig;
+  private _initialized = false;
+
+  constructor(options?: { ring?: IMemoryRing; facts?: IFactStore; scene?: ISceneManager; config?: MemoryPluginConfig }) {
+    this._config = options?.config ?? loadPluginConfig();
+    this._ring = options?.ring ?? new RingMemory({
+      maxEntries: this._config.ringMaxEntries,
+      overflowStrategy: this._config.overflowStrategy,
+    });
+    this._facts = options?.facts ?? new FactStore();
+    this._scene = options?.scene ?? new SceneManager();
+  }
+
+  /** Get the ring buffer instance. */
+  get ring(): IMemoryRing { return this._ring; }
+
+  /** Get the facts store instance. */
+  get facts(): IFactStore { return this._facts; }
+
+  /** Get the scene manager instance. */
+  get scene(): ISceneManager { return this._scene; }
+
+  /** Get the plugin config. */
+  get config(): MemoryPluginConfig { return this._config; }
+
+  /**
+   * Initialize the memory subsystem.
+   * Runs a health check and logs the result.
+   * Safe to call multiple times — only runs once.
+   */
+  init(): void {
+    if (this._initialized) return;
+    this._initialized = true;
+
+    try {
+      const health = memoryHealth();
+      if (!health.ok) {
+        console.warn('[yu-memory] init: Health check found issues:', health.issues.join('; '));
+      } else {
+        console.log(`[yu-memory] init: OK (ring: ${health.components.ring.total}, facts: ${health.components.facts.total}, scene: ${health.components.scene.ok ? 'ok' : 'error'})`);
+      }
+    } catch (e) {
+      console.warn('[yu-memory] init: Health check failed:', e);
+    }
+  }
+
+  /**
+   * Shut down the memory subsystem.
+   * Closes database connections and releases resources.
+   */
+  shutdown(): void {
+    if (!this._initialized) return;
+    this._initialized = false;
+
+    try {
+      // Close ring DB connection if it's a RingMemory instance
+      if (this._ring instanceof RingMemory) {
+        (this._ring as RingMemory).close();
+      }
+      console.log('[yu-memory] shutdown: memory subsystem shut down');
+    } catch (e) {
+      console.warn('[yu-memory] shutdown: error during shutdown:', e);
+    }
+  }
+}
+
+// ── Global state ───────────────────────────────────────
+
+// Allow external access for factory/integration use
+let _lifecycle: MemoryLifecycle | null = null;
+
+/**
+ * Get or create the global memory lifecycle instance.
+ * Used by bin/yu.ts and other integration points.
+ */
+export function getMemoryLifecycle(options?: { config?: MemoryPluginConfig }): MemoryLifecycle {
+  if (!_lifecycle) {
+    _lifecycle = new MemoryLifecycle({ config: options?.config });
+    _lifecycle.init();
+  }
+  return _lifecycle;
+}
+
+/**
+ * Reset the global lifecycle (for testing or re-initialization).
+ */
+export function resetMemoryLifecycle(): void {
+  if (_lifecycle) {
+    _lifecycle.shutdown();
+    _lifecycle = null;
+  }
+}
+
+// ── Plugin entry ───────────────────────────────────────
 
 export default function (pi: ExtensionAPI): void {
+  // Initialize memory subsystem
+  const lifecycle = getMemoryLifecycle();
+  lifecycle.init();
+
   // ── Startup health check (non-blocking) ──
   pi.on('session_start', async () => {
     try {
@@ -29,7 +155,7 @@ export default function (pi: ExtensionAPI): void {
   pi.on('before_agent_start', (event: { systemPrompt: string; prompt?: string }) => {
     if (event.prompt) {
       try {
-        ringAppend('user', event.prompt, 'pi');
+        lifecycle.ring.append('user', event.prompt, 'pi');
       } catch (e) {
         console.warn('[yu-memory] Failed to save user message:', e);
       }
@@ -42,7 +168,7 @@ export default function (pi: ExtensionAPI): void {
       const text = extractText(event.message);
       if (text.trim()) {
         try {
-          ringAppend('assistant', text, 'pi');
+          lifecycle.ring.append('assistant', text, 'pi');
         } catch (e) {
           console.warn('[yu-memory] Failed to save assistant message:', e);
         }
@@ -60,7 +186,7 @@ export default function (pi: ExtensionAPI): void {
       // /memory recent [n]
       if (sub === 'recent' || (sub === '' && parts.length <= 1)) {
         const n = parseInt(parts[1]) || 10;
-        const msgs = ringRecent(n);
+        const msgs = lifecycle.ring.recent(n);
         const lines = msgs.map(m => {
           const time = new Date(m.created_at).toLocaleTimeString();
           const role = m.role === 'user' ? 'You' : 'Yu';
@@ -77,9 +203,9 @@ export default function (pi: ExtensionAPI): void {
 
       // /memory stats
       if (sub === 'stats') {
-        const memStats = ringStats();
-        const factStatsData = factStats();
-        const scene = sceneGet();
+        const memStats = lifecycle.ring.stats();
+        const factStatsData = lifecycle.facts.stats();
+        const scene = lifecycle.scene.get();
         const lines = [
           `Ring memory: ${memStats.total} entries`,
           `  by platform: ${JSON.stringify(memStats.by_platform)}`,
@@ -94,7 +220,7 @@ export default function (pi: ExtensionAPI): void {
       // /memory facts [category]
       if (sub === 'facts') {
         const cat = parts[1] as any;
-        const entries = factList(cat);
+        const entries = lifecycle.facts.list(cat);
         if (entries.length === 0) {
           ctx.ui.notify('No facts found.', 'info');
           return;
@@ -111,6 +237,11 @@ export default function (pi: ExtensionAPI): void {
         'warning',
       );
     },
+  });
+
+  // Register process exit handler for cleanup
+  process.once('exit', () => {
+    lifecycle.shutdown();
   });
 }
 
