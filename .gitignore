@@ -7,6 +7,9 @@
 # Dependencies
 /node_modules/
 
+# CodeGraph local index
+/.codegraph/
+
 # OS files
 .DS_Store
 Thumbs.db

@@ -24,6 +24,8 @@ import { homedir } from 'node:os';
 
 // For ESM: __dirname equivalent
 const __dirname = dirname(fileURLToPath(import.meta.url));
+// Project root: dist/bin/ -> dist/ -> project root
+const PROJECT_ROOT = resolve(__dirname, '..', '..');
 
 /** Print cache hit-rate summary from SQLite sessions.db if available. */
 async function printCacheStats(): Promise<void> {
@@ -86,6 +88,11 @@ Memory System:
   yu memory recent [n]         Show recent ring memory entries
   yu memory facts [category]   List facts by category
   yu memory scene              Show current scene state
+
+Code Search (CodeGraph):
+  yu search <query>            Semantic code search across the project
+  yu graph <symbol>            Show callers/callees for a symbol
+  yu context <task>            Build context for a task
 
 Team Mode:
   yu team create <name> ...    Create a team for multi-agent work
@@ -323,9 +330,79 @@ async function mainCli(): Promise<void> {
     process.exit(0);
   }
 
+  // `yu search <query>` — semantic code search via CodeGraph
+  if (args[0] === 'search') {
+    const query = args.slice(1).join(' ');
+    if (!query) {
+      console.error('Usage: yu search <query>');
+      process.exit(1);
+    }
+    const { execSync } = await import('node:child_process');
+    const cgPath = resolve(PROJECT_ROOT, 'node_modules', '.bin', 'codegraph');
+    try {
+      const result = execSync(`"${cgPath}" query "${query.replace(/"/g, '\\"')}" --limit 15`, {
+        cwd: PROJECT_ROOT,
+        encoding: 'utf-8',
+        timeout: 15000,
+      });
+      console.log(result);
+    } catch (e: any) {
+      console.error('Search failed:', e.stderr || e.message);
+    }
+    process.exit(0);
+  }
+
+  // `yu graph <symbol>` — show callers/callees
+  if (args[0] === 'graph') {
+    const symbol = args.slice(1).join(' ');
+    if (!symbol) {
+      console.error('Usage: yu graph <symbol>');
+      process.exit(1);
+    }
+    const { execSync } = await import('node:child_process');
+    const cgPath = resolve(PROJECT_ROOT, 'node_modules', '.bin', 'codegraph');
+    try {
+      console.log('=== Callers ===');
+      const callers = execSync(`"${cgPath}" callers "${symbol.replace(/"/g, '\\"')}" --limit 10`, {
+        cwd: PROJECT_ROOT, encoding: 'utf-8', timeout: 10000,
+      });
+      console.log(callers);
+      console.log('=== Callees ===');
+      const callees = execSync(`"${cgPath}" callees "${symbol.replace(/"/g, '\\"')}" --limit 10`, {
+        cwd: PROJECT_ROOT, encoding: 'utf-8', timeout: 10000,
+      });
+      console.log(callees);
+    } catch (e: any) {
+      console.error('Graph query failed:', e.stderr || e.message);
+    }
+    process.exit(0);
+  }
+
+  // `yu context <task>` — build task context
+  if (args[0] === 'context') {
+    const task = args.slice(1).join(' ');
+    if (!task) {
+      console.error('Usage: yu context <task description>');
+      process.exit(1);
+    }
+    const { execSync } = await import('node:child_process');
+    const cgPath = resolve(PROJECT_ROOT, 'node_modules', '.bin', 'codegraph');
+    try {
+      const result = execSync(`"${cgPath}" context "${task.replace(/"/g, '\\"')}"`, {
+        cwd: PROJECT_ROOT,
+        encoding: 'utf-8',
+        timeout: 30000,
+      });
+      console.log(result);
+    } catch (e: any) {
+      console.error('Context build failed:', e.stderr || e.message);
+    }
+    process.exit(0);
+  }
+
   // `yu monitor` — live dashboard
   if (args[0] === 'monitor') {
-    const scriptPath = resolve(__dirname, '..', 'scripts', 'monitor.mjs');
+    const scriptPath = resolve(PROJECT_ROOT, 'scripts', 'monitor.mjs');
     await import(scriptPath);
     return;
   }
