@@ -13,7 +13,7 @@ import { AGENT_TIMEOUT_MS } from './executor.js';
 
 // ── Constants ──────────────────────────────────────────
 
-const MAX_RETRY_SCHEDULER = 2;
+const MAX_RETRY_SCHEDULER = 0;
 
 // ── Types ──────────────────────────────────────────────
 
@@ -52,6 +52,17 @@ export async function classifyIntent(userInput: string, context: Record<string, 
       if (plan && (plan.pass_through !== undefined || (plan.intent && plan.agents))) {
         trackAgent('scheduler', 'completed');
         return plan;
+      }
+
+      // If output contains no JSON structure at all, the agent returned pure
+      // markdown/text — fall back immediately instead of retrying.
+      const hasJson = /[{[]/.test(result.response) || /```json/i.test(result.response);
+      if (!hasJson) {
+        console.log(`[yu-agent] ── Scheduler raw output (attempt ${attempt + 1}) ──`);
+        console.log(result.response);
+        console.log(`[yu-agent] ── End scheduler raw output ──`);
+        console.warn(`[yu-agent] Scheduler output is not JSON, falling back to pass-through`);
+        break;
       }
 
       console.log(`[yu-agent] ── Scheduler raw output (attempt ${attempt + 1}) ──`);
