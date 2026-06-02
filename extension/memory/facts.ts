@@ -38,8 +38,8 @@ function loadRaw(): FactsStore {
     if (existsSync(FACTS_PATH)) {
       return JSON.parse(readFileSync(FACTS_PATH, 'utf-8'));
     }
-  } catch {
-    // corrupted — reset
+  } catch (err) {
+    console.warn('[yu-memory] facts.json corrupted or unreadable, resetting:', err);
   }
   return { entries: [] };
 }
@@ -172,4 +172,41 @@ export function factStats(): { total: number; by_category: Record<string, number
     by_category[e.category] = (by_category[e.category] || 0) + 1;
   }
   return { total: store.entries.length, by_category };
+}
+
+/**
+ * Health check for the facts store.
+ * Returns diagnostic info including file integrity, entry count, and any issues found.
+ */
+export function factHealth(): { ok: boolean; issues: string[]; total: number; fileSize: number } {
+  const issues: string[] = [];
+  let fileSize = 0;
+
+  try {
+    if (existsSync(FACTS_PATH)) {
+      fileSize = readFileSync(FACTS_PATH).length;
+    }
+  } catch (err) {
+    issues.push(`facts.json unreadable: ${err}`);
+  }
+
+  let store: FactsStore;
+  try {
+    store = JSON.parse(readFileSync(FACTS_PATH, 'utf-8'));
+    if (!Array.isArray(store.entries)) {
+      issues.push('facts.json: entries is not an array');
+      store = { entries: [] };
+    }
+  } catch (err) {
+    issues.push(`facts.json parse failed: ${err}`);
+    store = { entries: [] };
+  }
+
+  const total = store.entries.length;
+  const ok = issues.length === 0;
+  if (!ok) {
+    console.warn('[yu-memory] factHealth: issues found:', issues.join('; '));
+  }
+
+  return { ok, issues, total, fileSize };
 }

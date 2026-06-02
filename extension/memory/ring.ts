@@ -11,7 +11,7 @@
  */
 
 import { DatabaseSync } from 'node:sqlite';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { YU_HOME } from '../paths.js';
 
@@ -118,4 +118,55 @@ export function ringStats(): { total: number; by_platform: Record<string, number
   for (const r of rows) by_platform[r.platform] = r.c;
 
   return { total, by_platform };
+}
+
+/**
+ * Health check for the ring buffer database.
+ * Validates DB connectivity, table schema, and entry integrity.
+ */
+export function ringHealth(): { ok: boolean; issues: string[]; total: number; dbSize: number } {
+  const issues: string[] = [];
+  let total = 0;
+  let dbSize = 0;
+
+  try {
+    const db = getDb();
+    // Verify table exists and has correct columns
+    const tableInfo = db.prepare('PRAGMA table_info(ring_memory)').all() as Array<{ name: string }>;
+    const columns = tableInfo.map(r => r.name);
+    const required = ['id', 'platform', 'role', 'content', 'created_at'];
+    const missing = required.filter(c => !columns.includes(c));
+    if (missing.length > 0) {
+      issues.push(`ring_memory table missing columns: ${missing.join(', ')}`);
+    }
+
+    total = (db.prepare('SELECT COUNT(*) AS c FROM ring_memory').get() as { c: number }).c;
+
+    // Check for NULL content entries
+    const nullCount = (db.prepare("SELECT COUNT(*) AS c FROM ring_memory WHERE content IS NULL OR content = ''").get() as { c: number }).c;
+    if (nullCount > 0) {
+      issues.push(`${nullCount} entries have empty/null content`);
+    }
+
+    // Check for anomalous timestamps
+    const futureCount = (db.prepare('SELECT COUNT(*) AS c FROM ring_memory WHERE created_at > ?').get(Date.now() + 60000) as { c: number }).c;
+    if (futureCount > 0) {
+      issues.push(`${futureCount} entries have future timestamps`);
+    }
+  } catch (err) {
+    issues.push(`ring database error: ${err}`);
+  }
+
+  try {
+    if (existsSync(DB_PATH)) {
+      dbSize = readFileSync(DB_PATH).length;
+    }
+  } catch { /* best-effort */ }
+
+  const ok = issues.length === 0;
+  if (!ok) {
+    console.warn('[yu-memory] ringHealth: issues found:', issues.join('; '));
+  }
+
+  return { ok, issues, total, dbSize };
 }

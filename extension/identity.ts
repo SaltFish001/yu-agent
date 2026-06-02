@@ -55,8 +55,8 @@ function loadProfile(): PersonalityProfile {
       if (existsSync(PROFILE_PATH)) {
         _profile = JSON.parse(readFileSync(PROFILE_PATH, 'utf-8'));
       }
-    } catch {
-      // fall through to defaults
+    } catch (err) {
+      console.warn('[yu-agent] Failed to load personality profile, using defaults:', err);
     }
   }
   return _profile || getDefaultProfile();
@@ -109,7 +109,8 @@ function buildStatusSummary(): string {
     }
 
     return parts.length > 0 ? parts.join(' · ') : 'idle';
-  } catch {
+  } catch (err) {
+    console.warn('[yu-agent] Failed to build status summary:', err);
     return '';
   }
 }
@@ -124,7 +125,8 @@ function buildMemorySummary(): string {
     if (fStats.total > 0) parts.push(`${fStats.total} facts`);
     parts.push(`@ ${scene.scene.location}`);
     return parts.join(' · ');
-  } catch {
+  } catch (err) {
+    console.warn('[yu-agent] Failed to build memory summary:', err);
     return '';
   }
 }

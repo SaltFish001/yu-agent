@@ -89,7 +89,8 @@ export function loadDecisions(): Record<string, unknown> {
   if (existsSync(DECISIONS_FILE)) {
     try {
       return JSON.parse(readFileSync(DECISIONS_FILE, 'utf-8'));
-    } catch {
+    } catch (err) {
+      console.warn('[yu-agent] Failed to parse decisions file, resetting:', err);
       return {};
     }
   }

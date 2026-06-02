@@ -16,14 +16,18 @@
 import {
   ringRecent,
   ringStats,
+  ringHealth,
   sceneGet,
   sceneSet,
   sceneSetClothing,
+  sceneHealth,
   factSet,
   factIncrement,
   factList,
   factStats,
+  factHealth,
   factDelete,
+  memoryHealth,
 } from './memory/index.js';
 
 export async function memoryCommand(
@@ -145,6 +149,27 @@ export async function memoryCommand(
       return ok ? `Deleted: ${args[0]}` : `Not found: ${args[0]}`;
     }
 
+    // ── health ──────────────────────────────────────
+    case 'health': {
+      const h = memoryHealth();
+      const lines: string[] = [
+        `Memory subsystem health: ${h.ok ? '✓ OK' : '✗ Issues found'}`,
+        '',
+        `  Ring buffer  | ${h.components.ring.ok ? '✓' : '✗'} ${h.components.ring.total} entries, ${formatBytes(h.components.ring.dbSize)}`,
+        `  Facts store  | ${h.components.facts.ok ? '✓' : '✗'} ${h.components.facts.total} entries, ${formatBytes(h.components.facts.fileSize)}`,
+        `  Scene state  | ${h.components.scene.ok ? '✓' : '✗'} ${formatBytes(h.components.scene.fileSize)}`,
+      ];
+
+      if (h.issues.length > 0) {
+        lines.push('', 'Issues:');
+        for (const issue of h.issues) {
+          lines.push(`  - ${issue}`);
+        }
+      }
+
+      return lines.join('\n');
+    }
+
     // ── help / unknown ───────────────────────────────
     default:
       return [
@@ -159,6 +184,18 @@ export async function memoryCommand(
         '  yu memory fact-set <k> <v>       Set a fact value',
         '  yu memory fact-inc <k> [by]      Increment a counter',
         '  yu memory fact-del <k>           Delete a fact',
+        '  yu memory health                 Run memory subsystem health check',
       ].join('\n');
   }
+}
+
+/**
+ * Format bytes to human-readable string.
+ */
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  const val = bytes / Math.pow(1024, i);
+  return `${val.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }

@@ -10,9 +10,21 @@
  */
 
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { ringAppend, ringRecent, ringStats, sceneGet, factStats, factList } from './memory/index.js';
+import { ringAppend, ringRecent, ringStats, sceneGet, factStats, factList, memoryHealth } from './memory/index.js';
 
 export default function (pi: ExtensionAPI): void {
+  // ── Startup health check (non-blocking) ──
+  pi.on('session_start', async () => {
+    try {
+      const health = memoryHealth();
+      if (!health.ok) {
+        console.warn('[yu-memory] Health check found issues:', health.issues.join('; '));
+      }
+    } catch (e) {
+      console.warn('[yu-memory] Health check failed:', e);
+    }
+  });
+
   // ── Auto-save user messages ──
   pi.on('before_agent_start', (event: { systemPrompt: string; prompt?: string }) => {
     if (event.prompt) {

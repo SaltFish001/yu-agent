@@ -75,8 +75,8 @@ function loadRaw(): SceneState {
     if (existsSync(STATE_PATH)) {
       return JSON.parse(readFileSync(STATE_PATH, 'utf-8'));
     }
-  } catch {
-    // corrupted file — reset
+  } catch (err) {
+    console.warn('[yu-memory] scene_state.json corrupted or unreadable, resetting:', err);
   }
   return structuredClone(DEFAULT_STATE);
 }
@@ -192,4 +192,55 @@ export function sceneReset(): SceneState {
   fresh.meta.last_updated = new Date().toISOString().slice(0, 16);
   saveRaw(fresh);
   return fresh;
+}
+
+/**
+ * Health check for the scene state.
+ * Validates file integrity, required fields, and temporal entry consistency.
+ */
+export function sceneHealth(): { ok: boolean; issues: string[]; fileSize: number } {
+  const issues: string[] = [];
+  let fileSize = 0;
+
+  try {
+    if (existsSync(STATE_PATH)) {
+      fileSize = readFileSync(STATE_PATH).length;
+    }
+  } catch (err) {
+    issues.push(`scene_state.json unreadable: ${err}`);
+  }
+
+  let state: SceneState;
+  try {
+    state = JSON.parse(readFileSync(STATE_PATH, 'utf-8'));
+    // Validate required fields
+    if (!state.scene || typeof state.scene !== 'object') {
+      issues.push('scene_state.json: missing scene object');
+    }
+    if (!state.meta || typeof state.meta !== 'object') {
+      issues.push('scene_state.json: missing meta object');
+    }
+    if (!Array.isArray(state.temporal)) {
+      issues.push('scene_state.json: temporal is not an array');
+    }
+    // Check for expired temporal entries
+    if (Array.isArray(state.temporal)) {
+      const now = Date.now();
+      const expired = state.temporal.filter(
+        (e) => (now - e.created_at) >= e.ttl_min * 60 * 1000,
+      );
+      if (expired.length > 0) {
+        issues.push(`${expired.length} expired temporal entries (will be cleaned on next access)`);
+      }
+    }
+  } catch (err) {
+    issues.push(`scene_state.json parse failed: ${err}`);
+  }
+
+  const ok = issues.length === 0;
+  if (!ok) {
+    console.warn('[yu-memory] sceneHealth: issues found:', issues.join('; '));
+  }
+
+  return { ok, issues, fileSize };
 }

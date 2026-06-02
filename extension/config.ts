@@ -31,7 +31,8 @@ function loadPrompt(name: string): string {
   try {
     const path = resolve(PROMPTS_DIR, `${name}.md`);
     return readFileSync(path, 'utf-8');
-  } catch {
+  } catch (err) {
+    console.warn(`[yu-agent] Prompt file not found for agent type "${name}", using fallback:`, err);
     return `You are a ${name} agent. Complete the assigned task.`;
   }
 }
