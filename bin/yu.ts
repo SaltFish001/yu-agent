@@ -48,6 +48,7 @@ async function printCacheStats(): Promise<void> {
 const COMMANDS = new Set([
   'review', 'plan', 'team', 'coding',
   'commit', 'doc', 'search', 'lsp', 'run', 'monitor', 'session', 'memory',
+  'refactor',
 ]);
 
 // ── Factory function ───────────────────────────────────
@@ -269,6 +270,10 @@ Agent Commands:
   yu doc <task>                Generate documentation
   yu search <query>            Search codebase or web
   yu lsp <path>                LSP type check & fix
+
+Refactoring:
+  yu refactor rename <from> <to> [files...]  Rename a symbol (AST-safe)
+  yu refactor extract <type> <file>          Extract inline type to interface
 
 Diagnostics:
   yu doctor                    One-click health diagnosis
@@ -626,6 +631,16 @@ async function mainCli(): Promise<void> {
       const errMsg = e instanceof Error ? e.message : String(e);
       console.error('Context build failed:', errMsg);
     }
+    process.exit(0);
+  }
+
+  // `yu refactor <action>` — AST-aware refactoring
+  if (args[0] === 'refactor') {
+    const action = args[1] || 'help';
+    const refactorArgs = args.slice(2);
+    const { refactorCommand } = await import('../extension/refactor/index.js');
+    const result = await refactorCommand(action, refactorArgs);
+    console.log(result);
     process.exit(0);
   }
 
