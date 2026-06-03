@@ -29,6 +29,7 @@ import type { CodingOutput } from './template.js';
 
 import { resetTracker, trackAgent, flushFinalStatus, loadDecisions, saveDecision } from './tracker.js';
 import { checkpointGuard } from './checkpoint.js';
+import { getRelevantContext } from './knowledge/index.js';
 import { verifyWithLsp, runTests } from './verifier.js';
 import { runTeamMode } from './team-orchestrator.js';
 
@@ -82,7 +83,17 @@ export async function handler(
     const allResults = new Map<string, SpawnResult>();
     const groups = plan.parallel_groups || agentTasks.map((t) => [t.id]);
 
-    const context = { decisions: loadDecisions() };
+    const context: Record<string, unknown> = { decisions: loadDecisions() };
+
+    // 注入知识库上下文（RAG）
+    try {
+      const knowledgeContext = getRelevantContext(userInput, 5);
+      if (knowledgeContext.length > 0) {
+        context.knowledge = knowledgeContext;
+      }
+    } catch {
+      // 非阻塞，知识库不可用不影响执行
+    }
 
     for (const group of groups) {
       const groupResults = await runParallelGroup(group, agentMap, context);

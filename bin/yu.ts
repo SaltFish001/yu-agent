@@ -379,6 +379,11 @@ Memory System:
   yu memory scene              Show current scene state
   yu memory health             Run memory subsystem health check
 
+Knowledge Base (RAG):
+  yu knowledge search <query>  Full-text search across project files (FTS5)
+  yu knowledge index [dir]     Index/reindex project files
+  yu knowledge status          Show knowledge base stats
+
 Code Search (CodeGraph):
   yu search <query>            Semantic code search across the project
   yu graph <symbol>            Show callers/callees for a symbol
@@ -614,6 +619,21 @@ async function mainCli(): Promise<void> {
     const { teamCommand } = await import('../extension/team/index.js');
     const result = await teamCommand(subcommand, teamArgs);
     console.log(result);
+    process.exit(0);
+  }
+
+  // `yu knowledge <subcommand>` — RAG knowledge base
+  if (args[0] === 'knowledge') {
+    const sub = args[1] || 'help';
+    const { knowledgeCommand } = await import('../extension/knowledge/index.js');
+    try {
+      const out = knowledgeCommand(sub, args.slice(2));
+      console.log(out);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`knowledge 操作失败: ${msg}`);
+      process.exit(1);
+    }
     process.exit(0);
   }
 
