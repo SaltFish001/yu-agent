@@ -120,16 +120,9 @@ const COMMANDS = new Set([
  * Instead of `new YuApp()`, call `createApp()`.
  */
 export async function createApp(options?: {
-  /** Skip memory initialization (e.g. for read-only commands). */
-  skipMemory?: boolean;
   /** Print startup config summary. */
   printSummary?: boolean;
 }): Promise<{ run: () => Promise<void> }> {
-  if (!options?.skipMemory) {
-    const { getMemoryLifecycle } = await import('../extension/memory-plugin.js');
-    getMemoryLifecycle();
-  }
-
   if (options?.printSummary) {
     await printStartupSummary();
   }
@@ -242,22 +235,6 @@ async function runDoctor(jsonOutput?: boolean): Promise<void> {
       ok: false,
       detail: `${PROMPTS_DIR} (目录不存在)`,
     });
-  }
-
-  // ── Memory subsystem ──
-  try {
-    const { memoryHealth } = await import('../extension/memory/index.js');
-    const memHealth = memoryHealth();
-    results.push({
-      name: 'Ring 缓存',
-      ok: memHealth.components.ring.ok,
-      detail: memHealth.components.ring.ok
-        ? `${memHealth.components.ring.total} 条目, ${formatBytes(memHealth.components.ring.dbSize)}`
-        : memHealth.components.ring.issues.join('; '),
-    });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    results.push({ name: 'Memory', ok: false, detail: `诊断失败: ${msg}` });
   }
 
   // ── Session DB ──
@@ -460,11 +437,6 @@ Session Management:
   yu session backup [path]     Backup sessions database
   yu session restore <path>    Restore sessions from backup
   yu session clean [--days N]  Clean sessions older than N days (default 7)
-
-Memory System:
-  yu memory stats              Show ring buffer stats
-  yu memory recent [n]         Show recent ring entries
-  yu memory health             Run memory health check
 
 Knowledge Base (RAG):
   yu knowledge search <query>  Full-text search across project files (FTS5)
@@ -918,16 +890,6 @@ async function mainCli(): Promise<void> {
     } else {
       process.exit(0);
     }
-  }
-
-  // `yu memory <subcommand>` — memory system management
-  if (args[0] === 'memory') {
-    const subcommand = args[1] || 'stats';
-    const memArgs = args.slice(2);
-    const { memoryCommand } = await import('../extension/memory-cli.js');
-    const result = await memoryCommand(subcommand, memArgs);
-    console.log(result);
-    process.exit(0);
   }
 
   // `yu search <query>` — semantic code search via CodeGraph

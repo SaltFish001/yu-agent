@@ -22,7 +22,6 @@ import { loadAppConfig } from './config.js';
 import { YU_HOME } from './paths.js';
 import { getSessionTag } from './session-context.js';
 import { getSummary, getCache } from './db.js';
-import { ringStats } from './memory/index.js';
 
 // ── Profile loading ────────────────────────────────────
 
@@ -126,23 +125,12 @@ function buildStatusSummary(): string {
   }
 }
 
-function buildMemorySummary(): string {
-  try {
-    const rStats = ringStats();
-    return `${rStats.total} mem entries`;
-  } catch (err) {
-    log.warn('Failed to build memory summary', err);
-    return '';
-  }
-}
-
 // ── Plugin entry ───────────────────────────────────────
 
 export default function (pi: ExtensionAPI): void {
   pi.on('before_agent_start', (event: { systemPrompt: string; prompt?: string }) => {
     const profile = loadProfile();
     const status = buildStatusSummary();
-    const memSummary = buildMemorySummary();
 
     const name = profile.name;
 
@@ -165,7 +153,6 @@ ${profile.style.tone ? `语气：${profile.style.tone}` : ''}
 ${styleRules}
 
 ${status ? `当前状态：${status}` : ''}
-${memSummary ? `记忆：${memSummary}` : ''}
 
 ${profile.capabilities.description}
 
