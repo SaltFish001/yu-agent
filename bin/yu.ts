@@ -512,18 +512,31 @@ async function mainCli(): Promise<void> {
     process.exit(0);
   }
 
-  // `yu run <prompt>` — direct scheduler invocation, no Pi hooks
+  // `yu run <prompt>` — directly spawn agent, bypass scheduler.
+  //
+  // The scheduler (classifyIntent) is designed for Pi interactive sessions
+  // where pass_through hands off to Pi's native agent. In non-interactive
+  // `yu run` mode, there's no Pi to fall back to — pass_through returns
+  // null and the prompt is silently dropped.
+  //
+  // So `yu run` spawns the agent directly with the full prompt.
+  // The scheduler is still used by Pi extension hooks and team mode.
   if (args[0] === 'run') {
     const prompt = args.slice(1).join(' ');
     if (!prompt) {
       console.error('Usage: yu run <prompt>');
       process.exit(1);
     }
-    const { handler } = await import('../extension/scheduler.js');
-    const result = await handler(prompt, {});
-    if (result !== null) {
-      console.log(result);
-    }
+    const { spawnAgent } = await import('../extension/spawn.js');
+    const result = await spawnAgent({
+      type: 'general-purpose',
+      model: 'v4-flash',
+      thinking: 'max',
+      maxTurns: 50,
+      task: prompt,
+      timeout: 300_000,
+    });
+    console.log(result.response);
     await printCacheStats();
     return;
   }

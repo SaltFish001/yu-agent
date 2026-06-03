@@ -35,6 +35,19 @@ export async function classifyIntent(userInput: string, context: Record<string, 
     goal: 'classify intent & generate plan',
   });
 
+  // Fast path: if the input looks like a full instruction (role-playing,
+  // long prompt, or contains specific task markers), skip scheduling.
+  // The scheduler agent is for SHORT classification prompts like
+  // "检查这个bug" or "帮我重构这个函数", not for full coding instructions.
+  const trimmed = userInput.trim();
+  const isLong = trimmed.length > 200;
+  const isRolePlay = /^你是|^你是一个/.test(trimmed);
+  if (isLong || isRolePlay) {
+    trackAgent('scheduler', 'completed');
+    console.log(`[yu-agent] Scheduler: full instruction detected (${trimmed.length} chars), passing through`);
+    return { pass_through: true, reasoning: 'full instruction, no classification needed' };
+  }
+
   for (let attempt = 0; attempt <= MAX_RETRY_SCHEDULER; attempt++) {
     try {
       const result = await spawnAgent({
