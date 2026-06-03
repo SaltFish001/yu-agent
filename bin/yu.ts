@@ -384,6 +384,10 @@ Knowledge Base (RAG):
   yu knowledge index [dir]     Index/reindex project files
   yu knowledge status          Show knowledge base stats
 
+Sandbox Execution:
+  yu sandbox <command>         Run command in isolated Docker container
+  yu sandbox status            Check sandbox availability
+
 Code Search (CodeGraph):
   yu search <query>            Semantic code search across the project
   yu graph <symbol>            Show callers/callees for a symbol
@@ -632,6 +636,20 @@ async function mainCli(): Promise<void> {
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error(`knowledge 操作失败: ${msg}`);
+      process.exit(1);
+    }
+    process.exit(0);
+  }
+
+  // `yu sandbox <command...>` — isolated execution
+  if (args[0] === 'sandbox') {
+    const { sandboxCommand } = await import('../extension/sandbox/index.js');
+    try {
+      const out = sandboxCommand(args.slice(1));
+      console.log(out);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`sandbox 操作失败: ${msg}`);
       process.exit(1);
     }
     process.exit(0);
