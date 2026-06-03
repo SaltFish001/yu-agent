@@ -141,6 +141,97 @@ export function runCommand(cmd: string, args: string[], cwd: string): boolean {
   }
 }
 
+// ── Project-aware toolchain detection ──────────────────
+
+/**
+ * Detect the lint tool for the project at the given root directory.
+ * Returns the tool name and command to run, or null if none detected.
+ *
+ * Detection order:
+ * 1. biome.json / biome.jsonc → Biome
+ * 2. .eslintrc* / eslint.config.* → ESLint
+ * 3. pyproject.toml with [tool.ruff] → Ruff
+ * 4. .golangci.yml / .golangci.yaml → golangci-lint
+ * 5. No detection → warn and return null
+ */
+export function detectLintTool(root: string): { name: string; command: string; args: string[] } | null {
+  // 1. Biome
+  if (existsSync(join(root, 'biome.json')) || existsSync(join(root, 'biome.jsonc'))) {
+    return { name: 'biome', command: 'npx', args: ['biome', 'lint', '.'] };
+  }
+
+  // 2. ESLint (multiple config file patterns)
+  const eslintConfigs = [
+    '.eslintrc', '.eslintrc.json', '.eslintrc.js', '.eslintrc.cjs',
+    '.eslintrc.yaml', '.eslintrc.yml',
+    'eslint.config.js', 'eslint.config.mjs', 'eslint.config.cjs', 'eslint.config.ts',
+  ];
+  for (const cfg of eslintConfigs) {
+    if (existsSync(join(root, cfg))) {
+      return { name: 'eslint', command: 'npx', args: ['eslint', '.'] };
+    }
+  }
+
+  // 3. Ruff (pyproject.toml with [tool.ruff])
+  const pyprojectPath = join(root, 'pyproject.toml');
+  if (existsSync(pyprojectPath)) {
+    try {
+      const content = readFileSync(pyprojectPath, 'utf-8');
+      if (content.includes('[tool.ruff]')) {
+        return { name: 'ruff', command: 'ruff', args: ['check', '.'] };
+      }
+    } catch {
+      // ignore read errors
+    }
+  }
+
+  // 4. golangci-lint
+  if (existsSync(join(root, '.golangci.yml')) || existsSync(join(root, '.golangci.yaml'))) {
+    return { name: 'golangci-lint', command: 'golangci-lint', args: ['run'] };
+  }
+
+  // 5. No detection
+  console.warn('[yu-agent] Could not detect lint tool, skipping lint');
+  return null;
+}
+
+/**
+ * Detect the LSP server for the project at the given root directory.
+ * Returns the server name, command, and args, or null if none detected.
+ *
+ * Detection order:
+ * 1. tsconfig.json → typescript-language-server
+ * 2. pyproject.toml / requirements.txt → pyright-langserver
+ * 3. go.mod → gopls
+ * 4. Cargo.toml → rust-analyzer
+ * 5. No detection → warn and return null
+ */
+export function detectLspServer(root: string): { name: string; command: string; args: string[] } | null {
+  // 1. TypeScript
+  if (existsSync(join(root, 'tsconfig.json'))) {
+    return { name: 'typescript-language-server', command: 'typescript-language-server', args: ['--stdio'] };
+  }
+
+  // 2. Python
+  if (existsSync(join(root, 'pyproject.toml')) || existsSync(join(root, 'requirements.txt'))) {
+    return { name: 'pyright', command: 'pyright-langserver', args: ['--stdio'] };
+  }
+
+  // 3. Go
+  if (existsSync(join(root, 'go.mod'))) {
+    return { name: 'gopls', command: 'gopls', args: [] };
+  }
+
+  // 4. Rust
+  if (existsSync(join(root, 'Cargo.toml'))) {
+    return { name: 'rust-analyzer', command: 'rust-analyzer', args: [] };
+  }
+
+  // 5. No detection
+  console.warn('[yu-agent] Could not detect LSP server, skipping LSP verification');
+  return null;
+}
+
 /**
  * Auto-detect the project's test framework and run the appropriate test
  * command. Returns true if tests pass or no framework is detected, false
