@@ -6,9 +6,6 @@
  * rather than concrete implementations.
  */
 
-import type { SceneState, TemporalEntry } from './memory/scene.js';
-import type { FactEntry, FactCategory } from './memory/facts.js';
-
 // ── Memory subsystem interfaces ────────────────────────
 
 /** Overflow strategy for ring buffer when cap is reached. */
@@ -64,98 +61,12 @@ export interface IMemoryRing {
   readonly overflowStrategy: OverflowStrategy;
 }
 
-/** Facts store health report. */
-export interface FactHealthReport {
-  ok: boolean;
-  issues: string[];
-  total: number;
-  fileSize: number;
-}
-
-/** Facts store stats. */
-export interface FactStats {
-  total: number;
-  by_category: Record<string, number>;
-}
-
-/**
- * Long-term key-value memory interface.
- * Stores counters, preferences, milestones, and secrets.
- */
-export interface IFactStore {
-  /** Get a fact value by key. */
-  get(key: string): unknown | undefined;
-
-  /** Set a fact value. */
-  set(key: string, value: unknown, category?: FactCategory, ttlDays?: number | null): void;
-
-  /** Increment a numeric counter. */
-  increment(key: string, by?: number): number;
-
-  /** Delete a fact by key. */
-  delete(key: string): boolean;
-
-  /** List facts, optionally filtered by category. */
-  list(category?: FactCategory): FactEntry[];
-
-  /** Run cleanup and return count of removed entries. */
-  cleanup(): number;
-
-  /** Get aggregate stats. */
-  stats(): FactStats;
-
-  /** Run a health check. */
-  health(): FactHealthReport;
-}
-
-/** Scene state health report. */
-export interface SceneHealthReport {
-  ok: boolean;
-  issues: string[];
-  fileSize: number;
-}
-
-/**
- * Scene state manager interface.
- * Tracks the agent's current scene: location, mood, clothing, temporal tags.
- */
-export interface ISceneManager {
-  /** Read the full scene state. */
-  get(): SceneState;
-
-  /** Update scene fields (partial merge). */
-  set(updates: Partial<SceneState['scene']>): SceneState;
-
-  /** Update clothing fields (partial merge). */
-  setClothing(updates: Record<string, string | null>): SceneState;
-
-  /** Add a temporal tag with auto-expiry. */
-  temporalAdd(text: string, cat?: string, ttlMin?: number): SceneState;
-
-  /** List temporal entries (cleans expired first). */
-  temporalList(): TemporalEntry[];
-
-  /** Clear all temporal entries. */
-  temporalClear(): void;
-
-  /** Switch to a preset scene. */
-  switch(name: 'home' | 'office' | 'reset'): SceneState;
-
-  /** Reset scene state to defaults. */
-  reset(): SceneState;
-
-  /** Run a health check. */
-  health(): SceneHealthReport;
-}
-
-/** Aggregate memory health report. */
+/** Aggregate memory health report (ring only). */
 export interface MemoryHealthReport {
   ok: boolean;
   issues: string[];
   components: {
     ring: RingHealthReport;
-    facts: FactHealthReport;
-    scene: SceneHealthReport;
   };
 }
 
@@ -171,9 +82,6 @@ export interface MemoryPluginConfig {
 
   /** Auto-save user/assistant messages. Default: true */
   autoSave?: boolean;
-
-  /** Enable scene tracking. Default: true */
-  sceneTracking?: boolean;
 }
 
 // ── Legacy hook context types ──────────────────────────

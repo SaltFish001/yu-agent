@@ -22,7 +22,7 @@ import { loadAppConfig } from './config.js';
 import { YU_HOME } from './paths.js';
 import { getSessionTag } from './session-context.js';
 import { getSummary, getCache } from './db.js';
-import { ringStats, sceneGet, factStats } from './memory/index.js';
+import { ringStats } from './memory/index.js';
 
 // ── Profile loading ────────────────────────────────────
 
@@ -129,13 +129,7 @@ function buildStatusSummary(): string {
 function buildMemorySummary(): string {
   try {
     const rStats = ringStats();
-    const fStats = factStats();
-    const scene = sceneGet();
-    const parts: string[] = [];
-    parts.push(`${rStats.total} mem`);
-    if (fStats.total > 0) parts.push(`${fStats.total} facts`);
-    parts.push(`@ ${scene.scene.location}`);
-    return parts.join(' · ');
+    return `${rStats.total} mem entries`;
   } catch (err) {
     log.warn('Failed to build memory summary', err);
     return '';

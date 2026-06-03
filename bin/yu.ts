@@ -249,25 +249,11 @@ async function runDoctor(jsonOutput?: boolean): Promise<void> {
     const { memoryHealth } = await import('../extension/memory/index.js');
     const memHealth = memoryHealth();
     results.push({
-      name: 'Ring 缓冲',
+      name: 'Ring 缓存',
       ok: memHealth.components.ring.ok,
       detail: memHealth.components.ring.ok
         ? `${memHealth.components.ring.total} 条目, ${formatBytes(memHealth.components.ring.dbSize)}`
         : memHealth.components.ring.issues.join('; '),
-    });
-    results.push({
-      name: 'Facts 存储',
-      ok: memHealth.components.facts.ok,
-      detail: memHealth.components.facts.ok
-        ? `${memHealth.components.facts.total} 条目, ${formatBytes(memHealth.components.facts.fileSize)}`
-        : memHealth.components.facts.issues.join('; '),
-    });
-    results.push({
-      name: 'Scene 状态',
-      ok: memHealth.components.scene.ok,
-      detail: memHealth.components.scene.ok
-        ? formatBytes(memHealth.components.scene.fileSize)
-        : memHealth.components.scene.issues.join('; '),
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -476,11 +462,9 @@ Session Management:
   yu session clean [--days N]  Clean sessions older than N days (default 7)
 
 Memory System:
-  yu memory stats              Show memory stats (ring + facts + scene)
-  yu memory recent [n]         Show recent ring memory entries
-  yu memory facts [category]   List facts by category
-  yu memory scene              Show current scene state
-  yu memory health             Run memory subsystem health check
+  yu memory stats              Show ring buffer stats
+  yu memory recent [n]         Show recent ring entries
+  yu memory health             Run memory health check
 
 Knowledge Base (RAG):
   yu knowledge search <query>  Full-text search across project files (FTS5)
@@ -579,7 +563,7 @@ Checks all yu-agent subsystems:
   - Data directory (~/.yu/)
   - MCP configuration file
   - Prompt files
-  - Memory subsystem (ring buffer, facts store, scene state)
+  - Memory subsystem (ring buffer)
   - Session database (integrity check)
   - Token usage statistics
   - Agent run statistics

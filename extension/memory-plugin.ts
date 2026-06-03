@@ -1,9 +1,8 @@
 /**
  * yu-agent — Memory plugin (Pi extension).
  *
- * Wires the memory subsystem into the Pi lifecycle:
+ * Wires the ring buffer memory into the Pi lifecycle:
  * - Auto-saves each user/assistant message to ring buffer
- * - Auto-loads scene state for identity injection
  * - Provides /memory CLI command for querying
  * - Lifecycle management via MemoryLifecycle (init/shutdown)
  *
@@ -15,9 +14,9 @@ const log = createLogger('memory-plugin');
 
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import {
-  memoryHealth, RingMemory, FactStore, SceneManager,
+  memoryHealth, RingMemory,
 } from './memory/index.js';
-import type { IMemoryRing, IFactStore, ISceneManager, MemoryPluginConfig } from './types.js';
+import type { IMemoryRing, MemoryPluginConfig } from './types.js';
 import { resolve } from 'node:path';
 import { YU_HOME } from './paths.js';
 import { existsSync, readFileSync } from 'node:fs';
@@ -39,29 +38,19 @@ function loadPluginConfig(): MemoryPluginConfig {
 
 export class MemoryLifecycle {
   private _ring: IMemoryRing;
-  private _facts: IFactStore;
-  private _scene: ISceneManager;
   private _config: MemoryPluginConfig;
   private _initialized = false;
 
-  constructor(options?: { ring?: IMemoryRing; facts?: IFactStore; scene?: ISceneManager; config?: MemoryPluginConfig }) {
+  constructor(options?: { ring?: IMemoryRing; config?: MemoryPluginConfig }) {
     this._config = options?.config ?? loadPluginConfig();
     this._ring = options?.ring ?? new RingMemory({
       maxEntries: this._config.ringMaxEntries,
       overflowStrategy: this._config.overflowStrategy,
     });
-    this._facts = options?.facts ?? new FactStore();
-    this._scene = options?.scene ?? new SceneManager();
   }
 
   /** Get the ring buffer instance. */
   get ring(): IMemoryRing { return this._ring; }
-
-  /** Get the facts store instance. */
-  get facts(): IFactStore { return this._facts; }
-
-  /** Get the scene manager instance. */
-  get scene(): ISceneManager { return this._scene; }
 
   /** Get the plugin config. */
   get config(): MemoryPluginConfig { return this._config; }
@@ -80,7 +69,7 @@ export class MemoryLifecycle {
       if (!health.ok) {
         log.warn('init: Health check found issues', { issues: health.issues.join('; ') });
       } else {
-        log.info('init: OK', { ring: health.components.ring.total, facts: health.components.facts.total, scene: health.components.scene.ok });
+        log.info('init: OK', { ring: health.components.ring.total });
       }
     } catch (e) {
       log.warn('init: Health check failed', e);
@@ -96,7 +85,6 @@ export class MemoryLifecycle {
     this._initialized = false;
 
     try {
-      // Close ring DB connection if it's a RingMemory instance
       if (this._ring instanceof RingMemory) {
         (this._ring as RingMemory).close();
       }
@@ -109,13 +97,8 @@ export class MemoryLifecycle {
 
 // ── Global state ───────────────────────────────────────
 
-// Allow external access for factory/integration use
 let _lifecycle: MemoryLifecycle | null = null;
 
-/**
- * Get or create the global memory lifecycle instance.
- * Used by bin/yu.ts and other integration points.
- */
 export function getMemoryLifecycle(options?: { config?: MemoryPluginConfig }): MemoryLifecycle {
   if (!_lifecycle) {
     _lifecycle = new MemoryLifecycle({ config: options?.config });
@@ -124,9 +107,6 @@ export function getMemoryLifecycle(options?: { config?: MemoryPluginConfig }): M
   return _lifecycle;
 }
 
-/**
- * Reset the global lifecycle (for testing or re-initialization).
- */
 export function resetMemoryLifecycle(): void {
   if (_lifecycle) {
     _lifecycle.shutdown();
@@ -137,7 +117,6 @@ export function resetMemoryLifecycle(): void {
 // ── Plugin entry ───────────────────────────────────────
 
 export default function (pi: ExtensionAPI): void {
-  // Initialize memory subsystem
   const lifecycle = getMemoryLifecycle();
   lifecycle.init();
 
@@ -180,8 +159,7 @@ export default function (pi: ExtensionAPI): void {
 
   // ── /memory slash command ──
   pi.registerCommand('memory', {
-    description: '记忆系统查询。用法: /memory recent [n], /memory stats, /memory facts [category]',
-    // biome-ignore lint/suspicious/noExplicitAny: ExtensionCommandContext type not exported
+    description: '记忆系统查询。用法: /memory recent [n], /memory stats',
     handler: async (args: string, ctx: any) => {
       const parts = args.trim().split(/\s+/);
       const sub = parts[0]?.toLowerCase() || '';
@@ -207,36 +185,16 @@ export default function (pi: ExtensionAPI): void {
       // /memory stats
       if (sub === 'stats') {
         const memStats = lifecycle.ring.stats();
-        const factStatsData = lifecycle.facts.stats();
-        const scene = lifecycle.scene.get();
         const lines = [
           `Ring memory: ${memStats.total} entries`,
           `  by platform: ${JSON.stringify(memStats.by_platform)}`,
-          `Facts store: ${factStatsData.total} entries`,
-          `  by category: ${JSON.stringify(factStatsData.by_category)}`,
-          `Scene: ${scene.scene.location} (${scene.scene.mode})`,
         ];
         ctx.ui.notify(lines.join('\n'), 'info');
         return;
       }
 
-      // /memory facts [category]
-      if (sub === 'facts') {
-        const cat = parts[1] as 'counter' | 'pref' | 'secret' | 'milestone' | undefined;
-        const entries = lifecycle.facts.list(cat);
-        if (entries.length === 0) {
-          ctx.ui.notify('No facts found.', 'info');
-          return;
-        }
-        const lines = entries.map(e =>
-          `  ${e.category} | ${e.key} = ${JSON.stringify(e.value)}${e.ttl_days ? ` (TTL: ${e.ttl_days}d)` : ' (永久)'}`,
-        );
-        ctx.ui.notify(`Facts (${entries.length}):\n${lines.join('\n')}`, 'info');
-        return;
-      }
-
       ctx.ui.notify(
-        'Usage: /memory recent [n], /memory stats, /memory facts [category]',
+        'Usage: /memory recent [n], /memory stats',
         'warning',
       );
     },
@@ -248,9 +206,6 @@ export default function (pi: ExtensionAPI): void {
   });
 }
 
-/**
- * Extract text content from an AgentMessage-like object.
- */
 function extractText(msg: { content?: unknown; role?: string }): string {
   if (!msg.content) return '';
   const content = msg.content;
