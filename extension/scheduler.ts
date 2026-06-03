@@ -20,6 +20,7 @@ import {
   runParallelGroup,
   reviewDiff,
   printDiffSummary,
+  confirmDiff,
 } from './executor.js';
 
 import type { SchedulerContext } from './types.js';
@@ -27,6 +28,7 @@ import { parseAgentOutput } from './template.js';
 import type { CodingOutput } from './template.js';
 
 import { resetTracker, trackAgent, flushFinalStatus, loadDecisions, saveDecision } from './tracker.js';
+import { checkpointGuard } from './checkpoint.js';
 import { verifyWithLsp, runTests } from './verifier.js';
 import { runTeamMode } from './team-orchestrator.js';
 
@@ -99,22 +101,48 @@ export async function handler(
     }
 
     // Step 4b: Diff review — show the agent what changed
+    let diffInfo: ReturnType<typeof reviewDiff> | undefined;
     if (modifiedFiles.length > 0) {
-      const diffInfo = reviewDiff();
+      diffInfo = reviewDiff();
       printDiffSummary(diffInfo);
+    }
+
+    // Step 4c: 交互审批 — 用户确认后才继续 LSP 验证
+    if (diffInfo && diffInfo.hasChanges) {
+      const approved = await confirmDiff(diffInfo);
+      if (!approved) {
+        // 用户放弃变更：还原工作区
+        try {
+          const { execSync } = await import('node:child_process');
+          execSync('git checkout -- .', { encoding: 'utf-8', timeout: 10_000 });
+          console.log('[yu-agent] 已还原所有未暂存变更。');
+        } catch {
+          console.warn('[yu-agent] git checkout 失败，请手动还原。');
+        }
+        flushFinalStatus();
+        return '用户已放弃本次变更。';
+      }
     }
 
     // Step 5: LSP verification
     let lspOk = true;
     if (modifiedFiles.length > 0) {
-      const lspResult = await verifyWithLsp(modifiedFiles, []);
-      if (!lspResult.ok) {
-        lspOk = false;
-        const errorSummary = lspResult.errors
-          .slice(0, 10)
-          .map((e) => `${(e as Record<string, unknown>).file || '?'}:${(e as Record<string, unknown>).line || '?'} — ${(e as Record<string, unknown>).error || '?'}`)
-          .join('\n      ');
-        console.warn(`[yu-agent] LSP verification failed with ${lspResult.errors.length} remaining errors:\n      ${errorSummary}`);
+      const lspDone = checkpointGuard('lsp_verify', modifiedFiles, {
+        intent: plan.intent,
+        agents: plan.agents?.map((a) => a.type),
+      });
+      try {
+        const lspResult = await verifyWithLsp(modifiedFiles, []);
+        if (!lspResult.ok) {
+          lspOk = false;
+          const errorSummary = lspResult.errors
+            .slice(0, 10)
+            .map((e) => `${(e as Record<string, unknown>).file || '?'}:${(e as Record<string, unknown>).line || '?'} — ${(e as Record<string, unknown>).error || '?'}`)
+            .join('\n      ');
+          console.warn(`[yu-agent] LSP verification failed with ${lspResult.errors.length} remaining errors:\n      ${errorSummary}`);
+        }
+      } finally {
+        lspDone();
       }
     }
 
@@ -126,12 +154,21 @@ export async function handler(
     }
 
     // Step 7: Save decision
-    if (plan.intent) {
-      saveDecision(`${Date.now()}-${plan.intent}`, {
-        intent: plan.intent,
-        agents: plan.agents,
-        files: modifiedFiles,
-      });
+    const commitDone = checkpointGuard('commit', modifiedFiles, {
+      intent: plan.intent,
+      lspOk,
+    });
+    try {
+      if (plan.intent) {
+        saveDecision(`${Date.now()}-${plan.intent}`, {
+          intent: plan.intent,
+          agents: plan.agents,
+          files: modifiedFiles,
+        });
+      }
+      commitDone();
+    } catch {
+      commitDone();
     }
 
     // Step 8: Aggregate and return

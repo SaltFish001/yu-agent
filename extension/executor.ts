@@ -8,7 +8,9 @@
 import { spawnAgent, type SpawnConfig } from './spawn.js';
 import type { SpawnResult } from './spawn.js';
 import { trackAgent } from './tracker.js';
+import { checkpointGuard } from './checkpoint.js';
 import { execSync } from 'node:child_process';
+import { createInterface } from 'node:readline';
 
 // ── Constants ──────────────────────────────────────────
 
@@ -31,33 +33,43 @@ export async function spawnAgentWithTimeout(
   task: AgentTask,
   extraContext: Record<string, unknown>,
 ): Promise<SpawnResult> {
-  trackAgent(task.id, 'running', {
-    type: task.type,
-    model: task.model,
-    goal: task.task?.slice(0, 120) ?? '',
-    files: task.files,
+  // 保存 checkpoint: agent spawn 前
+  const done = checkpointGuard('agent_spawn', task.files ?? [], {
+    agentType: task.type,
+    agentModel: task.model,
+    taskGoal: task.task?.slice(0, 200),
   });
-
   try {
-    const config: SpawnConfig = {
+    trackAgent(task.id, 'running', {
       type: task.type,
       model: task.model,
-      thinking: 'max',
-      maxTurns: 50,
-      task: task.task || (task.files?.join(', ') || ''),
+      goal: task.task?.slice(0, 120) ?? '',
       files: task.files,
-      context: extraContext,
-      timeout: AGENT_TIMEOUT_MS,
-      teamRunId: extraContext.teamRunId as string | undefined,
-      memberName: extraContext.memberName as string | undefined,
-    };
-    const result = await spawnAgent(config);
-    trackAgent(task.id, 'completed');
-    return result;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    trackAgent(task.id, 'failed', { error: msg });
-    throw err;
+    });
+
+    try {
+      const config: SpawnConfig = {
+        type: task.type,
+        model: task.model,
+        thinking: 'max',
+        maxTurns: 50,
+        task: task.task || (task.files?.join(', ') || ''),
+        files: task.files,
+        context: extraContext,
+        timeout: AGENT_TIMEOUT_MS,
+        teamRunId: extraContext.teamRunId as string | undefined,
+        memberName: extraContext.memberName as string | undefined,
+      };
+      const result = await spawnAgent(config);
+      trackAgent(task.id, 'completed');
+      return result;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      trackAgent(task.id, 'failed', { error: msg });
+      throw err;
+    }
+  } finally {
+    done(); // 无论成功或失败都清理 checkpoint
   }
 }
 
@@ -104,6 +116,67 @@ export async function runWithConcurrencyLimit<T>(
  *   - hasChanges: boolean indicating if there are uncommitted changes
  *   - stats: short stat summary (files changed, insertions, deletions)
  */
+/**
+ * 交互式 diff 确认：打印变更并等待用户 y/N 确认。
+ * 超时 60 秒无输入则自动放弃。
+ *
+ * @returns true 用户确认（y） | false 用户拒绝或超时（N）
+ */
+export async function confirmDiff(diffResult: {
+  diff: string;
+  hasChanges: boolean;
+  stats: string;
+}): Promise<boolean> {
+  if (!diffResult.hasChanges) {
+    return true; // 无变更，无需确认
+  }
+
+  console.log('');
+  console.log('═ 人类审批 ═══════════════════════════════════════════════');
+  console.log('  以上是 agent 的变更。请确认是否继续：');
+  console.log('');
+
+  return new Promise<boolean>((resolve) => {
+    const rl = createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: true,
+    });
+
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        rl.close();
+        console.log('  ⏱ 超时未响应，自动放弃变更。');
+        console.log('════════════════════════════════════════════════════════════════');
+        console.log('');
+        resolve(false);
+      }
+    }, 60_000);
+
+    rl.question('  Apply these changes? (y/N) ', (answer) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      rl.close();
+
+      const trimmed = answer.trim().toLowerCase();
+      if (trimmed === 'y' || trimmed === 'yes') {
+        console.log('  ✓ 已确认，继续执行。');
+        console.log('════════════════════════════════════════════════════════════════');
+        console.log('');
+        resolve(true);
+      } else {
+        console.log('  ✗ 已放弃变更。');
+        console.log('════════════════════════════════════════════════════════════════');
+        console.log('');
+        resolve(false);
+      }
+    });
+  });
+}
+
 export function reviewDiff(): { diff: string; hasChanges: boolean; stats: string } {
   try {
     const stats = execSync('git diff --stat', {
