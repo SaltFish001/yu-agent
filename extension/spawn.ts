@@ -12,6 +12,7 @@
  */
 
 import { createLogger } from './logger.js';
+import { webSearch, webExtract } from './browser/index.js';
 import { shutdownManager } from './lifecycle.js';
 const log = createLogger('spawn');
 
@@ -547,7 +548,7 @@ export class SessionPool {
     const tools = isScheduler ? [] : UNIFIED_TOOLS;
     const options: CreateAgentSessionOptions = {
       tools,
-      customTools: isScheduler ? [] : [READ_TERMINAL_TOOL],
+      customTools: isScheduler ? [] : [READ_TERMINAL_TOOL, WEB_SEARCH_TOOL, WEB_EXTRACT_TOOL],
     };
 
     // 将 per-type 指令注入 system prompt（IMMUTABLE PREFIX 层），
@@ -605,6 +606,8 @@ const UNIFIED_TOOLS = [
   'bash', 'read', 'edit', 'write',
   'grep', 'find', 'ls',
   'read_terminal',
+  'web_search',
+  'web_extract',
 ];
 
 /** `read_terminal` 工具定义：agent 可通过它 attach 到本地终端进程 */
@@ -667,6 +670,49 @@ const READ_TERMINAL_TOOL = defineTool({
       content: [{ type: 'text' as const, text }],
       details: detail,
       ...(isError ? { isError: true as const } : {}),
+    };
+  },
+});
+
+/** `web_search` 工具：通过 DuckDuckGo 搜索网页 */
+const WEB_SEARCH_TOOL = defineTool({
+  name: 'web_search',
+  label: 'Web Search',
+  description:
+    'Search the web via DuckDuckGo. Returns titles, links, and snippets. ' +
+    'No API key required. Supports advanced query syntax (site:, OR, intitle:).',
+  parameters: Type.Object({
+    query: Type.String({ description: 'Search query' }),
+    limit: Type.Optional(Type.Number({ description: 'Max results (1-20, default 5)' })),
+  }),
+  async execute(_toolCallId: string, params: { query: string; limit?: number }) {
+    const result = await webSearch(params);
+    return {
+      content: [{ type: 'text' as const, text: result.text }],
+      details: result.detail ?? {},
+      ...(result.isError ? { isError: true as const } : {}),
+    };
+  },
+});
+
+/** `web_extract` 工具：从网页提取可读内容 */
+const WEB_EXTRACT_TOOL = defineTool({
+  name: 'web_extract',
+  label: 'Web Extract',
+  description:
+    'Fetch a webpage and extract its readable content as clean text. ' +
+    'Useful for reading article content, documentation, or API references. ' +
+    'Max 10,000 characters by default.',
+  parameters: Type.Object({
+    url: Type.String({ description: 'URL to fetch and extract' }),
+    maxLength: Type.Optional(Type.Number({ description: 'Max characters to return (default 10000)' })),
+  }),
+  async execute(_toolCallId: string, params: { url: string; maxLength?: number }) {
+    const result = await webExtract(params);
+    return {
+      content: [{ type: 'text' as const, text: result.text }],
+      details: result.detail ?? {},
+      ...(result.isError ? { isError: true as const } : {}),
     };
   },
 });

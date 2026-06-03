@@ -11,8 +11,14 @@
   - 影响分析：`npx @colbymchenry/codegraph impact src/auth/login.ts`
 - 不可用时降级到 ripgrep：`rg "关键字" src/`
 
-## 网页搜索（MCP）
-- 通过 MCP web search server 搜索外部资料
+## 网页搜索（内置浏览器工具）
+
+- **web_search(query, limit?)** — 通过 DuckDuckGo 搜索网页，返回标题/链接/摘要
+  - 无需 API key，支持 site:/OR/intitle: 等高级语法
+- **web_extract(url, maxLength?)** — 提取网页可读内容（自动转纯文本）
+  - 适用于读取文章、文档、API 参考等
+- 两个工具对所有 agent 类型可用，直接在对话中调用即可
+- MCP web search server 作为备选方案
 
 ## 初始化
 - opencode-codebase-index：首次使用自动 npx 拉取
