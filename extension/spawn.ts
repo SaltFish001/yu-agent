@@ -15,7 +15,9 @@ import type { AssistantMessage } from '@earendil-works/pi-ai';
 
 import { getAgentTypeConfig } from './config.js';
 
-import { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager,
+import { Type } from 'typebox';
+
+import { createAgentSession, DefaultResourceLoader, defineTool, SessionManager, SettingsManager,
   type AgentSession,
   type CreateAgentSessionOptions,
 } from '@earendil-works/pi-coding-agent';
@@ -445,7 +447,10 @@ export class SessionPool {
     // scheduler 不需要工具——只管输出 JSON 调度；其他 type 用全集
     const isScheduler = cfg.type === 'general-purpose';
     const tools = isScheduler ? [] : UNIFIED_TOOLS;
-    const options: CreateAgentSessionOptions = { tools };
+    const options: CreateAgentSessionOptions = {
+      tools,
+      customTools: isScheduler ? [] : [READ_TERMINAL_TOOL],
+    };
 
     // 将 per-type 指令注入 system prompt（IMMUTABLE PREFIX 层），
     // 而非 user message——让指令本身也参与 API 层前缀缓存。
@@ -501,7 +506,73 @@ const globalPools = new Map<string, SessionPool>();
 const UNIFIED_TOOLS = [
   'bash', 'read', 'edit', 'write',
   'grep', 'find', 'ls',
+  'read_terminal',
 ];
+
+/** `read_terminal` 工具定义：agent 可通过它 attach 到本地终端进程 */
+const READ_TERMINAL_TOOL = defineTool({
+  name: 'read_terminal',
+  label: 'Read Terminal Output',
+  description:
+    'Attach to a running terminal process and read its stdout output. ' +
+    'Use list first to find PIDs of running shells/tty processes. ' +
+    'Read-only — cannot send input to the terminal.',
+  parameters: Type.Object({
+    action: Type.Union([
+      Type.Literal('list'),
+      Type.Literal('attach'),
+    ], { description: 'Action: list processes or attach to a PID' }),
+    pid: Type.Optional(Type.Number({ description: 'Process ID to attach (required for attach action)' })),
+  }),
+  async execute(_toolCallId: string, params: { action: 'list' | 'attach'; pid?: number }) {
+    let text = '';
+    const detail: Record<string, unknown> = {};
+    let isError = false;
+
+    if (params.action === 'list') {
+      const { listTerminalProcesses } = await import('./terminal/index.js');
+      const procs = listTerminalProcesses();
+      if (procs.length === 0) {
+        text = 'No terminal processes found for current user.';
+      } else {
+        const lines = procs.map(
+          (p) => `PID ${p.pid} — ${p.command} (started ${new Date(p.startedAt).toLocaleString()})`,
+        );
+        text = lines.join('\n');
+        detail.processes = procs.length;
+      }
+    } else if (params.action === 'attach') {
+      const pid = params.pid;
+      if (!pid) {
+        text = 'Error: pid is required for attach action.';
+        isError = true;
+      } else {
+        const { readProcessOutput } = await import('./terminal/index.js');
+        try {
+          const output = readProcessOutput(pid);
+          text = output
+            ? `--- stdout of PID ${pid} ---\n${output}`
+            : `Process ${pid} stdout buffer is empty.`;
+          detail.bytes = output.length;
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          text = `Error attaching to PID ${pid}: ${msg}`;
+          isError = true;
+        }
+      }
+    } else {
+      text = 'Invalid action. Use list or attach.';
+      isError = true;
+    }
+
+    return {
+      content: [{ type: 'text' as const, text }],
+      details: detail,
+      ...(isError ? { isError: true as const } : {}),
+    };
+  },
+});
+
 
 /**
  * 获取指定 agent type 的 SessionPool。

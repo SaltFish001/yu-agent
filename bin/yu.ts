@@ -384,6 +384,11 @@ Knowledge Base (RAG):
   yu knowledge index [dir]     Index/reindex project files
   yu knowledge status          Show knowledge base stats
 
+Terminal Integration:
+  yu terminal list             List current user's terminal processes
+  yu terminal attach <pid>     Read process stdout buffer (one-shot)
+  yu terminal watch <pid>      Live-tail process stdout (Linux only)
+
 Sandbox Execution:
   yu sandbox <command>         Run command in isolated Docker container
   yu sandbox status            Check sandbox availability
@@ -636,6 +641,56 @@ async function mainCli(): Promise<void> {
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error(`knowledge 操作失败: ${msg}`);
+      process.exit(1);
+    }
+    process.exit(0);
+  }
+
+  // `yu terminal <subcommand>` — terminal attach/watch
+  if (args[0] === 'terminal') {
+    const { terminalCommand, watchProcessOutput, isLinux } = await import('../extension/terminal/index.js');
+    const sub = args[1] || 'help';
+
+    try {
+      if (sub === 'watch') {
+        if (!isLinux()) {
+          console.error('terminal 功能仅支持 Linux 平台。');
+          process.exit(1);
+        }
+        const pidStr = args[2];
+        if (!pidStr || !/^\d+$/.test(pidStr)) {
+          console.error('Usage: yu terminal watch <pid>');
+          process.exit(1);
+        }
+        const pid = parseInt(pidStr, 10);
+
+        // 检查是否为交互式终端
+        if (!process.stdin.isTTY) {
+          console.log('非交互式环境，watch 模式不可用。使用 yu terminal attach <pid> 一次性读取。');
+          process.exit(1);
+        }
+
+        console.log(`正在观察进程 ${pid} 的输出...（按 Ctrl+C 停止）`);
+        const handle = watchProcessOutput(pid, (output) => {
+          process.stdout.write(output.text);
+        });
+
+        // Wait for Ctrl+C
+        process.on('SIGINT', () => {
+          handle.disconnect();
+          console.log('\n[yu-terminal] 已断开');
+          process.exit(0);
+        });
+
+        // Keep alive
+        await new Promise(() => {});
+      } else {
+        const out = terminalCommand(args.slice(1));
+        console.log(out);
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`terminal 操作失败: ${msg}`);
       process.exit(1);
     }
     process.exit(0);
