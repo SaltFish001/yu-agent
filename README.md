@@ -251,6 +251,30 @@ The cache-first model requires identical task context, files list, and agent typ
 
 ---
 
+---
+
+## Inspirations & Credits
+
+yu-agent 站在巨头的肩膀上。以下列出核心功能的灵感来源、原项目链接，以及 yu-agent 的差异化改进。
+
+| 功能 | 灵感来源 | 原项目 | yu-agent 的差异 |
+|------|---------|--------|----------------|
+| **Team Mode 多 agent 协作** | OMO (Oh My OpenAgent) 的 Sisyphus 编排器 + 并行 agent 执行 | [oh-my-openagent](https://github.com/code-yeongyu/oh-my-openagent) | OMO 有 11 个专业 agent、54+ 生命周期钩子、tmux 可视化、文件系统 mailbox IPC。yu-agent 简化为 4 角色（Architect/Coder/Reviewer/Searcher），4 阶段管线，共享目录做上下文交换——更轻、更针对 DeepSeek 生态。 |
+| **调度器 + 意图分类** | OMO 的 Sisyphus orchestrator 模式 + Prometheus 战略规划器 | [oh-my-openagent](https://github.com/code-yeongyu/oh-my-openagent) | OMO 用多模型路由（Claude/GPT/Gemini/Grok），yu-agent 纯 DeepSeek（v4-pro/v4-flash），调度器本身也是 sub-agent 而非独立服务。分类+执行合一，减少来回开销。 |
+| **子 agent 生命周期** | pi-subagents 的 AgentConfig + spawn 机制 | [pi-subagents](https://github.com/tintinweb/pi-subagents) | yu-agent 在其之上加了：SessionPool 缓存池、Three-Region cache 优化、自动 context compression、per-agent-type 并发上限控制。 |
+| **Pi 扩展框架** | Pi Coding Agent 的 extension 体系 | [Pi](https://github.com/earendil-works/pi) | yu-agent 深度嵌入 Pi 的 beforeChat hook + 斜杠命令 + TUI 监控面板，不是独立 CLI。 |
+| **Cache-First Three-Region Model** | DeepSeek Reasonix 的 prefix cache 优化策略 + 三段式上下文分区 | [DeepSeek KV Cache](https://api-docs.deepseek.com/guides/kv_cache)、[Reasonix 文章](https://devlery.com/en/blog/reasonix-deepseek-prefix-cache-agent) | yu-agent 实现了 Immutable Prefix / Append-Only Log / Volatile Scratch 三层，使缓存命中率达 ~70-90%。每个 SessionPool 内部持久化 cache state 到磁盘。 |
+| **Session 管理 + .jsonl 格式** | OpenCode 的 SessionManager + .jsonl 事件日志 | [OpenCode](https://github.com/sst/opencode) | yu-agent 只存元数据（agent type/model/timestamps），不存完整消息——对话历史由 Pi 的 SessionManager 管理，避免重复存储。 |
+| **LSP 诊断 + 自动修复** | OMO 的 LSP lifecycle hooks + Claude Code 的 LSP 集成 | [oh-my-openagent](https://github.com/code-yeongyu/oh-my-openagent) | yu-agent 实现了独立 LSP 子 agent 类型，支持 TS/Python/Go/Rust 四种语言，含心跳检测和 2 轮修复循环。 |
+| **Checkpoint 恢复** | OpenCode 的 checkpoint 系统 + OMO 的 ulw-loop | [OpenCode](https://github.com/sst/opencode)、[oh-my-openagent](https://github.com/code-yeongyu/oh-my-openagent) | yu-agent 覆盖 agent_spawn / lsp_verify / commit 三阶段，比 OpenCode 的纯操作级 checkpoint 更细。 |
+| **知识库 RAG** | OMO 的 Librarian agent + 标准 RAG 模式 | [oh-my-openagent](https://github.com/code-yeongyu/oh-my-openagent) | yu-agent 用 SQLite FTS5 做全文检索引擎，零依赖，轻量但功能受限（不支持 embedding 语义检索）。 |
+| **AST 重构** | Biome 的 refactoring API（renameSymbol / extractInterface） | [Biome](https://biomejs.dev) | 直接调用 Biome CLI，不做额外封装。定位于"补刀"，不做大范围重构。 |
+| **人格/身份系统** | 予鱼（quite_fish）角色设定——原创 | — | personality.json + identity.ts 驱动，可热替换，但暂不支持按项目级覆盖。 |
+| **子 agent 结构化 JSON 输出** | OMO 的 agent 输出格式规范 + Claude Code structured tools | [oh-my-openagent](https://github.com/code-yeongyu/oh-my-openagent) | yu-agent 的每种 agent type 有独立 JSON schema（coding/review/plan/commit/lsp/doc），调度器严格校验。 |
+| **沙箱执行** | Docker 容器隔离模式（通用） | — | yu-agent 支持 Docker + 本地两种执行后端，通过 sandbox agent type 封装。 |
+
+---
+
 ## License
 
 MIT

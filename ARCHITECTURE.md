@@ -650,6 +650,83 @@ See CONFIGURATION.md for the full data directory layout.
 
 ---
 
+---
+
+## Inspirations & Credits
+
+yu-agent 继承了多个开源项目的思想和架构。以下汇总核心借鉴来源及与原始项目的差异对比。
+
+### OMO / Oh My OpenAgent
+
+> GitHub: [code-yeongyu/oh-my-openagent](https://github.com/code-yeongyu/oh-my-openagent)  
+> Stars: 60k+ | 定位：OpenCode 的多 agent 编排插件
+
+OMO 是 yu-agent 最大的灵感来源。以下逐项对比：
+
+| 维度 | OMO | yu-agent |
+|------|-----|----------|
+| **Agent 数量** | 11 个专业 agent（Sisyphus/Hephaestus/Prometheus/Oracle/Librarian/Atlas 等） | 8 种 agent type（coding/review/plan/search/commit/lsp/doc/general-purpose） |
+| **编排器** | Sisyphus 独立 orchestrator agent | `classifier.ts` + `scheduler.ts` 合一的调度器 sub-agent |
+| **Team mode** | 最多 8 个并行成员，tmux 实时可视化，文件系统 mailbox，12 个 team 工具 | 4 角色（Architect/Coder/Reviewer/Searcher），4 阶段管线，共享目录做上下文交换 |
+| **模型路由** | 多 provider（Claude/GPT/Gemini/Grok）按角色配置 | 纯 DeepSeek（v4-pro 强模型 / v4-flash 快模型），按输入特征路由 |
+| **生命周期钩子** | 54+ lifecycle hooks，覆盖几乎所有事件点 | ~15 个关键钩子（beforeChat / before_agent_start / turn_end / session_start） |
+| **测试** | 无内置测试框架 | ~43 个测试用例（vitest），集成测试 mock LLM 注入 |
+| **LSP 集成** | hook 级别的 LSP 事件 | 独立 LSP agent type，含心跳 + 2 轮修复循环，4 语言支持 |
+| **Checkpoint** | ulw-loop 操作级 checkpoint | 3 阶段 checkpoint（spawn / lsp_verify / commit） |
+| **记忆系统** | 无内置记忆 | 原有三层记忆后砍为 0——改为 Pi 的 SessionManager 管理 |
+| **日志** | 无结构化日志 | JSON Lines + SQLite 持久化，5 级日志 |
+
+**yu-agent 的核心差异理念：** 更轻、更专注 DeepSeek 生态、无多余抽象。OMO 追求"全功能编排平台"，yu-agent 追求"DS 定制化编程助手"——调度器即 agent，不引入独立编排服务。
+
+### Pi + pi-subagents
+
+> Pi: [earendil-works/pi](https://github.com/earendil-works/pi)  
+> pi-subagents: [tintinweb/pi-subagents](https://github.com/tintinweb/pi-subagents)
+
+Pi 是 yu-agent 的运行底座，pi-subagents 是子 agent 生命周期管理的直接依赖。
+
+- Pi 提供了 `extension API`（beforeChat hook、斜杠命令、TUI widget、SessionManager）
+- pi-subagents 提供了 `AgentConfig.registerAgentType()` + `spawnAgent()` + `SessionPool`
+- yu-agent 在两者之上加了：走调度器的意图分类不再硬编码、Cache-First Three-Region 模型、自动 context compression、per-type 并发上限、结构化 JSON 输出格式校验
+
+### DeepSeek Reasonix / KV Cache
+
+> [DeepSeek KV Cache 文档](https://api-docs.deepseek.com/guides/kv_cache)  
+> [Reasonix 三段式缓存分析](https://devlery.com/en/blog/reasonix-deepseek-prefix-cache-agent)
+
+DeepSeek 的 prefix cache 机制（相同前缀命中时成本降至 ~1%）直接启发了 yu-agent 的 SessionPool 设计。
+
+**Three-Region 模型：**
+
+| Region | 内容 | 缓存命中 | 更新频率 |
+|--------|------|---------|---------|
+| **Immutable Prefix** | system prompt + agent type config + 工具定义 | ✅ 100% 命中 | 从不更新 |
+| **Append-Only Log** | 历史消息（按轮次追加） | ✅ 前缀连续命中 | 只追加不修改 |
+| **Volatile Scratch** | 当前轮的 tool output / 临时消息 | ❌ 不缓存 | 每轮清空 |
+
+yu-agent 的 SessionPool 在 disk 上持久化每个 session 的三层结构，下次同类型 task 复用前缀。
+
+### OpenCode (Session 格式)
+
+> [sst/opencode](https://github.com/sst/opencode)
+
+OpenCode 的 `.jsonl` session 文件格式和 SessionManager API 是 yu-agent session resume 的参考来源。
+
+- OpenCode 把完整消息树存为 `.jsonl`（含 branch/resume/compact）
+- yu-agent 只存 session 元数据，对话消息由 Pi 的 SessionManager 管理
+- Session resume 时从 Pi 的 `.jsonl` 中提取最近 30 条消息注入上下文
+
+### 其他
+
+| 能力 | 来源 | 说明 |
+|------|------|------|
+| AST 重构 | [Biome](https://biomejs.dev) | renameSymbol / extractInterface 直接调 Biome CLI |
+| 沙箱 | Docker 容器模式 | 通用模式，无直接参考项目 |
+| 人格系统 | 予鱼（quite_fish）角色 | 原创 personality.json + identity.ts 驱动 |
+| Structured Output | OMO + Claude Code | 每种 agent type 独立 JSON schema，调度器严格校验 |
+
+---
+
 ## SEE ALSO
 
 - [CONFIGURATION.md](CONFIGURATION.md) — Configuration reference (env vars, config files, agent types, MCP)
