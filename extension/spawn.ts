@@ -11,6 +11,10 @@
  * 工具输出超过阈值时自动压缩（turn-end compaction）。
  */
 
+import { createLogger } from './logger.js';
+import { shutdownManager } from './lifecycle.js';
+const log = createLogger('spawn');
+
 import type { AssistantMessage } from '@earendil-works/pi-ai';
 
 import { getAgentTypeConfig } from './config.js';
@@ -25,6 +29,8 @@ import { createAgentSession, DefaultResourceLoader, defineTool, SessionManager, 
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { PI_AGENT_DIR, POOL_SESSIONS_DIR } from './paths.js';
+import { getSessionTag } from './session-context.js';
+import { insertTokenUsage } from './db.js';
 
 // ── 配置常量 ──────────────────────────────────────────
 
@@ -69,6 +75,10 @@ export interface SpawnResult {
   durationMs?: number;
   /** Model used for this call. */
   model?: string;
+  /** Session tag for this call. */
+  sessionTag?: string;
+  /** Agent type for this call. */
+  agentType?: string;
 }
 
 interface CacheStats {
@@ -172,7 +182,7 @@ export class SessionPool {
     this.sessionOptions = options;
     this.turnCount = 0;
     this.totalTokensUsed = 0;
-    console.log('[yu-agent/cache] New session created (prefix pinned)');
+    log.info('New session created (prefix pinned)');
   }
 
   async call(task: string, spawnCfg: SpawnConfig): Promise<SpawnResult> {
@@ -192,20 +202,71 @@ export class SessionPool {
         const reason = this.turnCount >= MAX_TURNS_PER_SESSION
           ? `${this.turnCount} turns`
           : `${this.totalTokensUsed} tokens`;
-        console.log(`[yu-agent/cache] Session reset after ${reason}`);
+        log.info(`Session reset after ${reason}`);
         await this.init(this.sessionOptions!);
       }
 
       const session = this.session!;
       const beforeLen = session.messages.length;
 
-      const result = await this._doCall(session, task, spawnCfg, beforeLen);
+      // Execute with retry for recoverable errors
+      const result = await this._callWithRetry(session, task, spawnCfg, beforeLen);
 
       this.totalTokensUsed += result.totalTokens ?? 0;
       this.turnCount++;
 
+      // Persist token usage to DB (fire-and-forget)
+      this._persistTokenUsage(result, spawnCfg);
+
       return result;
     });
+  }
+
+  /**
+   * Execute _doCall with retry logic for recoverable errors.
+   * Recoverable: timeout, transient API errors.
+   * Non-recoverable: validation errors, session corruption.
+   */
+  private async _callWithRetry(
+    session: AgentSession,
+    task: string,
+    spawnCfg: SpawnConfig,
+    beforeLen: number,
+  ): Promise<SpawnResult> {
+    const maxAttempts = 2;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await this._doCall(session, task, spawnCfg, beforeLen);
+      } catch (err) {
+        const isRecoverable =
+          err instanceof Error &&
+          (err.message.includes('timed out') ||
+           err.message.includes('timeout') ||
+           err.message.includes('ETIMEDOUT') ||
+           err.message.includes('ECONNRESET') ||
+           err.message.includes('rate limit') ||
+           err.message.includes('429') ||
+           err.message.includes('503') ||
+           err.message.includes('Service Unavailable'));
+
+        log.error(`Session call failed (attempt ${attempt}/${maxAttempts})`, err, {
+          type: spawnCfg.type,
+          task: task.slice(0, 100),
+          recoverable: isRecoverable,
+        });
+
+        if (attempt < maxAttempts && isRecoverable) {
+          log.info(`Retrying after recoverable error (attempt ${attempt})`);
+          // Brief backoff before retry
+          await new Promise<void>((r) => setTimeout(r, 1_000 * attempt));
+          continue;
+        }
+
+        throw err;
+      }
+    }
+    // Unreachable
+    throw new Error('Unexpected: callWithRetry exhausted without returning or throwing');
   }
 
   /**
@@ -221,19 +282,16 @@ export class SessionPool {
       if (!usage || usage.percent === null) return;
 
       if (usage.percent >= CONTEXT_COMPRESSION_THRESHOLD) {
-        console.log(
-          `[yu-agent/cache] Context at ${(usage.percent * 100).toFixed(0)}% ` +
-          `(${usage.tokens}/${usage.contextWindow}), triggering compression...`,
-        );
+        log.info(`Context at ${(usage.percent * 100).toFixed(0)}% (${usage.tokens}/${usage.contextWindow}), triggering compression...`);
         await session.compact(
           'Compress the conversation history: keep the key context (task goals, decisions, file changes) ' +
           'and discard old tool call details. Preserve the overall flow so work can continue.',
         );
-        console.log('[yu-agent/cache] Context compression complete');
+        log.info('Context compression complete');
       }
     } catch (err) {
       // 压缩是尽力而为的操作，失败不影响继续执行
-      console.warn('[yu-agent/cache] Context compression failed (non-fatal):', err);
+      log.warn('Context compression failed (non-fatal)', err);
     }
   }
 
@@ -261,7 +319,12 @@ export class SessionPool {
     // 确保 timer 回调执行前先检查 settled 标志，避免重复兑现或误 abort。
     const guardedTimedPromise = timedPromise.then(
       (value) => { settled = true; return value; },
-      (err)  => { settled = true; throw err; },
+      (err)  => {
+        // 如果已经 settled（timer 先触发），不抛异常——race 已经结束了
+        if (settled) return undefined as never;
+        settled = true;
+        throw err;
+      },
     );
 
     const abortPromise = new Promise<void>((_, reject) => {
@@ -290,7 +353,16 @@ export class SessionPool {
       this.buildDefaultConfig(spawnCfg),
     );
     try {
-      return await this._doCall(agentSession, task, spawnCfg, 0);
+      const result = await this._callWithRetry(agentSession, task, spawnCfg, 0);
+      // Persist token usage to DB (fire-and-forget)
+      this._persistTokenUsage(result, spawnCfg);
+      return result;
+    } catch (err) {
+      log.error('Isolated session call failed', err, {
+        type: spawnCfg.type,
+        task: task.slice(0, 100),
+      });
+      throw err;
     } finally {
       try {
         (agentSession as unknown as { dispose?: () => void }).dispose?.();
@@ -368,11 +440,37 @@ export class SessionPool {
       totalTokens: totalTokens || undefined,
       durationMs,
       model: spawnCfg.model,
+      sessionTag: getSessionTag(),
+      agentType: spawnCfg.type,
     };
   }
 
   getStats(): CacheStats {
     return { ...this.stats };
+  }
+
+  /**
+   * Persist token usage to the token_usage table (fire-and-forget).
+   * Uses sessionTag from SpawnResult if available, else spawnCfg info.
+   */
+  private _persistTokenUsage(result: SpawnResult, spawnCfg: SpawnConfig): void {
+    if (!result.totalTokens && !result.cacheHitTokens && !result.outputTokens) return; // nothing useful to record
+    try {
+      insertTokenUsage({
+        sessionTag: result.sessionTag || getSessionTag(),
+        agentType: result.agentType || spawnCfg.type,
+        model: spawnCfg.model,
+        cacheHitTokens: result.cacheHitTokens,
+        cacheMissTokens: result.cacheMissTokens,
+        outputTokens: result.outputTokens,
+        totalTokens: result.totalTokens,
+        cost: 0, // cost is internal, not exposed via result
+        durationMs: result.durationMs,
+        turnCount: 1,
+      });
+    } catch {
+      // best-effort
+    }
   }
 
   /** 重置统计（用于测试） */
@@ -631,20 +729,30 @@ export async function resetSessionPool(type?: string): Promise<void> {
 
 /** 缓存优先的子 agent 调用入口 */
 export async function spawnAgent(config: SpawnConfig): Promise<SpawnResult> {
-  const pool = getSessionPool(config.type);
+  const agentId = `${config.type}-${config.task.slice(0, 40).replace(/[^a-zA-Z0-9]/g, '_')}-${Date.now()}`;
+  shutdownManager.agentStarted(agentId);
 
-  // Isolated: 使用临时独立 session，不污染共享缓存池
-  if (config.isolated) {
-    return pool.callIsolated(config.task, config);
+  try {
+    const pool = getSessionPool(config.type);
+
+    // Isolated: 使用临时独立 session，不污染共享缓存池
+    if (config.isolated) {
+      return await pool.callIsolated(config.task, config);
+    }
+
+    // Team-aware spawn: wrap with mailbox polling + ack lifecycle
+    if (config.teamRunId && config.memberName) {
+      const { TeamSession } = await import('./team/session.js');
+      const teamSession = new TeamSession(config.teamRunId, config.memberName);
+      // TeamSession.call() handles: poll → inject → call → ack
+      return await teamSession.call(() => pool.call(config.task, config));
+    }
+
+    return await pool.call(config.task, config);
+  } catch (err) {
+    log.error('Agent spawn failed', err, { type: config.type, task: config.task.slice(0, 100) });
+    throw err;
+  } finally {
+    shutdownManager.agentFinished(agentId);
   }
-
-  // Team-aware spawn: wrap with mailbox polling + ack lifecycle
-  if (config.teamRunId && config.memberName) {
-    const { TeamSession } = await import('./team/session.js');
-    const teamSession = new TeamSession(config.teamRunId, config.memberName);
-    // TeamSession.call() handles: poll → inject → call → ack
-    return teamSession.call(() => pool.call(config.task, config));
-  }
-
-  return pool.call(config.task, config);
 }

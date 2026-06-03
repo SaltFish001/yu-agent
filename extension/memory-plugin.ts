@@ -10,6 +10,9 @@
  * Installation: add to pi.extensions in package.json
  */
 
+import { createLogger } from './logger.js';
+const log = createLogger('memory-plugin');
+
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import {
   memoryHealth, RingMemory, FactStore, SceneManager,
@@ -75,12 +78,12 @@ export class MemoryLifecycle {
     try {
       const health = memoryHealth();
       if (!health.ok) {
-        console.warn('[yu-memory] init: Health check found issues:', health.issues.join('; '));
+        log.warn('init: Health check found issues', { issues: health.issues.join('; ') });
       } else {
-        console.log(`[yu-memory] init: OK (ring: ${health.components.ring.total}, facts: ${health.components.facts.total}, scene: ${health.components.scene.ok ? 'ok' : 'error'})`);
+        log.info('init: OK', { ring: health.components.ring.total, facts: health.components.facts.total, scene: health.components.scene.ok });
       }
     } catch (e) {
-      console.warn('[yu-memory] init: Health check failed:', e);
+      log.warn('init: Health check failed', e);
     }
   }
 
@@ -97,9 +100,9 @@ export class MemoryLifecycle {
       if (this._ring instanceof RingMemory) {
         (this._ring as RingMemory).close();
       }
-      console.log('[yu-memory] shutdown: memory subsystem shut down');
+      log.info('shutdown: memory subsystem shut down');
     } catch (e) {
-      console.warn('[yu-memory] shutdown: error during shutdown:', e);
+      log.warn('shutdown: error during shutdown', e);
     }
   }
 }
@@ -143,10 +146,10 @@ export default function (pi: ExtensionAPI): void {
     try {
       const health = memoryHealth();
       if (!health.ok) {
-        console.warn('[yu-memory] Health check found issues:', health.issues.join('; '));
+        log.warn('Health check found issues', { issues: health.issues.join('; ') });
       }
     } catch (e) {
-      console.warn('[yu-memory] Health check failed:', e);
+      log.warn('Health check failed', e);
     }
   });
 
@@ -156,7 +159,7 @@ export default function (pi: ExtensionAPI): void {
       try {
         lifecycle.ring.append('user', event.prompt, 'pi');
       } catch (e) {
-        console.warn('[yu-memory] Failed to save user message:', e);
+        log.warn('Failed to save user message', e);
       }
     }
   });
@@ -169,7 +172,7 @@ export default function (pi: ExtensionAPI): void {
         try {
           lifecycle.ring.append('assistant', text, 'pi');
         } catch (e) {
-          console.warn('[yu-memory] Failed to save assistant message:', e);
+          log.warn('Failed to save assistant message', e);
         }
       }
     }

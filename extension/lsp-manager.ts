@@ -11,6 +11,9 @@
  * 遵循 LSP 3.17 协议规范。
  */
 
+import { createLogger } from './logger.js';
+const log = createLogger('lsp-manager');
+
 import { spawn, type ChildProcess } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -93,13 +96,13 @@ export class LspManager {
 
     // Handle process errors
     proc.on('error', (err) => {
-      console.error(`[yu-agent/lsp] ${name} error:`, err.message);
+      log.error(`${name} error`, err);
       this.rejectAllPending(err);
     });
 
     // Handle process exit
     proc.on('exit', (code, signal) => {
-      console.warn(`[yu-agent/lsp] ${name} exited (code=${code}, signal=${signal})`);
+      log.warn(`${name} exited`, { code, signal });
       this.process = null;
       this.started = false;
       if (this.heartbeatTimer) {
@@ -138,7 +141,7 @@ export class LspManager {
     // Start heartbeat to detect silent failures
     this.heartbeatTimer = setInterval(() => this.heartbeat(), HEARTBEAT_INTERVAL_MS);
 
-    console.log(`[yu-agent/lsp] ${name} initialized successfully`);
+    log.info(`${name} initialized successfully`);
   }
 
   /**
@@ -282,7 +285,7 @@ export class LspManager {
         const msg = JSON.parse(body);
         this.handleMessage(msg);
       } catch (e) {
-        console.warn('[yu-agent/lsp] Failed to parse LSP message:', e);
+        log.warn('Failed to parse LSP message', e);
       }
     }
   }

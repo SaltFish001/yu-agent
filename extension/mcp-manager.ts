@@ -19,6 +19,9 @@
  *   }
  */
 
+import { createLogger } from './logger.js';
+const log = createLogger('mcp-manager');
+
 import { spawn, type ChildProcess } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import {
@@ -271,6 +274,7 @@ function spawnServer(
           error: err.message,
         };
         writeAllStatus();
+        log.error(`MCP server "${name}" process error`, err);
       }
     });
 
@@ -281,6 +285,9 @@ function spawnServer(
 
     return proc;
   } catch (err) {
+    log.error(`Failed to spawn MCP server "${name}"`, err, {
+      command: config.command,
+    });
     const state = _servers.get(name);
     if (state) {
       state.status = {
@@ -329,6 +336,7 @@ async function initServer(name: string): Promise<MCPServerStatus> {
       status: 'error',
       error: String(err),
     };
+    log.error(`MCP server "${name}" init failed`, err);
     // 关掉失败的进程
     try { state.process?.kill(); } catch {}
     state.process = null;
@@ -394,7 +402,7 @@ function loadConfig(): McpConfig {
     const raw = readFileSync(MCP_CONFIG_PATH, 'utf-8');
     return JSON.parse(raw) as McpConfig;
   } catch (err) {
-    console.warn(`[yu-agent/mcp] Failed to parse ${MCP_CONFIG_PATH}:`, err);
+    log.warn(`Failed to parse ${MCP_CONFIG_PATH}`, err);
     return { servers: {} };
   }
 }
@@ -413,7 +421,7 @@ export async function startMCPManager(): Promise<void> {
     return;
   }
 
-  console.log(`[yu-agent/mcp] Starting ${entries.length} MCP server(s)...`);
+  log.info(`Starting ${entries.length} MCP server(s)...`);
 
   // 1. 创建状态记录
   for (const [name, cfg] of entries) {
@@ -435,7 +443,7 @@ export async function startMCPManager(): Promise<void> {
 
     // 3. init（异步，不阻塞整体启动）
     initServer(name).catch((err) => {
-      console.warn(`[yu-agent/mcp] ${name} init failed:`, err);
+      log.warn(`${name} init failed`, err);
     });
   }
 

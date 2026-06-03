@@ -15,6 +15,9 @@
  *   - prints a warning about reduced isolation
  */
 
+import { createLogger } from '../logger.js';
+const log = createLogger('sandbox');
+
 import { execSync, type ExecSyncOptions } from 'node:child_process';
 
 // ── Constants ──────────────────────────────────────────
@@ -133,10 +136,7 @@ export function runInSandbox(
   }
 
   // ── Local fallback ──
-  console.warn(
-    '[yu-agent] ⚠ Docker 不可用，使用本地执行（无隔离）。' +
-      ' 安装 Docker 以获得沙箱隔离: https://docs.docker.com/engine/install/',
-  );
+  log.warn('Docker 不可用，使用本地执行（无隔离）。安装 Docker 以获得沙箱隔离: https://docs.docker.com/engine/install/');
 
   const execOptions: ExecSyncOptions = {
     encoding: 'utf-8',

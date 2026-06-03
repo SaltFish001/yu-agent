@@ -18,6 +18,7 @@
 import { main } from '@earendil-works/pi-coding-agent';
 import subagents from '@tintinweb/pi-subagents/dist/index.js';
 import yuAgent from '../extension/index.js';
+import { shutdownManager } from '../extension/lifecycle.js';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,6 +28,8 @@ import { homedir } from 'node:os';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Project root: dist/bin/ -> dist/ -> project root
 const PROJECT_ROOT = resolve(__dirname, '..', '..');
+
+let _version: string | null = null;
 
 /**
  * 估算 DeepSeek v4 系列 API 费用。
@@ -186,12 +189,14 @@ async function printStartupSummary(): Promise<void> {
  * One-click health diagnosis.
  * Checks all subsystems: memory, config, MCP, session DB.
  */
-async function runDoctor(): Promise<void> {
-  console.log('═ yu-agent 健康诊断 ════════════════════════');
-  console.log(`Version: ${getVersion()}`);
-  console.log();
-
+async function runDoctor(jsonOutput?: boolean): Promise<void> {
   const results: Array<{ name: string; ok: boolean; detail: string }> = [];
+
+  if (!jsonOutput) {
+    console.log('═ yu-agent 健康诊断 ════════════════════════');
+    console.log(`Version: ${getVersion()}`);
+    console.log();
+  }
 
   // ── Paths ──
   const { YU_HOME, MCP_CONFIG_PATH, PROMPTS_DIR } = await import('../extension/paths.js');
@@ -270,21 +275,101 @@ async function runDoctor(): Promise<void> {
   }
 
   // ── Session DB ──
+  let dbIntegrityOk = true;
+  let dbIntegrityDetail = '';
   try {
-    const { getDbPath } = await import('../extension/db.js');
+    const { getDbPath, closeDb } = await import('../extension/db.js');
     const dbPath = getDbPath();
     const dbExists = existsSync(dbPath);
     let dbDetail = dbPath;
     if (dbExists) {
+      const { DatabaseSync } = await import('node:sqlite');
       const size = readFileSync(dbPath).length;
       dbDetail = `${dbPath} (${formatBytes(size)})`;
+      // Run integrity check
+      try {
+        const checkDb = new DatabaseSync(dbPath);
+        const integrityRow = checkDb.prepare('PRAGMA integrity_check').get() as { 'integrity_check': string };
+        checkDb.close();
+        if (integrityRow && integrityRow['integrity_check'] === 'ok') {
+          dbIntegrityOk = true;
+          dbIntegrityDetail = 'ok';
+        } else {
+          dbIntegrityOk = false;
+          dbIntegrityDetail = integrityRow?.['integrity_check'] || 'unknown error';
+        }
+      } catch (e2: unknown) {
+        dbIntegrityOk = false;
+        dbIntegrityDetail = e2 instanceof Error ? e2.message : String(e2);
+      }
     } else {
       dbDetail = `${dbPath} (文件不存在, 首次使用时会自动创建)`;
     }
     results.push({ name: 'Session DB', ok: dbExists || true, detail: dbDetail });
+    if (dbExists) {
+      results.push({ name: 'DB 完整性', ok: dbIntegrityOk, detail: dbIntegrityDetail });
+    }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     results.push({ name: 'Session DB', ok: false, detail: `诊断失败: ${msg}` });
+  }
+
+  // ── Token Usage Stats ──
+  try {
+    const { getTokenUsageAggregate, getTokenUsageBySession } = await import('../extension/db.js');
+    const { getSessionTag } = await import('../extension/session-context.js');
+    const agg = getTokenUsageAggregate();
+    if (agg.sessionCount > 0) {
+      results.push({
+        name: 'Token 用量 (累计)',
+        ok: true,
+        detail: `${agg.totalTokens.toLocaleString()} tokens (命中: ${agg.totalHits.toLocaleString()}, 未命中: ${agg.totalMisses.toLocaleString()}, 输出: ${agg.totalOutput.toLocaleString()}) | ¥${agg.totalCost.toFixed(4)} | ${agg.sessionCount} 会话`,
+      });
+      // Today's stats
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const today = getTokenUsageBySession('__today__');
+      // Use aggregate for now since we don't have a date filter
+    }
+    // Current session stats
+    const tag = getSessionTag();
+    if (tag && tag !== 'shared') {
+      const sessionUsage = getTokenUsageBySession(tag);
+      if (sessionUsage.count > 0) {
+        results.push({
+          name: 'Token 用量 (当前会话)',
+          ok: true,
+          detail: `${sessionUsage.totalTokens.toLocaleString()} tokens (${sessionUsage.count} 次调用, 耗时 ${(sessionUsage.totalDurationMs / 1000).toFixed(1)}s)`,
+        });
+      }
+    }
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    results.push({ name: 'Token 用量', ok: true, detail: `统计失败: ${msg}` });
+  }
+
+  // ── Agent Run Stats ──
+  try {
+    const { getAgentRunStats } = await import('../extension/db.js');
+    const stats = getAgentRunStats();
+    const { total, completed, failed, avgDurationMs, ...byType } = stats;
+    if (total > 0) {
+      const successRate = total > 0 ? Math.round((completed / total) * 100) : 0;
+      const lines = [`${total} 次运行, ${completed} 成功, ${failed} 失败, ${successRate}% 成功率, 平均 ${(avgDurationMs / 1000).toFixed(1)}s`];
+      for (const [type, t] of Object.entries(byType)) {
+        const typed = t as { total: number; completed: number; failed: number; avgDurationMs: number };
+        const rate = typed.total > 0 ? Math.round((typed.completed / typed.total) * 100) : 0;
+        lines.push(`  ${type}: ${typed.total} 次, ${rate}% 成功率, 平均 ${(typed.avgDurationMs / 1000).toFixed(1)}s`);
+      }
+      results.push({
+        name: 'Agent 运行统计',
+        ok: failed === 0,
+        detail: lines.join('\n'),
+      });
+    }
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    results.push({ name: 'Agent 运行统计', ok: true, detail: `统计失败: ${msg}` });
   }
 
   // ── Checkpoints ──
@@ -311,10 +396,28 @@ async function runDoctor(): Promise<void> {
   // ── Print results ──
   let allOk = true;
   for (const r of results) {
+    if (!r.ok) allOk = false;
+  }
+
+  if (jsonOutput) {
+    const output = {
+      version: getVersion(),
+      timestamp: new Date().toISOString(),
+      healthy: allOk,
+      checks: results.map(r => ({
+        name: r.name,
+        ok: r.ok,
+        detail: r.detail,
+      })),
+    };
+    console.log(JSON.stringify(output, null, 2));
+    return;
+  }
+
+  for (const r of results) {
     const icon = r.ok ? '✓' : '✗';
     console.log(` ${icon} ${r.name}`);
     console.log(`    ${r.detail}`);
-    if (!r.ok) allOk = false;
   }
 
   console.log();
@@ -454,11 +557,14 @@ Team Examples:
 `;
 
 function getVersion(): string {
-  try {
-    return JSON.parse(readFileSync(resolve(__dirname, '..', 'package.json'), 'utf-8')).version || '0.1.0';
-  } catch {
-    return '0.1.0';
+  if (!_version) {
+    try {
+      _version = JSON.parse(readFileSync(resolve(__dirname, '..', 'package.json'), 'utf-8')).version || '0.1.0';
+    } catch {
+      _version = '0.1.0';
+    }
   }
+  return _version as string;
 }
 
 function showHelpForCommand(command: string): string {
@@ -474,7 +580,12 @@ Checks all yu-agent subsystems:
   - MCP configuration file
   - Prompt files
   - Memory subsystem (ring buffer, facts store, scene state)
-  - Session database
+  - Session database (integrity check)
+  - Token usage statistics
+  - Agent run statistics
+
+Options:
+  --json    Output results as structured JSON
 
 Reports any issues found. No arguments needed.`;
 
@@ -617,7 +728,8 @@ async function mainCli(): Promise<void> {
 
   // `yu doctor` — one-click health diagnosis
   if (args[0] === 'doctor') {
-    await runDoctor();
+    const useJson = args.includes('--json');
+    await runDoctor(useJson);
     process.exit(0);
   }
 
@@ -952,6 +1064,21 @@ async function mainCli(): Promise<void> {
   });
   await printCacheStats();
 }
+
+// ── Graceful shutdown handlers ──────────────────────────
+process.on('SIGTERM', () => shutdownManager.shutdown('SIGTERM').then(() => process.exit(143)));
+process.on('SIGINT', () => shutdownManager.shutdown('SIGINT').then(() => process.exit(130)));
+
+shutdownManager.registerHandler("close-db", async () => {
+  const { closeDb } = await import("../extension/db.js");
+  const { flushLogs } = await import("../extension/logger.js");
+  await flushLogs?.();
+  closeDb?.();
+});
+shutdownManager.registerHandler("stop-mcp", async () => {
+  const { stopMCPManager } = await import("../extension/mcp-manager.js");
+  await stopMCPManager?.();
+});
 
 // ── Entry ──────────────────────────────────────────────
 // Direct invocation: run mainCli()

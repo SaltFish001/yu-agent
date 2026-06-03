@@ -8,6 +8,9 @@
  * through pi-subagents' API. This config provides the type definitions.
  */
 
+import { createLogger } from './logger.js';
+const log = createLogger('config');
+
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { registerAgents as registerPiSubagents } from '@tintinweb/pi-subagents/dist/agent-types.js';
@@ -41,7 +44,7 @@ export function validateMcpConfig(): void {
   try {
     raw = readFileSync(MCP_CONFIG_PATH, 'utf-8');
   } catch (err) {
-    console.error(`[yu-agent] Failed to read ${MCP_CONFIG_PATH}: ${err}`);
+    log.error(`Failed to read ${MCP_CONFIG_PATH}`, err);
     process.exit(1);
   }
 
@@ -49,18 +52,78 @@ export function validateMcpConfig(): void {
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    console.error(`[yu-agent] ${MCP_CONFIG_PATH} is not valid JSON: ${err}`);
+    log.error(`${MCP_CONFIG_PATH} is not valid JSON`, err);
     process.exit(1);
   }
 
   const result = McpConfigSchema.safeParse(parsed);
   if (!result.success) {
-    console.error(`[yu-agent] ${MCP_CONFIG_PATH} failed validation:`);
+    log.error(`${MCP_CONFIG_PATH} failed validation:`);
     for (const issue of result.error.issues) {
-      console.error(`  - ${issue.path.join('.')}: ${issue.message}`);
+      log.error(`  - ${issue.path.join('.')}: ${issue.message}`);
     }
     process.exit(1);
   }
+}
+
+/**
+ * Validate environment variables at startup.
+ * Checks:
+ *  - All env vars referenced by MCP server configs (mcp.config.json)
+ *  - PI_PROVIDER (warn if not set)
+ *
+ * Returns errors (missing required vars) and warnings (missing optional vars).
+ */
+export function validateEnvVars(
+  mcpConfig?: { servers?: Record<string, { env?: Record<string, string> }> }
+): { errors: string[]; warnings: string[] } {
+  const needed = new Set<string>();
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  if (mcpConfig?.servers) {
+    for (const [name, cfg] of Object.entries(mcpConfig.servers)) {
+      if (cfg.env) {
+        for (const [key, val] of Object.entries(cfg.env)) {
+          // If value is empty or a template reference like "${VAR}", mark the key as needed
+          if (!val || val.startsWith("${")) {
+            needed.add(key);
+          }
+        }
+      }
+    }
+  }
+
+  for (const key of needed) {
+    if (!process.env[key]) {
+      errors.push(`Required env var ${key} is not set (used by MCP server config)`);
+    }
+  }
+
+  if (!process.env.PI_PROVIDER) {
+    warnings.push("PI_PROVIDER not set — yu-agent will use Pi default provider");
+  }
+
+  // Check common API key conventions (keys containing KEY, TOKEN, SECRET, PASSWORD)
+  for (const key of Object.keys(process.env)) {
+    const upper = key.toUpperCase();
+    if (/KEY|TOKEN|SECRET|PASSWORD/.test(upper)) {
+      const val = process.env[key];
+      if (!val || val.trim() === '' || val === 'your-key-here' || val === 'sk-placeholder') {
+        warnings.push(`${key} appears to be an API key but is empty or placeholder`);
+      }
+    }
+  }
+
+  return { errors, warnings };
+}
+
+// ── Resource limits ───────────────────────────────────
+
+export interface ResourceLimits {
+  maxConcurrentAgents?: number;  // default: 8
+  maxPerPool?: number;           // default: 4
+  defaultAgentTimeout?: number;  // default: 120000 (120s)
 }
 
 // ── General application config ─────────────────────────
@@ -73,6 +136,10 @@ export interface AppConfig {
     /** Path to personality.json profile. Defaults to ~/.yu/personality.json. */
     personalityPath?: string;
   };
+  /**
+   * Resource limits for agent execution.
+   */
+  resourceLimits?: ResourceLimits;
 }
 
 const APP_CONFIG_PATH = resolve(YU_HOME, 'config.json');
@@ -92,7 +159,7 @@ export function loadAppConfig(): AppConfig {
       return _appConfig;
     }
   } catch (err) {
-    console.warn('[yu-agent] Failed to load app config, using defaults:', err);
+    log.warn('Failed to load app config, using defaults', err);
   }
   _appConfig = {};
   return _appConfig;
@@ -117,7 +184,7 @@ function loadPrompt(name: string): string {
     const path = resolve(PROMPTS_DIR, `${name}.md`);
     return readFileSync(path, 'utf-8');
   } catch (err) {
-    console.warn(`[yu-agent] Prompt file not found for agent type "${name}", using fallback:`, err);
+    log.warn(`Prompt file not found for agent type "${name}", using fallback`, err);
     return `You are a ${name} agent. Complete the assigned task.`;
   }
 }
@@ -250,8 +317,8 @@ export function registerAgents(): void {
     );
 
     registerPiSubagents(agentConfigs);
-    console.log(`[yu-agent] Registered ${agentConfigs.size} agent types with pi-subagents`);
+    log.info(`Registered ${agentConfigs.size} agent types with pi-subagents`);
   } catch (err) {
-    console.warn('[yu-agent] Failed to register agent types with pi-subagents:', err);
+    log.warn('Failed to register agent types with pi-subagents', err);
   }
 }

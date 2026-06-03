@@ -1,4 +1,7 @@
 
+import { createLogger } from './logger.js';
+const log = createLogger('team-orchestrator');
+
 import {
   runParallelGroup,
   type AgentTask,
@@ -196,13 +199,13 @@ export async function runTeamMode(
 
     if (changesDetails.length === 0) {
       allApproved = true;
-      console.log(`[yu-agent] Review round ${round + 1}: all approved`);
+      log.info(`Review round ${round + 1}: all approved`);
       break;
     }
 
     // Changes requested — cycle back to Coders (if not the last round)
     if (round < MAX_REVIEW_ROUNDS - 1) {
-      console.log(`[yu-agent] Review round ${round + 1}: changes requested, cycling back to Coders`);
+      log.info(`Review round ${round + 1}: changes requested, cycling back to Coders`);
       const coderRetryTasks: AgentTask[] = modules.map((mod, i) => ({
         type: 'coding',
         model: 'v4-flash',
@@ -242,13 +245,13 @@ export async function runTeamMode(
       conflictedFiles.push(...output.split('\n').filter(Boolean));
     }
   } catch {
-    console.warn('[yu-agent] Git conflict detection skipped (not a git repo or git unavailable)');
+    log.warn('Git conflict detection skipped (not a git repo or git unavailable)');
   }
 
   if (conflictedFiles.length > 0) {
-    console.warn(`[yu-agent] Conflicts detected in files: ${conflictedFiles.join(', ')}`);
+    log.warn(`Conflicts detected in files`, { files: conflictedFiles });
   } else {
-    console.log('[yu-agent] No merge conflicts detected');
+    log.info('No merge conflicts detected');
   }
 
   // Final status

@@ -10,6 +10,9 @@
  * Installation: listed as ./extension/session-store.ts in pi.extensions
  */
 
+import { createLogger } from './logger.js';
+const log = createLogger('session-store');
+
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { getSessionTag, getSessionAgent, getSessionModel, getSessionParent } from './session-context.js';
 import { upsertSession, insertMessage, ensureSlug } from './db.js';
@@ -64,7 +67,7 @@ export default function (pi: ExtensionAPI): void {
         insertMessage(tag, 'user', event.prompt);
         ensureSlug(tag); // ensure slug exists on first user message
       } catch (e) {
-        console.warn('[yu-agent] Failed to save user message:', e);
+        log.warn('Failed to save user message', e);
       }
     }
   });
@@ -84,7 +87,7 @@ export default function (pi: ExtensionAPI): void {
             insertMessage(tag, 'assistant', text);
             ensureSlug(tag);
           } catch (e) {
-            console.warn('[yu-agent] Failed to save assistant message:', e);
+            log.warn('Failed to save assistant message', e);
           }
         }
       }

@@ -12,6 +12,9 @@
  * Profile-driven refactor — 2026-06-02 iteration.
  */
 
+import { createLogger } from './logger.js';
+const log = createLogger('identity');
+
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -64,7 +67,7 @@ function loadProfile(): PersonalityProfile {
         _profile = JSON.parse(readFileSync(PROFILE_PATH, 'utf-8'));
       }
     } catch (err) {
-      console.warn('[yu-agent] Failed to load personality profile, using defaults:', err);
+      log.warn('Failed to load personality profile, using defaults', err);
     }
   }
   return _profile || getDefaultProfile();
@@ -118,7 +121,7 @@ function buildStatusSummary(): string {
 
     return parts.length > 0 ? parts.join(' · ') : 'idle';
   } catch (err) {
-    console.warn('[yu-agent] Failed to build status summary:', err);
+    log.warn('Failed to build status summary', err);
     return '';
   }
 }
@@ -134,7 +137,7 @@ function buildMemorySummary(): string {
     parts.push(`@ ${scene.scene.location}`);
     return parts.join(' · ');
   } catch (err) {
-    console.warn('[yu-agent] Failed to build memory summary:', err);
+    log.warn('Failed to build memory summary', err);
     return '';
   }
 }

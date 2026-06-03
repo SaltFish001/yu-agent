@@ -1,0 +1,59 @@
+name: Publish
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@saltfish001'
+      - run: npm ci
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            # Tag push — publish the exact version from package.json as latest
+            echo "VERSION=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+            echo "TAG=latest" >> "$GITHUB_OUTPUT"
+          else
+            # Main branch push — publish a beta version
+            BASE=$(node -p "require('./package.json').version.replace(/-beta\.\d+$/, '')")
+            echo "VERSION=${BASE}-beta.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+            echo "TAG=beta" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set version
+        run: npm version "${{ steps.version.outputs.VERSION }}" --no-git-tag-version
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish to GitHub Packages
+        run: npm publish --tag "${{ steps.version.outputs.TAG }}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

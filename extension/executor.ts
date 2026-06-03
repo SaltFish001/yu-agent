@@ -5,17 +5,74 @@
  * Provides parallel execution helpers with timeout and concurrency control.
  */
 
+import { createLogger } from './logger.js';
+const log = createLogger('executor');
+
 import { spawnAgent, type SpawnConfig } from './spawn.js';
 import type { SpawnResult } from './spawn.js';
 import { trackAgent } from './tracker.js';
 import { checkpointGuard } from './checkpoint.js';
 import { execSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import type { ResourceLimits } from './config.js';
 
 // ── Constants ──────────────────────────────────────────
 
 const MAX_CONCURRENCY = 4;
 export const AGENT_TIMEOUT_MS = 120_000;
+
+// ── Concurrency limiter ───────────────────────────────
+
+const activeAgents = new Set<string>();
+const activeByType = new Map<string, number>();
+
+/**
+ * Acquire a concurrency slot for agent execution.
+ * Blocks until the global and per-type limits allow a new agent.
+ */
+export async function acquireConcurrencySlot(
+  type: string,
+  sessionTag: string,
+  limits: ResourceLimits = {}
+): Promise<void> {
+  const maxGlobal = limits.maxConcurrentAgents ?? 8;
+  const maxPerType = limits.maxPerPool ?? 4;
+
+  while (activeAgents.size >= maxGlobal || (activeByType.get(type) ?? 0) >= maxPerType) {
+    await new Promise<void>((r) => setTimeout(r, 50));
+  }
+
+  const id = `${type}-${sessionTag}-${Date.now()}`;
+  activeAgents.add(id);
+  activeByType.set(type, (activeByType.get(type) ?? 0) + 1);
+}
+
+/**
+ * Release a concurrency slot after agent execution completes.
+ */
+export function releaseConcurrencySlot(type: string): void {
+  const count = activeByType.get(type) ?? 1;
+  if (count <= 1) activeByType.delete(type);
+  else activeByType.set(type, count - 1);
+  // Remove first matching entry from activeAgents
+  for (const id of activeAgents) {
+    if (id.startsWith(type)) {
+      activeAgents.delete(id);
+      break;
+    }
+  }
+}
+
+/**
+ * Get the current concurrency snapshot (for monitoring / debugging).
+ */
+export function getConcurrencySnapshot(): { global: number; byType: Record<string, number> } {
+  const byType: Record<string, number> = {};
+  for (const [type, count] of activeByType) {
+    byType[type] = count;
+  }
+  return { global: activeAgents.size, byType };
+}
 
 // ── Types ──────────────────────────────────────────────
 
@@ -203,7 +260,7 @@ export function reviewDiff(): { diff: string; hasChanges: boolean; stats: string
     return { diff, hasChanges, stats };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn('[yu-agent] git diff failed:', msg);
+    log.warn('git diff failed', msg);
     return { diff: '', hasChanges: false, stats: '' };
   }
 }
@@ -215,7 +272,7 @@ export function reviewDiff(): { diff: string; hasChanges: boolean; stats: string
  */
 export function printDiffSummary(diffResult: { diff: string; hasChanges: boolean; stats: string }): void {
   if (!diffResult.hasChanges) {
-    console.log('[yu-agent] No changes detected after agent execution.');
+    log.info('No changes detected after agent execution.');
     return;
   }
 
@@ -252,7 +309,7 @@ export async function runParallelGroup(
     if (result.status === 'fulfilled') {
       resultMap.set(result.value[0], result.value[1]);
     } else {
-      console.log('[yu-agent] Agent failed:', result.reason);
+      log.error('Agent failed', result.reason);
     }
   }
 

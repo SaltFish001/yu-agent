@@ -1,5 +1,5 @@
 {
-  "name": "yu-agent",
+  "name": "@saltfish001/yu-agent",
   "version": "0.1.0",
   "description": "DeepSeek-native programming agent dispatcher for Pi — scheduler + sub-agents + team mode",
   "type": "module",
@@ -7,6 +7,10 @@
   "license": "MIT",
   "repository": {
     "url": "https://github.com/SaltFish001/yu-agent.git"
+  },
+  "publishConfig": {
+    "access": "restricted",
+    "registry": "https://npm.pkg.github.com/"
   },
   "keywords": [
     "pi-package",

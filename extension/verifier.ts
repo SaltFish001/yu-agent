@@ -6,6 +6,9 @@
  * shell command runner, and test framework auto-detection.
  */
 
+import { createLogger } from './logger.js';
+const log = createLogger('verifier');
+
 import {
   spawnAgentWithTimeout,
   type AgentTask,
@@ -44,7 +47,7 @@ export async function verifyWithLsp(
     return { ok: true, errors: [] };
   }
 
-  console.log(`[yu-agent] Starting LSP server: ${lspConfig.name} (${lspConfig.command})`);
+  log.info(`Starting LSP server: ${lspConfig.name} (${lspConfig.command})`);
 
   // ── 2. Start LSP server ──
   const manager = new LspManager();
@@ -59,14 +62,14 @@ export async function verifyWithLsp(
     }
 
     if (allErrors.length === 0) {
-      console.log('[yu-agent] LSP: no errors found');
+      log.info('LSP: no errors found');
       trackAgent('lsp-verify', 'completed');
       return { ok: true, errors: [] };
     }
 
     // ── 4. Fix errors with coding agent (up to MAX_RETRY_LSP rounds) ──
     for (let round = 0; round < MAX_RETRY_LSP; round++) {
-      console.log(`[yu-agent] LSP: ${allErrors.length} errors found, fixing (round ${round + 1}/${MAX_RETRY_LSP})...`);
+      log.info(`LSP: ${allErrors.length} errors found, fixing (round ${round + 1}/${MAX_RETRY_LSP})...`);
 
       const codingTask: AgentTask = {
         type: 'coding',
@@ -85,7 +88,7 @@ export async function verifyWithLsp(
       }
 
       if (newErrors.length === 0) {
-        console.log('[yu-agent] LSP: all errors fixed');
+        log.info('LSP: all errors fixed');
         trackAgent('lsp-verify', 'completed');
         return { ok: true, errors: [] };
       }
@@ -98,7 +101,7 @@ export async function verifyWithLsp(
       .slice(0, 10)
       .map((e) => `${(e as Record<string, unknown>).file || '?'}:${(e as Record<string, unknown>).line || '?'} — ${(e as Record<string, unknown>).error || '?'}`)
       .join('\n      ');
-    console.warn(`[yu-agent] LSP: ${allErrors.length} errors remaining after retries:\n      ${errorSummary}`);
+    log.warn(`LSP: ${allErrors.length} errors remaining after retries`, { errors: errorSummary });
     trackAgent('lsp-verify', 'failed', { error: `LSP errors remaining after retries: ${allErrors.length}` });
     return { ok: false, errors: allErrors };
   } finally {
@@ -157,7 +160,7 @@ export function runCommand(cmd: string, args: string[], cwd: string): boolean {
     return result.status === 0;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[yu-agent] Test command failed: ${msg}`);
+    log.warn(`Test command failed: ${msg}`);
     return false;
   }
 }
@@ -212,7 +215,7 @@ export function detectLintTool(root: string): { name: string; command: string; a
   }
 
   // 5. No detection
-  console.warn('[yu-agent] Could not detect lint tool, skipping lint');
+  log.warn('Could not detect lint tool, skipping lint');
   return null;
 }
 
@@ -249,7 +252,7 @@ export function detectLspServer(root: string): { name: string; command: string; 
   }
 
   // 5. No detection
-  console.warn('[yu-agent] Could not detect LSP server, skipping LSP verification');
+  log.warn('Could not detect LSP server, skipping LSP verification');
   return null;
 }
 
@@ -268,7 +271,7 @@ export function detectLspServer(root: string): { name: string; command: string; 
  */
 export async function runTests(files: string[]): Promise<boolean> {
   const root = findProjectRoot(files);
-  console.log(`[yu-agent] Project root: ${root}`);
+  log.info(`Project root: ${root}`);
 
   // ── package.json ──
   const pkgJsonPath = join(root, 'package.json');
@@ -281,19 +284,19 @@ export async function runTests(files: string[]): Promise<boolean> {
       };
 
       if (deps.vitest) {
-        console.log('[yu-agent] Detected vitest → npx vitest run --changed');
+        log.info('Detected vitest → npx vitest run --changed');
         return runCommand('npx', ['vitest', 'run', '--changed'], root);
       }
       if (deps.jest) {
-        console.log('[yu-agent] Detected jest → npx jest --findRelatedTests');
+        log.info('Detected jest → npx jest --findRelatedTests');
         return runCommand('npx', ['jest', '--findRelatedTests', ...files], root);
       }
       if (deps.mocha) {
-        console.log('[yu-agent] Detected mocha → npx mocha');
+        log.info('Detected mocha → npx mocha');
         return runCommand('npx', ['mocha', ...files], root);
       }
     } catch (e) {
-      console.warn('[yu-agent] Failed to parse package.json:', e);
+      log.warn('Failed to parse package.json', e);
     }
   }
 
@@ -304,18 +307,18 @@ export async function runTests(files: string[]): Promise<boolean> {
       const content = readFileSync(pyprojectPath, 'utf-8');
       if (content.includes('pytest')) {
         if (existsSync(join(root, 'poetry.lock'))) {
-          console.log('[yu-agent] Detected pyproject.toml + poetry + pytest → poetry run pytest -x');
+          log.info('Detected pyproject.toml + poetry + pytest → poetry run pytest -x');
           return runCommand('poetry', ['run', 'pytest', '-x'], root);
         }
         if (existsSync(join(root, 'uv.lock'))) {
-          console.log('[yu-agent] Detected pyproject.toml + uv + pytest → uv run pytest -x');
+          log.info('Detected pyproject.toml + uv + pytest → uv run pytest -x');
           return runCommand('uv', ['run', 'pytest', '-x'], root);
         }
-        console.log('[yu-agent] Detected pyproject.toml + pytest → pytest -x');
+        log.info('Detected pyproject.toml + pytest → pytest -x');
         return runCommand('pytest', ['-x'], root);
       }
     } catch (e) {
-      console.warn('[yu-agent] Failed to read pyproject.toml:', e);
+      log.warn('Failed to read pyproject.toml', e);
     }
   }
 
@@ -325,15 +328,15 @@ export async function runTests(files: string[]): Promise<boolean> {
     try {
       const content = readFileSync(reqPath, 'utf-8');
       if (content.includes('pytest')) {
-        console.log('[yu-agent] Detected requirements.txt + pytest → pytest -x');
+        log.info('Detected requirements.txt + pytest → pytest -x');
         return runCommand('pytest', ['-x'], root);
       }
     } catch (e) {
-      console.warn('[yu-agent] Failed to read requirements.txt:', e);
+      log.warn('Failed to read requirements.txt', e);
     }
   }
 
   // ── No detection ──
-  console.warn('[yu-agent] Could not detect test framework, skipping tests');
+  log.warn('Could not detect test framework, skipping tests');
   return true;
 }

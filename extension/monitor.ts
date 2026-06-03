@@ -12,6 +12,9 @@
  *   setupMonitor(pi);  // inside extension factory
  */
 
+import { createLogger } from './logger.js';
+const log = createLogger('monitor');
+
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Text } from '@earendil-works/pi-tui';
 import { getSessionTag, setSessionTag } from './session-context.js';
@@ -303,7 +306,7 @@ export function setupMonitor(pi: ExtensionAPI): void {
       }
       ctx.ui.setStatus('yu-agent', statusText);
     } catch (err) {
-      console.error('[yu-agent monitor] initial render error:', err);
+      log.error('initial render error', err);
     }
 
     // Periodic polling
@@ -318,7 +321,7 @@ export function setupMonitor(pi: ExtensionAPI): void {
         }
         ctx.ui.setStatus('yu-agent', statusText);
       } catch (err) {
-        console.error('[yu-agent monitor] poll error:', err);
+        log.error('poll error', err);
       }
     }, POLL_INTERVAL_MS);
   });

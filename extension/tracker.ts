@@ -11,6 +11,10 @@ import { writeAgentStatus, writeSnapshot, buildSummary, writeCacheStats } from '
 import { getAllPoolsStats } from './spawn.js';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { DATA_DIR, DECISIONS_FILE } from './paths.js';
+import { getSessionTag } from './session-context.js';
+import { insertAgentRun, updateAgentRunStatus } from './db.js';
+import { createLogger } from './logger.js';
+const log = createLogger('tracker');
 
 // ── Constants ──────────────────────────────────────────
 
@@ -52,6 +56,48 @@ export function trackAgent(id: string, status: AgentStatus['status'], extra?: Re
 
   // Flush to disk
   writeAgentStatus(Array.from(_agentTrackers.values()));
+
+  // Persist to agent_runs table (async, best-effort)
+  try {
+    const sessionTag = getSessionTag();
+    if (status === 'running' && !existing) {
+      // New agent run — insert row
+      insertAgentRun({
+        sessionTag,
+        agentId: id,
+        agentType: entry.type,
+        model: entry.model,
+        status: 'running',
+        goal: entry.goal,
+        files: entry.files,
+        startedAt: entry.startedAt ?? Date.now(),
+      });
+    } else if (status === 'completed' || status === 'failed' || status === 'interrupted') {
+      if (existing && existing.status === 'running') {
+        // Status change from running → update row
+        updateAgentRunStatus(id, status, entry.durationMs, entry.error);
+      } else if (existing && existing.status !== 'running') {
+        // Already terminal — skip (double-complete)
+        log.debug(`Skipping duplicate terminal status ${status} for agent ${id} (was ${existing.status})`);
+      } else {
+        // No existing running record — insert with current status
+        insertAgentRun({
+          sessionTag,
+          agentId: id,
+          agentType: entry.type,
+          model: entry.model,
+          status,
+          goal: entry.goal,
+          files: entry.files,
+          startedAt: entry.startedAt ?? Date.now(),
+          durationMs: entry.durationMs,
+          error: entry.error,
+        });
+      }
+    }
+  } catch {
+    // best-effort
+  }
 }
 
 export function getAgentStatusList(): AgentStatus[] {
@@ -89,7 +135,7 @@ export function loadDecisions(): Record<string, unknown> {
     try {
       return JSON.parse(readFileSync(DECISIONS_FILE, 'utf-8'));
     } catch (err) {
-      console.warn('[yu-agent] Failed to parse decisions file, resetting:', err);
+      log.warn('Failed to parse decisions file, resetting', err);
       return {};
     }
   }

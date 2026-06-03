@@ -12,6 +12,9 @@
  * Installation: listed as ./extension/resumer.ts in pi.extensions
  */
 
+import { createLogger } from './logger.js';
+const log = createLogger('resumer');
+
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -41,7 +44,7 @@ export default function (pi: ExtensionAPI): void {
           unlinkSync(resumeFile);
         }
       } catch (e) {
-        console.warn('[yu-agent] Failed to load resume context:', e);
+        log.warn('Failed to load resume context', e);
         // Best-effort cleanup
         try { if (existsSync(resumeFile)) unlinkSync(resumeFile); } catch { /* ignore */ }
       }

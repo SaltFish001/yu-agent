@@ -10,6 +10,9 @@
  *   refactorCommand(action, args)       — CLI command handler for `yu refactor`
  */
 
+import { createLogger } from '../logger.js';
+const logRefactor = createLogger('refactor');
+
 import {
   existsSync,
   writeFileSync,
@@ -21,11 +24,6 @@ import {
 import ts from 'typescript';
 
 // ── Helpers ────────────────────────────────────────────
-
-/** Log a diagnostic message. */
-function log(msg: string): void {
-  console.log(`[yu-refactor] ${msg}`);
-}
 
 /** Format code with Biome JS API. */
 async function formatBiome(code: string, filePath: string): Promise<string> {
@@ -46,12 +44,12 @@ async function formatBiome(code: string, filePath: string): Promise<string> {
  */
 function parseFile(filePath: string): ts.SourceFile | null {
   if (!existsSync(filePath)) {
-    log(`File not found: ${filePath}`);
+    logRefactor.info(`File not found: ${filePath}`);
     return null;
   }
   const text = ts.sys.readFile(filePath);
   if (!text) {
-    log(`Could not read: ${filePath}`);
+    logRefactor.info(`Could not read: ${filePath}`);
     return null;
   }
   return ts.createSourceFile(filePath, text, ts.ScriptTarget.ES2022, true);
@@ -90,7 +88,7 @@ export async function renameSymbol(
 
   for (const filePath of files) {
     if (!existsSync(filePath)) {
-      log(`Skipping (not found): ${filePath}`);
+      logRefactor.info(`Skipping (not found): ${filePath}`);
       continue;
     }
 
@@ -141,7 +139,7 @@ export async function renameSymbol(
       modified = await formatBiome(modified, filePath);
       writeFileSync(filePath, modified, 'utf-8');
       modifiedFiles.push(filePath);
-      log(`Renamed '${from}' → '${to}' in ${relative(process.cwd(), filePath)} (${replacements.length} occurrence(s))`);
+      logRefactor.info(`Renamed '${from}' → '${to}' in ${relative(process.cwd(), filePath)}`, { occurrences: replacements.length });
     }
   }
 
@@ -193,7 +191,7 @@ export async function extractInterface(
   findInline(sourceFile);
 
   if (!targetNode || !inlineType) {
-    log('No inline type literal found to extract.');
+    logRefactor.info('No inline type literal found to extract.');
     return null;
   }
 
@@ -241,7 +239,7 @@ export async function extractInterface(
   // Format with Biome
   modified = await formatBiome(modified, resolvedPath);
   writeFileSync(resolvedPath, modified, 'utf-8');
-  log(`Extracted interface '${typeName}' in ${relative(process.cwd(), resolvedPath)}`);
+  logRefactor.info(`Extracted interface '${typeName}' in ${relative(process.cwd(), resolvedPath)}`);
 
   return resolvedPath;
 }
