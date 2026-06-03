@@ -8,12 +8,10 @@
 
 import {
   spawnAgentWithTimeout,
-  runParallelGroup,
   type AgentTask,
 } from './executor.js';
-import { parseAgentOutput } from './template.js';
-import type { LspOutput } from './template.js';
 import { trackAgent } from './tracker.js';
+import { LspManager } from './lsp-manager.js';
 import { readFileSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { resolve, join, dirname } from 'node:path';
@@ -26,51 +24,50 @@ const MAX_RETRY_LSP = 2;
 
 export async function verifyWithLsp(
   files: string[],
-  prevErrors: Record<string, unknown>[],
+  _prevErrors: Record<string, unknown>[], // kept for backward compatibility
 ): Promise<{ ok: boolean; errors: Record<string, unknown>[] }> {
   // Track LSP verification start
   trackAgent('lsp-verify', 'running', {
     type: 'lsp',
-    model: 'v4-flash',
+    model: '',
     goal: `LSP verify ${files.length} files`,
     files,
   });
 
-  let allErrors: Record<string, unknown>[] = [];
+  // ── 1. Detect project's LSP server ──
+  const root = findProjectRoot(files);
+  const lspConfig = detectLspServer(root);
 
-  for (let round = 0; round < MAX_RETRY_LSP; round++) {
-    const lspTasks = files.map((f) => ({
-      type: 'lsp' as const,
-      model: 'v4-flash' as const,
-      id: `lsp-${f.replace(/[^a-zA-Z0-9]/g, '-')}`,
-      files: [f],
-      task: `检查并修复 ${f} 的类型错误`,
-    }));
+  if (!lspConfig) {
+    // No LSP detected — warn and skip
+    trackAgent('lsp-verify', 'completed');
+    return { ok: true, errors: [] };
+  }
 
-    const agentMap = new Map(lspTasks.map((t) => [t.id, t]));
-    const results = await runParallelGroup(
-      lspTasks.map((t) => t.id),
-      agentMap,
-      { errors: prevErrors },
-    );
+  console.log(`[yu-agent] Starting LSP server: ${lspConfig.name} (${lspConfig.command})`);
 
-    allErrors = [];
-    for (const [, result] of results) {
-      const output = parseAgentOutput(result?.response || '');
-      if (output && 'errors_remaining' in output && Array.isArray((output as LspOutput).errors_remaining)) {
-        const remaining = (output as LspOutput).errors_remaining.filter(
-          (e) => e.level !== 'warning',
-        );
-        allErrors.push(...remaining);
-      }
+  // ── 2. Start LSP server ──
+  const manager = new LspManager();
+  try {
+    await manager.start(lspConfig.name, lspConfig.command, lspConfig.args, root);
+
+    // ── 3. Read real diagnostics ──
+    let allErrors: Record<string, unknown>[] = [];
+    for (const file of files) {
+      const diagnostics = await manager.getDiagnostics(file);
+      allErrors.push(...diagnostics);
     }
 
     if (allErrors.length === 0) {
+      console.log('[yu-agent] LSP: no errors found');
       trackAgent('lsp-verify', 'completed');
       return { ok: true, errors: [] };
     }
 
-    if (round < MAX_RETRY_LSP - 1) {
+    // ── 4. Fix errors with coding agent (up to MAX_RETRY_LSP rounds) ──
+    for (let round = 0; round < MAX_RETRY_LSP; round++) {
+      console.log(`[yu-agent] LSP: ${allErrors.length} errors found, fixing (round ${round + 1}/${MAX_RETRY_LSP})...`);
+
       const codingTask: AgentTask = {
         type: 'coding',
         model: 'v4-flash',
@@ -79,11 +76,35 @@ export async function verifyWithLsp(
         task: `修复以下 LSP error:\n${JSON.stringify(allErrors, null, 2)}`,
       };
       await spawnAgentWithTimeout(codingTask, { errors: allErrors });
-    }
-  }
 
-  trackAgent('lsp-verify', 'failed', { error: `LSP errors remaining after retries: ${allErrors.length}` });
-  return { ok: false, errors: allErrors };
+      // Re-check diagnostics after fix
+      const newErrors: Record<string, unknown>[] = [];
+      for (const file of files) {
+        const diagnostics = await manager.getDiagnostics(file);
+        newErrors.push(...diagnostics);
+      }
+
+      if (newErrors.length === 0) {
+        console.log('[yu-agent] LSP: all errors fixed');
+        trackAgent('lsp-verify', 'completed');
+        return { ok: true, errors: [] };
+      }
+
+      allErrors = newErrors;
+    }
+
+    // ── 5. Unresolved errors after all retries ──
+    const errorSummary = allErrors
+      .slice(0, 10)
+      .map((e) => `${(e as Record<string, unknown>).file || '?'}:${(e as Record<string, unknown>).line || '?'} — ${(e as Record<string, unknown>).error || '?'}`)
+      .join('\n      ');
+    console.warn(`[yu-agent] LSP: ${allErrors.length} errors remaining after retries:\n      ${errorSummary}`);
+    trackAgent('lsp-verify', 'failed', { error: `LSP errors remaining after retries: ${allErrors.length}` });
+    return { ok: false, errors: allErrors };
+  } finally {
+    // ── 6. Stop LSP server ──
+    await manager.stop();
+  }
 }
 
 // ── Test runner ────────────────────────────────────────
