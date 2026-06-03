@@ -133,7 +133,7 @@ export interface ResourceLimits {
  */
 export interface AppConfig {
   identity?: {
-    /** Path to personality.json profile. Defaults to ~/.yu/personality.json. */
+    /** @deprecated Personality is removed — yu-agent is a professional assistant. */
     personalityPath?: string;
   };
   /**
