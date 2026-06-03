@@ -124,11 +124,16 @@ function loadPrompt(name: string): string {
 
 // ── Agent type definitions ─────────────────────────────
 
+/**
+ * 模型路由策略：
+ *   v4-flash — 快/便宜，用于简单任务（review, search, doc, lsp, commit 等）
+ *   v4-pro   — 强/贵，用于复杂任务（coding, plan, team）
+ */
 export const AGENT_TYPES: Record<string, AgentTypeConfig> = {
   coding: {
     displayName: 'Coding Agent',
     description: '编写和修改代码',
-    model: 'v4-flash',
+    model: 'v4-pro',
     thinking: 'max',
     maxTurns: 50,
     builtinToolNames: ['bash', 'read', 'edit', 'write', 'grep', 'find', 'ls'],
@@ -148,7 +153,7 @@ export const AGENT_TYPES: Record<string, AgentTypeConfig> = {
   plan: {
     displayName: 'Plan Agent',
     description: '出技术方案，只读不改',
-    model: 'v4-flash',
+    model: 'v4-pro',
     thinking: 'max',
     maxTurns: 30,
     builtinToolNames: ['read', 'grep', 'find', 'ls'],

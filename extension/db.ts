@@ -75,6 +75,7 @@ export interface SummaryRow {
 export interface CacheRow {
   totalHits: number;
   totalMisses: number;
+  totalOutput: number;
   totalCost: number;
   turnCount: number;
   hitRate: number;
@@ -117,7 +118,7 @@ function getDb(): DatabaseSync {
 }
 
 // ── Schema versions — used for migration ─────────────────
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 function initSchema(db: DatabaseSync): void {
   // Create schema version tracking
@@ -190,6 +191,7 @@ function initSchema(db: DatabaseSync): void {
       tag TEXT PRIMARY KEY,
       total_hits INTEGER DEFAULT 0,
       total_misses INTEGER DEFAULT 0,
+      total_output INTEGER DEFAULT 0,
       total_cost REAL DEFAULT 0,
       turn_count INTEGER DEFAULT 0,
       hit_rate REAL DEFAULT 0,
@@ -316,6 +318,13 @@ function runMigrations(db: DatabaseSync): void {
     try {
       db.exec('CREATE INDEX IF NOT EXISTS idx_todos_session_id ON todos(session_id)');
     } catch { /* ignore */ }
+  }
+
+  // Migration 4 → 5: Add total_output column to cache table
+  if (currentVersion < 5) {
+    try {
+      db.exec('ALTER TABLE cache ADD COLUMN total_output INTEGER DEFAULT 0');
+    } catch { /* column already exists — ignore */ }
   }
 
   db.prepare(
@@ -591,6 +600,7 @@ export function upsertCache(
   data: {
     totalHits?: number;
     totalMisses?: number;
+    totalOutput?: number;
     totalCost?: number;
     turnCount?: number;
     hitRate?: number;
@@ -599,16 +609,16 @@ export function upsertCache(
 ): void {
   const db = getDb();
   db.prepare(`
-    INSERT INTO cache (tag, total_hits, total_misses, total_cost, turn_count, hit_rate, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO cache (tag, total_hits, total_misses, total_output, total_cost, turn_count, hit_rate, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(tag) DO UPDATE SET
-      total_hits = ?, total_misses = ?, total_cost = ?,
+      total_hits = ?, total_misses = ?, total_output = ?, total_cost = ?,
       turn_count = ?, hit_rate = ?, updated_at = ?
   `).run(
     tag,
-    data.totalHits ?? 0, data.totalMisses ?? 0, data.totalCost ?? 0,
+    data.totalHits ?? 0, data.totalMisses ?? 0, data.totalOutput ?? 0, data.totalCost ?? 0,
     data.turnCount ?? 0, data.hitRate ?? 0, updatedAt,
-    data.totalHits ?? 0, data.totalMisses ?? 0, data.totalCost ?? 0,
+    data.totalHits ?? 0, data.totalMisses ?? 0, data.totalOutput ?? 0, data.totalCost ?? 0,
     data.turnCount ?? 0, data.hitRate ?? 0, updatedAt,
   );
 }
@@ -616,12 +626,13 @@ export function upsertCache(
 export function getCache(tag: string): CacheRow | null {
   const db = getDb();
   const row = db.prepare(
-    'SELECT total_hits, total_misses, total_cost, turn_count, hit_rate, updated_at FROM cache WHERE tag = ?',
+    'SELECT total_hits, total_misses, total_output, total_cost, turn_count, hit_rate, updated_at FROM cache WHERE tag = ?',
   ).get(tag) as Record<string, unknown> | undefined;
   if (!row) return null;
   return {
     totalHits: row.total_hits as number,
     totalMisses: row.total_misses as number,
+    totalOutput: row.total_output as number,
     totalCost: row.total_cost as number,
     turnCount: row.turn_count as number,
     hitRate: row.hit_rate as number,

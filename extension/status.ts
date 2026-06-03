@@ -139,6 +139,7 @@ export interface CacheStatsData {
   updatedAt: number;
   totalHits: number;
   totalMisses: number;
+  totalOutput: number;
   totalCost: number;
   turnCount: number;
   hitRate: number;
@@ -150,6 +151,7 @@ export function writeCacheStats(stats: CacheStatsData): void {
   upsertCache(getSessionTag(), {
     totalHits: stats.totalHits,
     totalMisses: stats.totalMisses,
+    totalOutput: stats.totalOutput,
     totalCost: stats.totalCost,
     turnCount: stats.turnCount,
     hitRate: stats.hitRate,

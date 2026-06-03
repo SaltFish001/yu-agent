@@ -28,8 +28,44 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // Project root: dist/bin/ -> dist/ -> project root
 const PROJECT_ROOT = resolve(__dirname, '..', '..');
 
-/** Print cache hit-rate summary from SQLite sessions.db if available. */
-async function printCacheStats(): Promise<void> {
+/**
+ * 估算 DeepSeek v4 系列 API 费用。
+ *
+ * Pricing (元/百万 token):
+ *   v4-flash:  输入 ¥3,  输出 ¥6,  缓存命中 ¥0.3 (10%)
+ *   v4-pro:    输入 ¥12, 输出 ¥24, 缓存命中 ¥1.2 (10%)
+ *
+ * 当模型信息不可用时默认使用 v4-flash 价格估算。
+ */
+function estimateCost(
+  inputTokens: number,
+  outputTokens: number,
+  cacheHitTokens: number,
+  model: string = 'v4-flash',
+): { inputCost: number; outputCost: number; totalCost: number; cacheSavings: number } {
+  const isPro = model.includes('pro');
+  const inputPrice = isPro ? 12 : 3;
+  const outputPrice = isPro ? 24 : 6;
+  const cachePrice = isPro ? 1.2 : 0.3;
+
+  const cacheMissInput = Math.max(0, inputTokens - cacheHitTokens);
+  const inputCost = (cacheMissInput * inputPrice + cacheHitTokens * cachePrice) / 1_000_000;
+  const outputCost = (outputTokens * outputPrice) / 1_000_000;
+  const noCacheCost = (inputTokens * inputPrice) / 1_000_000;
+  const totalCost = inputCost + outputCost;
+  const cacheSavings = noCacheCost - (cacheHitTokens * cachePrice) / 1_000_000;
+
+  return { inputCost, outputCost, totalCost, cacheSavings };
+}
+
+/** Print cache hit-rate + cost summary from SQLite sessions.db if available. */
+async function printCacheStats(recentResult?: {
+  cacheHitTokens?: number;
+  cacheMissTokens?: number;
+  outputTokens?: number;
+  durationMs?: number;
+  model?: string;
+}): Promise<void> {
   try {
     const { getCache } = await import('../extension/db.js');
     const { getSessionTag } = await import('../extension/session-context.js');
@@ -39,7 +75,27 @@ async function printCacheStats(): Promise<void> {
     if (!cache || cache.turnCount === 0) return;
     const pct = Math.round(cache.hitRate * 100);
     const total = cache.totalHits + cache.totalMisses;
-    console.log(`\nCache: ${pct}% hit rate (${cache.totalHits} hits / ${total} total, ${cache.turnCount} turns)`);
+
+    // Use most recent result if available, otherwise aggregate from DB
+    const hitTokens = recentResult?.cacheHitTokens ?? cache.totalHits;
+    const missTokens = recentResult?.cacheMissTokens ?? cache.totalMisses;
+    const outTokens = recentResult?.outputTokens ?? cache.totalOutput;
+    const model = recentResult?.model ?? 'v4-flash';
+
+    const cost = estimateCost(missTokens, outTokens, hitTokens, model);
+
+    console.log(`\n── Cost ──────────────────────────────────`);
+    console.log(`  Cache hit rate: ${pct}% (${cache.totalHits} hits / ${total} total, ${cache.turnCount} turns)`);
+    console.log(`  Input tokens:  ${(missTokens / 1000).toFixed(1)}k (cache hit: ${(hitTokens / 1000).toFixed(1)}k)`);
+    console.log(`  Output tokens: ${(outTokens / 1000).toFixed(1)}k`);
+    console.log(`  Est. cost:     ¥${cost.totalCost.toFixed(4)} (input ¥${cost.inputCost.toFixed(4)} + output ¥${cost.outputCost.toFixed(4)})`);
+    if (cost.cacheSavings > 0) {
+      console.log(`  Cache saved:   ¥${cost.cacheSavings.toFixed(4)}`);
+    }
+    if (recentResult?.durationMs) {
+      console.log(`  API duration:  ${(recentResult.durationMs / 1000).toFixed(1)}s`);
+    }
+    console.log(`──────────────────────────────────────────`);
   } catch {
     // ignore — no data yet or SQLite unavailable
   }
@@ -529,7 +585,7 @@ async function mainCli(): Promise<void> {
     }
     const { spawnAgent } = await import('../extension/spawn.js');
     const result = await spawnAgent({
-      type: 'general-purpose',
+      type: 'coding',
       model: 'v4-flash',
       thinking: 'max',
       maxTurns: 50,
@@ -537,7 +593,13 @@ async function mainCli(): Promise<void> {
       timeout: 300_000,
     });
     console.log(result.response);
-    await printCacheStats();
+    await printCacheStats({
+      cacheHitTokens: result.cacheHitTokens,
+      cacheMissTokens: result.cacheMissTokens,
+      outputTokens: result.outputTokens,
+      durationMs: result.durationMs,
+      model: result.model,
+    });
     return;
   }
 

@@ -75,6 +75,7 @@ export function flushFinalStatus(): void {
     updatedAt: Date.now(),
     totalHits: cacheStats.totalHits,
     totalMisses: cacheStats.totalMisses,
+    totalOutput: 0,
     totalCost: cacheStats.totalCost,
     turnCount: cacheStats.turnCount,
     hitRate: cacheStats.hitRate,

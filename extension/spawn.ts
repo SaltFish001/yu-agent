@@ -36,6 +36,9 @@ const MAX_TURNS_PER_SESSION = 300;
 // DeepSeek V4 系列支持 1M context window，保留 10% 余量
 const MAX_TOKENS_PER_SESSION = 900_000;
 
+/** 上下文压缩触发阈值：当上下文用量超过 context window 此比例时触发压缩 */
+const CONTEXT_COMPRESSION_THRESHOLD = 0.75;
+
 // ── 类型 ──────────────────────────────────────────────
 
 export interface SpawnConfig {
@@ -58,7 +61,12 @@ export interface SpawnResult {
   response: string;
   cacheHitTokens?: number;
   cacheMissTokens?: number;
+  outputTokens?: number;
   totalTokens?: number;
+  /** Wall-clock duration of the API call in ms. */
+  durationMs?: number;
+  /** Model used for this call. */
+  model?: string;
 }
 
 interface CacheStats {
@@ -171,6 +179,9 @@ export class SessionPool {
         await this.init(this.buildDefaultConfig(spawnCfg));
       }
 
+      // 检查上下文用量，若接近限制则先压缩再继续
+      await this._compressIfNeeded();
+
       const needsReset =
         this.turnCount >= MAX_TURNS_PER_SESSION ||
         this.totalTokensUsed >= MAX_TOKENS_PER_SESSION;
@@ -193,6 +204,35 @@ export class SessionPool {
 
       return result;
     });
+  }
+
+  /**
+   * 检查会话上下文用量，若接近 context window 限制则触发 Pi SDK 内置压缩。
+   * 压缩后保留关键摘要，丢弃旧的工具调用细节，释放上下文空间。
+   */
+  private async _compressIfNeeded(): Promise<void> {
+    const session = this.session;
+    if (!session) return;
+
+    try {
+      const usage = session.getContextUsage();
+      if (!usage || usage.percent === null) return;
+
+      if (usage.percent >= CONTEXT_COMPRESSION_THRESHOLD) {
+        console.log(
+          `[yu-agent/cache] Context at ${(usage.percent * 100).toFixed(0)}% ` +
+          `(${usage.tokens}/${usage.contextWindow}), triggering compression...`,
+        );
+        await session.compact(
+          'Compress the conversation history: keep the key context (task goals, decisions, file changes) ' +
+          'and discard old tool call details. Preserve the overall flow so work can continue.',
+        );
+        console.log('[yu-agent/cache] Context compression complete');
+      }
+    } catch (err) {
+      // 压缩是尽力而为的操作，失败不影响继续执行
+      console.warn('[yu-agent/cache] Context compression failed (non-fatal):', err);
+    }
   }
 
   /**
@@ -279,7 +319,9 @@ export class SessionPool {
       : task;
 
     // APPEND-ONLY LOG: 只追加，不修改
+    const startTime = Date.now();
     await this._promptWithTimeout(session, fullTask, spawnCfg.timeout);
+    const durationMs = Date.now() - startTime;
 
     // 提取新增的 assistant 响应
     const newMessages = (session.messages as { role: string; content?: unknown }[]).slice(beforeLen);
@@ -288,6 +330,7 @@ export class SessionPool {
     // 只取最后一条 assistant 消息的 usage（避免工具调用多轮重复计数）
     let cacheHit = 0;
     let cacheMiss = 0;
+    let outputTokens = 0;
     let totalTokens = 0;
     let cost = 0;
     const assistantMsgs = newMessages.filter(
@@ -297,6 +340,7 @@ export class SessionPool {
       const last = assistantMsgs[assistantMsgs.length - 1];
       cacheHit = last.usage.cacheRead;
       cacheMiss = last.usage.input;
+      outputTokens = last.usage.output;
       totalTokens = last.usage.totalTokens;
       cost = last.usage.cost.total;
     }
@@ -318,7 +362,10 @@ export class SessionPool {
       response: compacted,
       cacheHitTokens: cacheHit || undefined,
       cacheMissTokens: cacheMiss || undefined,
+      outputTokens: outputTokens || undefined,
       totalTokens: totalTokens || undefined,
+      durationMs,
+      model: spawnCfg.model,
     };
   }
 
