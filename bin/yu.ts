@@ -287,6 +287,27 @@ async function runDoctor(): Promise<void> {
     results.push({ name: 'Session DB', ok: false, detail: `诊断失败: ${msg}` });
   }
 
+  // ── Checkpoints ──
+  try {
+    const { listPendingCheckpoints } = await import('../extension/checkpoint.js');
+    const pending = listPendingCheckpoints();
+    if (pending.length > 0) {
+      const lines = pending.map(
+        (cp) => `    ${cp.step} (${new Date(cp.timestamp).toLocaleString()}, files: ${cp.files.length})`,
+      );
+      results.push({
+        name: '未完成的 Checkpoint',
+        ok: false,
+        detail: `${pending.length} 个未完成:\n${lines.join('\n')}\n    运行 yu agent-recover 查看详情`,
+      });
+    } else {
+      results.push({ name: 'Checkpoints', ok: true, detail: '无未完成项' });
+    }
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    results.push({ name: 'Checkpoints', ok: true, detail: `检查失败: ${msg}` });
+  }
+
   // ── Print results ──
   let allOk = true;
   for (const r of results) {
@@ -530,6 +551,28 @@ Installs a new MCP server and adds it to ~/.yu/mcp.config.json.`;
 
 async function mainCli(): Promise<void> {
   const args = process.argv.slice(2);
+
+  // ═ 启动时检测未完成的 checkpoint ═
+  try {
+    const { listPendingCheckpoints } = await import('../extension/checkpoint.js');
+    const pending = listPendingCheckpoints();
+    if (pending.length > 0) {
+      console.warn('');
+      console.warn('═ 检测到未完成的 Checkpoint ═══════════════════');
+      for (const cp of pending) {
+        console.warn(`  • ${cp.step} — ${new Date(cp.timestamp).toLocaleString()}`);
+        if (cp.files.length > 0) {
+          console.warn(`    文件: ${cp.files.join(', ')}`);
+        }
+      }
+      console.warn('');
+      console.warn('  运行 yu doctor 查看完整诊断');
+      console.warn('═══════════════════════════════════════════════');
+      console.warn('');
+    }
+  } catch {
+    // Best-effort
+  }
 
   // Help
   if (args[0] === '--help' || args[0] === '-h' || args[0] === 'help') {
