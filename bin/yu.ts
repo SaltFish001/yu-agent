@@ -825,30 +825,20 @@ async function mainCli(): Promise<void> {
     process.exit(0);
   }
 
-  // `yu run <prompt>` — direct spawn agent via Pi SDK.
+  // `yu run <prompt>` — scheduler dispatch (Plan B).
+  // Classifies intent → pass_through to chat agent, or dispatch to
+  // coding/search/review/etc. Replaces the old hardcoded coding-agent spawn.
   if (args[0] === 'run') {
     const prompt = args.slice(1).join(' ');
     if (!prompt) {
       console.error('Usage: yu run <prompt>');
       process.exit(1);
     }
-    const { spawnAgent } = await import('../extension/spawn.js');
-    const result = await spawnAgent({
-      type: 'coding',
-      model: 'v4-flash',
-      thinking: 'max',
-      maxTurns: 50,
-      task: prompt,
-      timeout: 300_000,
-    });
-    console.log(result.response);
-    await printCacheStats({
-      cacheHitTokens: result.cacheHitTokens,
-      cacheMissTokens: result.cacheMissTokens,
-      outputTokens: result.outputTokens,
-      durationMs: result.durationMs,
-      model: result.model,
-    });
+    const { handler } = await import('../extension/scheduler.js');
+    const result = await handler(prompt, {});
+    if (result !== null) {
+      console.log(result);
+    }
     return;
   }
 
