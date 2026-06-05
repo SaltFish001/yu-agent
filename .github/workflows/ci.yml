@@ -15,4 +15,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      - name: Configure DeepSeek API key for tests
+        run: |
+          mkdir -p ~/.yu
+          echo "{\"apiKeys\":{\"deepseek\":\"${{ secrets.DEEPSEEK_API_KEY }}\"}}" > ~/.yu/config.json
       - run: npm test
