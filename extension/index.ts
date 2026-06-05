@@ -1,12 +1,11 @@
 /**
  * yu-agent — Pi extension entry point.
  *
- * Registers sub-agent types, starts the MCP server manager,
- * and sets up the TUI monitor widget.
+ * Registers sub-agent types (for Pi-managed commands), starts the MCP
+ * server manager, and sets up the TUI monitor widget.
  *
- * Identity, session persistence, resume context, and the /session
- * command have been split into separate plugin files:
- *   identity.ts, session-store.ts, resumer.ts, session-cmd.ts
+ * Identity injection and session management have been replaced by
+ * direct DeepSeek API calls and the Topic system.
  *
  * Installation:  pi install ~/yu-agent
  * Standalone:    npm install -g yu-agent (via bin/yu.ts)
@@ -15,14 +14,73 @@
 import { createLogger } from './logger.js';
 const log = createLogger('index');
 
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import type { ExtensionAPI, ExtensionCommandContext, ContextEvent } from '@earendil-works/pi-coding-agent';
 import { registerAgents, validateMcpConfig, validateEnvVars } from './config.js';
 import { startMCPManager } from './mcp-manager.js';
 import { setupMonitor } from './monitor.js';
 import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { MCP_CONFIG_PATH } from './paths.js';
 
-export default function (pi: ExtensionAPI): void {
+export default async function (pi: ExtensionAPI): Promise<void> {
+  // Inject DeepSeek API key from ~/.yu/config.json into env for Pi's auth system
+  try {
+    const configPath = resolve(homedir(), '.yu', 'config.json');
+    if (existsSync(configPath)) {
+      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+      const dsKey = config?.apiKeys?.deepseek;
+      if (dsKey && typeof dsKey === 'string' && dsKey.trim() && !process.env.DEEPSEEK_API_KEY) {
+        process.env.DEEPSEEK_API_KEY = dsKey.trim();
+        log.info('DeepSeek API key loaded from ~/.yu/config.json');
+      }
+    }
+  } catch {
+    // non-fatal
+  }
+
+  // ── Topic integration ─────────────────────────────────
+  try {
+    const { getActive, topicCommand } = await import('./topic.js');
+
+    // Register /topic slash command
+    pi.registerCommand('topic', {
+      description: 'Topic management. Usage: /topic list | switch <name> | new <name> <dir> | rename <old> <new> | archive <name>',
+      async handler(args: string, ctx: ExtensionCommandContext) {
+        const parts = args.trim().split(/\s+/);
+        const sub = parts[0] || 'list';
+        const out = topicCommand(sub, parts.slice(1));
+        ctx.ui.notify(out);
+      },
+    });
+
+    // On session start, set session name to active topic
+    pi.on('session_start', () => {
+      const active = getActive();
+      if (active) {
+        pi.setSessionName(`topic:${active.name}`);
+        try {
+          process.chdir(active.dir);
+        } catch {
+          // dir might be gone
+        }
+      }
+    });
+
+    // Inject topic info into system prompt before each agent start
+    pi.on('before_agent_start', (event) => {
+      const active = getActive();
+      if (active) {
+        const suffix = active.summary
+          ? `\n\n[Current topic: ${active.name} — ${active.dir}] ${active.summary}`
+          : `\n\n[Current topic: ${active.name} — ${active.dir}]`;
+        return { systemPrompt: event.systemPrompt + suffix };
+      }
+    });
+  } catch (err) {
+    log.warn('Topic integration failed (non-fatal)', err);
+  }
+
   // Validate mcp.config.json before anything else
   validateMcpConfig();
 

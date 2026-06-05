@@ -21,6 +21,7 @@ import type { SpawnResult } from './spawn.js';
 import { classifyIntent, } from './classifier.js';
 import {
   runParallelGroup,
+  spawnAgentWithTimeout,
   reviewDiff,
   printDiffSummary,
   confirmDiff,
@@ -49,16 +50,22 @@ export async function handler(
     // Step 1: Classify intent via scheduler agent
     const plan = await classifyIntent(userInput, sessionContext as Record<string, unknown>);
 
-    // ── Pass-through: hand off to Pi native agent ──
+    // ── Pass-through: dispatch to chat agent ──
     if (plan.pass_through) {
-      trackAgent('pi-native', 'running', {
-        type: 'pi-default',
-        model: '',
-        goal: `处理: ${userInput.slice(0, 100)}`,
-      });
-      trackAgent('pi-native', 'completed');
-      flushFinalStatus();
-      return null;
+      try {
+        const chatResult = await spawnAgentWithTimeout({
+          type: 'chat',
+          model: 'v4-flash',
+          id: 'chat-1',
+          task: userInput,
+        }, {});
+        return chatResult?.response || '';
+      } catch (err) {
+        log.warn('Chat agent failed, falling back to pass-through', err);
+        return null;
+      } finally {
+        flushFinalStatus();
+      }
     }
 
     // ── Team mode: multi-agent orchestration ──

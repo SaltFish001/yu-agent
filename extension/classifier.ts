@@ -1,22 +1,20 @@
 /**
  * yu-agent — Intent classifier & scheduler plan types.
  *
- * Extracted from scheduler.ts for maintainability.
+ * Uses direct DeepSeek API call (not Pi SDK) for intent classification,
+ * avoiding Pi SDK overhead and enabling response_format: json_object.
  */
 
 import { createLogger } from './logger.js';
 const log = createLogger('classifier');
 
-import { spawnAgent } from './spawn.js';
-import { parseSchedulerOutput } from './template.js';
+import { callScheduler } from './deepseek.js';
 import { trackAgent } from './tracker.js';
 import { loadDecisions } from './tracker.js';
-import { AGENT_TIMEOUT_MS } from './executor.js';
 
-// ── Constants ──────────────────────────────────────────
-
-const MAX_RETRY_SCHEDULER = 0;
-const SHORT_INPUT_MAX_LENGTH = 200;
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { PROMPTS_DIR } from './paths.js';
 
 // ── Types ──────────────────────────────────────────────
 
@@ -29,76 +27,75 @@ export interface SchedulerPlan {
   dependencies?: Record<string, string[]>;
 }
 
+// ── Prompt loader ──────────────────────────────────────
+
+function loadSchedulerPrompt(): string {
+  try {
+    const path = resolve(PROMPTS_DIR, 'scheduler.md');
+    if (!existsSync(path)) {
+      log.warn('scheduler.md not found at', path);
+      return '';
+    }
+    return readFileSync(path, 'utf-8');
+  } catch (err) {
+    log.warn('Failed to load scheduler prompt', err);
+    return '';
+  }
+}
+
 // ── Scheduler agent call ───────────────────────────────
 
 export async function classifyIntent(
   userInput: string,
-  context: Record<string, unknown>,
-  spawnAgentFn?: typeof spawnAgent,
+  _context: Record<string, unknown>,
 ): Promise<SchedulerPlan> {
   // Track the scheduler agent itself
   trackAgent('scheduler', 'running', {
     type: 'scheduler',
-    model: 'v4-flash',
+    model: 'v4-flash (direct)',
     goal: 'classify intent & generate plan',
   });
 
-  // Fast path: if the input looks like a full instruction (role-playing,
-  // long prompt, or contains specific task markers), skip scheduling.
-  // The scheduler agent is for SHORT classification prompts like
-  // "检查这个bug" or "帮我重构这个函数", not for full coding instructions.
+  // Fast path: full instructions pass through directly
   const trimmed = userInput.trim();
-  const isLong = trimmed.length > SHORT_INPUT_MAX_LENGTH;
-  const isRolePlay = /^你是|^你是一个/.test(trimmed);
-  if (isLong || isRolePlay) {
+  if (trimmed.length > 200 || /^你是|^你是一个/.test(trimmed)) {
     trackAgent('scheduler', 'completed');
     log.info(`Scheduler: full instruction detected (${trimmed.length} chars), passing through`);
-    return { pass_through: true, reasoning: 'full instruction, no classification needed' };
+    return { pass_through: true, reasoning: 'input too long or role-play, no classification needed' };
   }
 
-  let lastError: string | undefined;
-
-  for (let attempt = 0; attempt <= MAX_RETRY_SCHEDULER; attempt++) {
-    try {
-      const spawn = spawnAgentFn ?? spawnAgent;
-      const result = await spawn({
-        type: 'general-purpose',
-        model: 'v4-flash',
-        thinking: 'max',
-        maxTurns: 3,
-        task: userInput,
-        context: { ...context, decisions: loadDecisions(), prompt_type: 'scheduler' },
-        timeout: AGENT_TIMEOUT_MS,
-      });
-
-      const plan = parseSchedulerOutput(result.response);
-      if (plan && (plan.pass_through !== undefined || (plan.intent && plan.agents))) {
-        trackAgent('scheduler', 'completed');
-        return plan;
-      }
-
-      // If output contains no JSON structure at all, the agent returned pure
-      // markdown/text — fall back immediately instead of retrying.
-      const hasJson = /[{[]/.test(result.response) || /```json/i.test(result.response);
-      if (!hasJson) {
-        log.info(`── Scheduler raw output (attempt ${attempt + 1}) ──`);
-        console.log(result.response);
-        log.info(`── End scheduler raw output ──`);
-        log.warn('Scheduler output is not JSON, falling back to pass-through');
-        break;
-      }
-
-      log.info(`── Scheduler raw output (attempt ${attempt + 1}) ──`);
-      console.log(result.response);
-      log.info(`── End scheduler raw output ──`);
-      log.warn(`Scheduler output invalid (attempt ${attempt + 1}), retrying...`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log.warn(`Scheduler spawn failed (attempt ${attempt + 1})`, err);
-      lastError = msg;
-    }
+  // Load scheduler prompt
+  const systemPrompt = loadSchedulerPrompt();
+  if (!systemPrompt) {
+    log.warn('Scheduler prompt empty, falling back to pass-through');
+    trackAgent('scheduler', 'completed');
+    return { pass_through: true, reasoning: 'scheduler prompt unavailable' };
   }
 
-  trackAgent('scheduler', 'failed', { error: lastError || 'all retries exhausted' });
-  return { pass_through: true, reasoning: 'scheduler failed, falling back to Pi native' };
+  // Add decisions context if available
+  const decisions = loadDecisions();
+  let enrichedInput = trimmed;
+  if (Array.isArray(decisions) && decisions.length > 0) {
+    enrichedInput = `${trimmed}\n\nContext: ${JSON.stringify({ decisions })}`;
+  }
+
+  // Call DeepSeek directly with response_format: json_object
+  const result = await callScheduler(systemPrompt, enrichedInput);
+
+  if (!result) {
+    log.warn('DeepSeek scheduler returned no result, falling back to pass-through');
+    trackAgent('scheduler', 'failed');
+    return { pass_through: true, reasoning: 'DeepSeek API call failed' };
+  }
+
+  // Validate result
+  const plan = result as SchedulerPlan;
+  if (plan.pass_through !== undefined || (plan.intent && plan.agents)) {
+    trackAgent('scheduler', 'completed');
+    return plan;
+  }
+
+  log.warn('Scheduler returned invalid plan, falling back to pass-through', { result });
+  trackAgent('scheduler', 'failed');
+  return { pass_through: true, reasoning: 'scheduler returned invalid plan' };
 }

@@ -267,6 +267,16 @@ export const AGENT_TYPES: Record<string, AgentTypeConfig> = {
     systemPrompt: loadPrompt('search'),
   },
 
+  chat: {
+    displayName: 'Chat Agent',
+    description: '非编程类对话与问答',
+    model: 'v4-flash',
+    thinking: 'high',
+    maxTurns: 10,
+    builtinToolNames: ['read', 'grep', 'find', 'bash'],
+    systemPrompt: loadPrompt('chat'),
+  },
+
   'general-purpose': {
     displayName: 'General Purpose Agent',
     description: '通用意图识别与任务分发',

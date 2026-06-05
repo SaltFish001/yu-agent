@@ -61,7 +61,7 @@ function estimateCost(
   return { inputCost, outputCost, totalCost, cacheSavings };
 }
 
-/** Print cache hit-rate + cost summary from SQLite sessions.db if available. */
+/** Print cache hit-rate + cost summary from SQLite if available. */
 async function printCacheStats(recentResult?: {
   cacheHitTokens?: number;
   cacheMissTokens?: number;
@@ -71,8 +71,7 @@ async function printCacheStats(recentResult?: {
 }): Promise<void> {
   try {
     const { getCache } = await import('../extension/db.js');
-    const { getSessionTag } = await import('../extension/session-context.js');
-    const tag = getSessionTag();
+    const tag = process.env.YU_SESSION_ID || 'shared';
     if (!tag || tag === 'shared') return;
     const cache = getCache(tag);
     if (!cache || cache.turnCount === 0) return;
@@ -106,7 +105,7 @@ async function printCacheStats(recentResult?: {
 
 const COMMANDS = new Set([
   'review', 'plan', 'team', 'coding',
-  'commit', 'doc', 'search', 'lsp', 'run', 'monitor', 'session', 'memory',
+  'commit', 'doc', 'search', 'lsp', 'run', 'monitor', 'memory',
   'refactor',
 ]);
 
@@ -280,7 +279,6 @@ async function runDoctor(jsonOutput?: boolean): Promise<void> {
   // ── Token Usage Stats ──
   try {
     const { getTokenUsageAggregate, getTokenUsageBySession } = await import('../extension/db.js');
-    const { getSessionTag } = await import('../extension/session-context.js');
     const agg = getTokenUsageAggregate();
     if (agg.sessionCount > 0) {
       results.push({
@@ -295,7 +293,7 @@ async function runDoctor(jsonOutput?: boolean): Promise<void> {
       // Use aggregate for now since we don't have a date filter
     }
     // Current session stats
-    const tag = getSessionTag();
+    const tag = process.env.YU_SESSION_ID || 'shared';
     if (tag && tag !== 'shared') {
       const sessionUsage = getTokenUsageBySession(tag);
       if (sessionUsage.count > 0) {
@@ -422,21 +420,8 @@ Diagnostics:
   yu doctor                    One-click health diagnosis
 
 Scheduler & Monitor:
-  yu run <prompt>              Direct scheduler invocation (bypass Pi hooks)
+  yu run <prompt>              Spawn coding agent directly
   yu monitor [--once]          Live status dashboard (--once for single snapshot)
-
-Session Management:
-  yu session list              List all sessions
-  yu session show <tag>        Show session details and message history
-  yu session resume <tag>      Resume session context
-  yu session fork <tag>        Fork/branch from a session
-  yu session todo <tag> ...    Manage session task list
-  yu session archive <tag>     Archive a session (soft-delete)
-  yu session unarchive <tag>   Unarchive a session
-  yu session info              Show session database info
-  yu session backup [path]     Backup sessions database
-  yu session restore <path>    Restore sessions from backup
-  yu session clean [--days N]  Clean sessions older than N days (default 7)
 
 Knowledge Base (RAG):
   yu knowledge search <query>  Full-text search across project files (FTS5)
@@ -478,6 +463,15 @@ Package Management:
   yu update                    Self-update
   yu uninstall                 Remove yu-agent
 
+Topic Management:
+  yu topic list                List all topics
+  yu topic switch <name>       Switch to a topic
+  yu topic new <name> <dir>    Create a new topic
+  yu topic rename <old> <new>  Rename a topic
+  yu topic archive <name>      Archive a topic (soft-delete)
+  yu topic bg <name> <prompt>  Start a background task on a topic
+  yu topic status              Show background task progress
+
 General:
   yu help [command]            Show this help, or help for a specific command
   yu --help / -h               Same as "yu help"
@@ -488,12 +482,11 @@ Environment:
   YU_PROJECT_DIR               Project directory (default: process.cwd())
 
 Data Directory:  ~/.yu/
-  ~/.yu/sessions.db            SQLite session database
   ~/.yu/prompts/               Agent type system prompts
   ~/.yu/mcp.config.json        MCP server configuration
-  ~/.yu/pool-sessions/         Cached agent sessions (disk persistence)
   ~/.yu/runtime/{runId}/       Team runtime data (mailboxes, state)
   ~/.yu/teams/{name}/          Saved team specs
+  ~/.yu/topics.db              SQLite topic database
 
 Agent Types (auto-dispatched by scheduler):
   coding    — 编写和修改代码
@@ -545,30 +538,6 @@ Options:
 
 Reports any issues found. No arguments needed.`;
 
-    case 'session':
-      return `yu session — Session management
-
-Usage:
-  yu session list               List all sessions
-  yu session show <tag>         Show session details and message history
-  yu session resume <tag>       Resume session context
-  yu session fork <tag>         Fork/branch from a session
-  yu session todo <tag> ...     Manage session task list (add/list/done/delete)
-  yu session archive <tag>      Archive a session (soft-delete)
-  yu session unarchive <tag>    Unarchive a session
-  yu session info               Show database path, session count, etc.
-  yu session backup [path]      Backup sessions.db (default: ./sessions-backup-<timestamp>.db)
-  yu session restore <path>     Restore sessions.db from backup file
-  yu session clean [--days N]   Remove sessions older than N days (default 7)
-
-Todo actions:
-  yu session todo <tag> list             List all tasks
-  yu session todo <tag> add <text>       Add a new task
-  yu session todo <tag> done <id>        Mark task as completed
-  yu session todo <tag> delete <id>      Delete a task
-
-Data stored in ~/.yu/sessions.db (SQLite).`;
-
     case 'team':
       return `yu team — Multi-agent team mode
 
@@ -600,7 +569,7 @@ and team mode activity.
 Options:
   --once    Print a single snapshot and exit (no live refresh)
 
-Reads from ~/.yu/sessions.db (SQLite).`;
+Reads from SQLite databases in ~/.yu/.`;
 
     case 'coding':    case 'review':    case 'plan':
     case 'commit':    case 'doc':       case 'search':
@@ -624,6 +593,28 @@ Useful for testing or when Pi's dispatch doesn't match your intent.`;
       return `yu install <package> — Install an MCP server package
 
 Installs a new MCP server and adds it to ~/.yu/mcp.config.json.`;
+
+    case 'topic':
+      return `yu topic — Topic management
+
+Manages named topics (contexts) with their own working directory,
+summary, status tracking, and turn counting.
+
+Usage:
+  yu topic list                    List all topics
+  yu topic list --all              List all topics including archived
+  yu topic switch <name>           Switch to a topic (changes cwd)
+  yu topic new <name> <dir>        Create a new topic at <dir>
+  yu topic rename <old> <new>      Rename a topic
+  yu topic archive <name>          Archive a topic (soft-delete)
+  yu topic bg <name> <prompt>      Start a background task on a topic
+  yu topic status                  Show background task progress
+
+Background limits:
+  Config key: topic.maxBackground in ~/.yu/config.json
+  Default: 3 concurrent background tasks
+
+Data stored in ~/.yu/topics.db (SQLite).`;
 
     case 'update':
       return 'yu update — Self-update yu-agent to the latest version.';
@@ -834,15 +825,7 @@ async function mainCli(): Promise<void> {
     process.exit(0);
   }
 
-  // `yu run <prompt>` — directly spawn agent, bypass scheduler.
-  //
-  // The scheduler (classifyIntent) is designed for Pi interactive sessions
-  // where pass_through hands off to Pi's native agent. In non-interactive
-  // `yu run` mode, there's no Pi to fall back to — pass_through returns
-  // null and the prompt is silently dropped.
-  //
-  // So `yu run` spawns the agent directly with the full prompt.
-  // The scheduler is still used by Pi extension hooks and team mode.
+  // `yu run <prompt>` — direct spawn agent via Pi SDK.
   if (args[0] === 'run') {
     const prompt = args.slice(1).join(' ');
     if (!prompt) {
@@ -869,27 +852,14 @@ async function mainCli(): Promise<void> {
     return;
   }
 
-  // `yu session <subcommand>` — manage session status files
-  if (args[0] === 'session') {
-    const subcommand = args[1] || 'help';
-    const sessionArgs = args.slice(2);
-    const { sessionCommand } = await import('../extension/session-cli.js');
-    const result = await sessionCommand(subcommand, sessionArgs);
-    console.log(result);
-
-    // For `yu session resume <tag>`, continue to Pi session instead of exiting
-    if (subcommand === 'resume') {
-      // Check if resume was successful by looking for the env var
-      if (process.env.YU_RESUME_TAG) {
-        // Replace args to start interactive session
-        args.length = 0;
-        args.push('--chat');
-      } else {
-        process.exit(0);
-      }
-    } else {
-      process.exit(0);
-    }
+  // `yu topic <subcommand>` — topic management
+  if (args[0] === 'topic') {
+    const sub = args[1] || 'help';
+    const topicArgs = args.slice(2);
+    const { topicCommand } = await import('../extension/topic.js');
+    const out = topicCommand(sub, topicArgs);
+    console.log(out);
+    process.exit(0);
   }
 
   // `yu search <query>` — semantic code search via CodeGraph
@@ -982,7 +952,7 @@ async function mainCli(): Promise<void> {
     return;
   }
 
-  // Subcommand dispatch (review, plan, etc.)
+  // Subcommand dispatch (Pi-managed commands)
   if (args[0] && COMMANDS.has(args[0])) {
     const command = args.shift()!;
     const rest = args.join(' ');
@@ -992,10 +962,6 @@ async function mainCli(): Promise<void> {
     } else {
       piArgs.push(`/${command}`);
     }
-
-    // Set session agent info for the CLI command
-    const { setSessionAgent } = await import('../extension/session-context.js');
-    setSessionAgent(command);
 
     await main(piArgs, {
       extensionFactories: [subagents, yuAgent],

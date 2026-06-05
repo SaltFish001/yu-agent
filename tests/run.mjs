@@ -137,20 +137,20 @@ await testAsync('validateOutput: coding 状态无效', async () => {
 
 // 4. config.js — 代理类型配置
 console.log('\n⚙️  config — 代理类型配置');
-await testAsync('AGENT_TYPES 包含所有 7 种类型', async () => {
+await testAsync('AGENT_TYPES 包含所有 8 种类型', async () => {
   const mod = await import(resolve(ROOT, 'dist/extension/config.js'));
   const types = mod.AGENT_TYPES;
-  const expected = ['coding', 'review', 'plan', 'lsp', 'commit', 'doc', 'search'];
+  const expected = ['coding', 'review', 'plan', 'lsp', 'commit', 'doc', 'search', 'chat', 'general-purpose'];
   for (const t of expected) {
     ok(t in types, `Missing agent type: ${t}`);
   }
-  strictEqual(Object.keys(types).length, 7);
+  strictEqual(Object.keys(types).length, 9);
 });
 await testAsync('getAgentTypeConfig 返回正确配置', async () => {
   const mod = await import(resolve(ROOT, 'dist/extension/config.js'));
   const cfg = mod.getAgentTypeConfig('coding');
   ok(cfg !== undefined);
-  strictEqual(cfg.model, 'v4-flash');
+  strictEqual(cfg.model, 'v4-pro');
   strictEqual(cfg.thinking, 'max');
   strictEqual(cfg.maxTurns, 50);
 });
@@ -162,7 +162,7 @@ await testAsync('getAgentTypeConfig 大小写不敏感', async () => {
 });
 await testAsync('getAgentTypeNames 返回所有类型', async () => {
   const mod = await import(resolve(ROOT, 'dist/extension/config.js'));
-  strictEqual(mod.getAgentTypeNames().length, 7);
+  strictEqual(mod.getAgentTypeNames().length, 9);
 });
 
 // 5. status.js — 状态管理
