@@ -970,7 +970,48 @@ async function mainCli(): Promise<void> {
     return;
   }
 
-  // Default: pass through to Pi main() with yu-agent extensions loaded
+  // Default: check if non-coding → use chat agent directly
+  const query = args.join(' ');
+  if (query) {
+    try {
+      const { classifyIntent } = await import('../extension/classifier.js');
+      const plan = await classifyIntent(query, {});
+      // Route to chat agent if: pass_through explicitly, OR no intent/agents,
+      // OR intent is none of the known work intents (non-coding general chat)
+      const isPassThrough = plan.pass_through === true;
+      const isGeneralQuery = !plan.intent || !['coding', 'review', 'commit', 'lsp', 'doc', 'refactor', 'team', 'search'].includes(plan.intent);
+      if (isPassThrough || isGeneralQuery) {
+        // Non-coding task: use chat.md prompt directly via DeepSeek API
+        const { chatCompletion } = await import('../extension/deepseek.js');
+        const { readFileSync, existsSync } = await import('node:fs');
+        const { resolve: resolvePath } = await import('node:path');
+        const promptsDir = resolvePath(PROJECT_ROOT, 'prompts');
+        const chatPromptPath = resolvePath(promptsDir, 'chat.md');
+        let systemPrompt = '';
+        if (existsSync(chatPromptPath)) {
+          systemPrompt = readFileSync(chatPromptPath, 'utf-8');
+        }
+        const result = await chatCompletion({
+          model: 'deepseek-chat',
+          messages: [
+            { role: 'system', content: systemPrompt || 'You are a concise, direct assistant.' },
+            { role: 'user', content: query },
+          ],
+          max_tokens: 2048,
+          temperature: 0.7,
+        });
+        if (result?.choices?.[0]?.message?.content) {
+          console.log(result.choices[0].message.content);
+          await printCacheStats();
+          return;
+        }
+      }
+    } catch {
+      // Scheduler classification failed — fall through to Pi
+    }
+  }
+
+  // Fall through to Pi main() with yu-agent extensions loaded
   await main(args, {
     extensionFactories: [subagents, yuAgent],
   });
