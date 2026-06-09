@@ -843,6 +843,10 @@ async function mainCli(): Promise<void> {
   }
 
   // `yu topic <subcommand>` — topic management
+  // For `bg` subcommand, cmdBg() atomically sets status='background',
+  // ensures the supervisor daemon is running (spawns if needed),
+  // and returns a confirmation message. The CLI exits immediately
+  // while the daemon picks up the task asynchronously.
   if (args[0] === 'topic') {
     const sub = args[1] || 'help';
     const topicArgs = args.slice(2);
@@ -1002,6 +1006,10 @@ async function mainCli(): Promise<void> {
   }
 
   // Fall through to Pi main() with yu-agent extensions loaded
+  // Auto-continue: resume the most recent session unless user explicitly opted out
+  if (!args.includes('--continue') && !args.includes('--resume') && !args.includes('--no-session') && !args.includes('--new')) {
+    args.unshift('--continue');
+  }
   await main(args, {
     extensionFactories: [subagents, yuAgent],
   });

@@ -9,9 +9,17 @@
  */
 
 import { DatabaseSync } from 'node:sqlite';
-import { existsSync, readFileSync, mkdirSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { handler as schedulerHandler } from './scheduler.js';
+import { resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import type { ExtendedTopicStatus } from './types.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const PROJECT_ROOT = resolve(__dirname, '..');
 
 // ── Types ─────────────────────────────────────────────────
 
@@ -20,11 +28,14 @@ export interface Topic {
   name: string;
   dir: string;
   summary: string;
-  status: 'idle' | 'active' | 'background';
+  status: ExtendedTopicStatus;
   turns: number;
   lastActive: string | null;
   createdAt: string;
   archived: number; // 0 or 1
+  pid?: number;         // child process PID (if running as background)
+  cmd?: string;         // command string (the prompt)
+  startedAt?: string;   // ISO timestamp of when the task started
 }
 
 // ── DB path ────────────────────────────────────────────────
@@ -43,6 +54,7 @@ function getDb(): DatabaseSync {
 
   _db = new DatabaseSync(DB_PATH);
   _db.exec('PRAGMA journal_mode=WAL');
+  _db.exec('PRAGMA busy_timeout=3000');
   initDb(_db);
   return _db;
 }
@@ -64,6 +76,22 @@ export function initDb(db?: DatabaseSync): void {
       archived    INTEGER NOT NULL DEFAULT 0
     )
   `);
+
+  // Phase 0: Add supervisor-related columns if they don't exist yet.
+  // Use ALTER TABLE ADD COLUMN which is safe — fails silently if column exists.
+  const newColumns = [
+    ['pid', 'INTEGER'],
+    ['cmd', 'TEXT DEFAULT ""'],
+    ['started_at', 'TEXT'],
+  ] as const;
+
+  for (const [col, def] of newColumns) {
+    try {
+      d.exec(`ALTER TABLE topics ADD COLUMN ${col} ${def}`);
+    } catch {
+      // Column already exists — ignore
+    }
+  }
 }
 
 // ── Internal helpers ──────────────────────────────────────
@@ -88,11 +116,14 @@ function rowToTopic(row: Record<string, unknown>): Topic {
     name: row.name as string,
     dir: row.dir as string,
     summary: (row.summary as string) ?? '',
-    status: (row.status as 'idle' | 'active' | 'background') ?? 'idle',
+    status: (row.status as ExtendedTopicStatus) ?? 'idle',
     turns: (row.turns as number) ?? 0,
     lastActive: (row.last_active as string) ?? null,
     createdAt: row.created_at as string,
     archived: (row.archived as number) ?? 0,
+    pid: (row.pid as number) ?? undefined,
+    cmd: (row.cmd as string) ?? undefined,
+    startedAt: (row.started_at as string) ?? undefined,
   };
 }
 
@@ -236,8 +267,8 @@ export function setStatus(name: string, status: string): void {
     throw new Error(`Topic "${name}" not found.`);
   }
 
-  if (!['idle', 'active', 'background'].includes(status)) {
-    throw new Error(`Invalid status "${status}". Must be idle, active, or background.`);
+  if (!['idle', 'active', 'background', 'spawning', 'spawn_failed'].includes(status)) {
+    throw new Error(`Invalid status "${status}". Must be idle, active, background, spawning, or spawn_failed.`);
   }
 
   db.prepare('UPDATE topics SET status = ?, last_active = ? WHERE id = ?')
@@ -287,6 +318,76 @@ export function backgroundCount(): number {
   ).get() as { count: number };
 
   return row?.count ?? 0;
+}
+
+/** Path to the supervisor daemon script (compiled JS). */
+const DAEMON_SCRIPT = resolve(PROJECT_ROOT, 'dist/extension/supervisor-daemon.js');
+
+/** PID file for the supervisor daemon. */
+const DAEMON_PID_PATH = resolve(homedir(), '.yu', 'supervisor.pid');
+
+/** Logs directory. */
+const DAEMON_LOGS_DIR = resolve(homedir(), '.yu', 'logs');
+
+/**
+ * Ensure the supervisor daemon is running.
+ * If the PID file exists and points to a live process, do nothing.
+ * Otherwise, spawn a new daemon process (detached) and write its PID.
+ *
+ * Called by cmdBg() before returning, so the daemon can pick
+ * up the newly created background task.
+ */
+export function ensureDaemonRunning(): void {
+  // Check if daemon is already running
+  if (existsSync(DAEMON_PID_PATH)) {
+    try {
+      const pidStr = readFileSync(DAEMON_PID_PATH, 'utf-8').trim();
+      const pid = parseInt(pidStr, 10);
+      if (!isNaN(pid) && pid > 0) {
+        try {
+          // Signal 0 tests whether the process exists without actually sending a signal
+          process.kill(pid, 0);
+          return; // Daemon is alive
+        } catch {
+          // Stale PID file — process is dead, proceed to spawn
+        }
+      }
+    } catch {
+      // Corrupted PID file — proceed to spawn
+    }
+  }
+
+  // Ensure logs directory exists
+  if (!existsSync(DAEMON_LOGS_DIR)) {
+    mkdirSync(DAEMON_LOGS_DIR, { recursive: true });
+  }
+
+  // Check that the compiled daemon script exists
+  if (!existsSync(DAEMON_SCRIPT)) {
+    // In dev mode, try the source file via tsx
+    console.warn(`Daemon script not found at ${DAEMON_SCRIPT}. Build the project first (npx tsc).`);
+    return;
+  }
+
+  try {
+    const child = spawn(process.execPath, [DAEMON_SCRIPT], {
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env },
+    });
+
+    // Allow the child to live independently of this parent
+    child.unref();
+
+    if (child.pid) {
+      writeFileSync(DAEMON_PID_PATH, String(child.pid) + '\n');
+    } else {
+      console.warn('Daemon spawned but PID is null');
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`Failed to spawn daemon: ${msg}`);
+  }
 }
 
 // ── CLI command handler ───────────────────────────────────
@@ -441,20 +542,44 @@ function cmdBg(args: string[]): string {
     return `Error: Topic "${name}" not found.`;
   }
 
-  // Check background limit
+  // Check background limit first
   const maxBg = getMaxBackground();
   const currentBg = backgroundCount();
   if (currentBg >= maxBg) {
     const topics = list(false);
-    const bgTopics = topics.filter(t => t.status === 'background');
+    const bgTopics = topics.filter(t => t.status === 'background' || t.status === 'spawning');
     const bgList = bgTopics.map(t => `  • ${t.name} (${t.summary || 'no summary'})`).join('\n');
     return `Error: Maximum background topics reached (${maxBg}).\nCurrently running:\n${bgList}`;
   }
 
   try {
+    const db = getDb();
+    const now = new Date().toISOString();
+
+    // Atomic UPDATE: only set to 'spawning' if topic is currently 'idle'.
+    // This prevents TOCTOU races between concurrent `yu topic bg` invocations.
+    const result = db.prepare(`
+      UPDATE topics
+      SET status = 'spawning',
+          summary = ?,
+          turns = turns + 1,
+          last_active = ?,
+          cmd = ?,
+          started_at = ?
+      WHERE name = ? AND status = 'idle'
+    `).run(`Running: ${prompt}`, now, prompt, now, name);
+
+    if (result.changes === 0) {
+      const currentStatus = get(name)?.status ?? 'unknown';
+      return `Error: Topic "${name}" is not idle (current status: ${currentStatus}).`;
+    }
+
+    // Now set status to 'background' so the daemon can pick it up
     setStatus(name, 'background');
-    setSummary(name, prompt);
-    incrementTurns(name);
+
+    // Ensure the supervisor daemon is running
+    ensureDaemonRunning();
+
     return `Background task started on topic "${name}".\nPrompt: ${prompt}`;
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
