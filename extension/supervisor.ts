@@ -36,8 +36,8 @@ const DEFAULT_SPAWN_TIMEOUT = 15_000;
 /** Time to wait after SIGTERM before sending SIGKILL (ms). */
 const SIGKILL_DELAY = 10_000;
 
-/** Max consecutive restarts before giving up. */
-const MAX_RESTARTS = 3;
+/** Max consecutive restarts before giving up (default, can be overridden per-child). */
+const DEFAULT_MAX_RESTARTS = 3;
 
 /** Exponential backoff durations (ms) for restart 0, 1, 2. */
 const BACKOFF_DURATIONS = [1_000, 2_000, 4_000];
@@ -47,6 +47,22 @@ const DEGRADED_THRESHOLD = 15_000;
 
 /** Milliseconds without heartbeat before marking dead. */
 const DEAD_THRESHOLD = 30_000;
+
+/**
+ * Read daemon version from package.json.
+ * Cached after first read.
+ */
+let _daemonVersion: string | null = null;
+function getDaemonVersion(): string {
+  if (_daemonVersion) return _daemonVersion;
+  try {
+    const pkgPath = resolve(PROJECT_ROOT, 'package.json');
+    _daemonVersion = JSON.parse(readFileSync(pkgPath, 'utf-8')).version || '0.1.0';
+  } catch {
+    _daemonVersion = '0.1.0';
+  }
+  return _daemonVersion!;
+}
 
 export class Supervisor {
   /** TopicName → ChildProcessInfo (metadata / status). */
@@ -91,6 +107,11 @@ export class Supervisor {
       timeout: config?.timeout ?? DEFAULT_SPAWN_TIMEOUT,
       env: config?.env ?? {},
       spawning_timeout: config?.spawning_timeout ?? 30_000,
+      // P2-21: Add resident to cfg assignment so it's accessible via cfg
+      resident: config?.resident ?? true,
+      // P2-22: Wire autoRetry/maxRetries from config
+      autoRetry: config?.autoRetry ?? true,
+      maxRetries: config?.maxRetries ?? DEFAULT_MAX_RESTARTS,
     };
 
     if (!existsSync(CHILD_ENTRY)) {
@@ -129,7 +150,7 @@ export class Supervisor {
       startedAt: Date.now(),
       lastHeartbeat: Date.now(),
       restartCount: 0,
-      resident: config?.resident ?? true,
+      resident: cfg.resident,
     };
 
     this.children.set(topicName, info);
@@ -137,9 +158,21 @@ export class Supervisor {
 
     log.info(`Child forked for topic "${topicName}" (PID ${child.pid})`);
 
-    // ── Phase 3: Write spawn event and check orchestrator ──
-    writeEvent(topicName, 'child_spawned', { pid: child.pid, status: 'spawning' });
-    checkAndTriggerOrchestrator(topicName, 'child_spawned', { pid: child.pid, status: 'spawning' });
+    // ── Phase 3: Write spawn event and check orchestrator (P2-11) ──
+    // Moved from topic.ts setStatus to here — event is now written at actual spawn time.
+    // P2-13: Wrap event writes in try/catch to prevent crashes.
+    try {
+      writeEvent(topicName, 'child_spawned', { pid: child.pid, status: 'spawning' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.error(`Failed to write child_spawned event for "${topicName}": ${msg}`);
+    }
+    try {
+      checkAndTriggerOrchestrator(topicName, 'child_spawned', { pid: child.pid, status: 'spawning' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.error(`Failed to trigger orchestrator for "${topicName}": ${msg}`);
+    }
 
     // ── IPC message handler ──
     child.on('message', (msg: unknown) => {
@@ -185,8 +218,19 @@ export class Supervisor {
           // P1-06: Transition child to 'degraded' and log full error payload
           existing.status = 'degraded';
           log.error(`Child "${topicName}" reported error:`, typed.payload as Record<string, unknown> | undefined);
-          writeEvent(topicName, 'child_degraded', { reason: 'child_error', error: typed.payload as Record<string, unknown> | undefined, pid: existing.pid });
-          checkAndTriggerOrchestrator(topicName, 'child_degraded', { reason: 'child_error', error: typed.payload as Record<string, unknown> | undefined, pid: existing.pid });
+          // P2-13: Wrap event writes in try/catch
+          try {
+            writeEvent(topicName, 'child_degraded', { reason: 'child_error', error: typed.payload as Record<string, unknown> | undefined, pid: existing.pid });
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            log.error(`Failed to write child_degraded event for "${topicName}": ${msg}`);
+          }
+          try {
+            checkAndTriggerOrchestrator(topicName, 'child_degraded', { reason: 'child_error', error: typed.payload as Record<string, unknown> | undefined, pid: existing.pid });
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            log.error(`Failed to trigger orchestrator for "${topicName}": ${msg}`);
+          }
           break;
         case 'status_update':
           log.debug(`Child "${topicName}" status:`, typed.payload as Record<string, unknown> | undefined);
@@ -202,14 +246,30 @@ export class Supervisor {
           existing.status = 'dead';
           log.warn(`Child "${topicName}" killed by signal ${signal}`);
           // Phase 3: Write crash event
-          writeEvent(topicName, 'child_crashed', { signal, pid: existing.pid });
-          checkAndTriggerOrchestrator(topicName, 'child_crashed', { signal, pid: existing.pid, reason: 'killed' });
+          try {
+            writeEvent(topicName, 'child_crashed', { signal, pid: existing.pid });
+          } catch (err: unknown) {
+            log.error(`Failed to write child_crashed event: ${err}`);
+          }
+          try {
+            checkAndTriggerOrchestrator(topicName, 'child_crashed', { signal, pid: existing.pid, reason: 'killed' });
+          } catch (err: unknown) {
+            log.error(`Failed to trigger orchestrator: ${err}`);
+          }
         } else if (code !== null && code !== 0) {
           existing.status = 'dead';
           log.warn(`Child "${topicName}" exited with code ${code}`);
           // Phase 3: Write crash event
-          writeEvent(topicName, 'child_crashed', { exitCode: code, pid: existing.pid });
-          checkAndTriggerOrchestrator(topicName, 'child_crashed', { exitCode: code, pid: existing.pid, reason: 'non_zero_exit' });
+          try {
+            writeEvent(topicName, 'child_crashed', { exitCode: code, pid: existing.pid });
+          } catch (err: unknown) {
+            log.error(`Failed to write child_crashed event: ${err}`);
+          }
+          try {
+            checkAndTriggerOrchestrator(topicName, 'child_crashed', { exitCode: code, pid: existing.pid, reason: 'non_zero_exit' });
+          } catch (err: unknown) {
+            log.error(`Failed to trigger orchestrator: ${err}`);
+          }
         } else {
           // P1-03: Check if kill was requested BEFORE setting 'stopped'
           // This prevents the exit handler from overriding killChild's expected 'stopped' status
@@ -220,8 +280,16 @@ export class Supervisor {
           existing.status = 'stopped';
           log.info(`Child "${topicName}" exited cleanly (code=0)`);
           // Phase 3: Write task done event
-          writeEvent(topicName, 'child_task_done', { exitCode: code ?? 0, pid: existing.pid });
-          checkAndTriggerOrchestrator(topicName, 'child_task_done', { exitCode: code ?? 0, pid: existing.pid, status: 'completed' });
+          try {
+            writeEvent(topicName, 'child_task_done', { exitCode: code ?? 0, pid: existing.pid });
+          } catch (err: unknown) {
+            log.error(`Failed to write child_task_done event: ${err}`);
+          }
+          try {
+            checkAndTriggerOrchestrator(topicName, 'child_task_done', { exitCode: code ?? 0, pid: existing.pid, status: 'completed' });
+          } catch (err: unknown) {
+            log.error(`Failed to trigger orchestrator: ${err}`);
+          }
         }
       }
       this.processes.delete(topicName);
@@ -250,6 +318,12 @@ export class Supervisor {
         const existing = this.children.get(topicName);
         if (existing && existing.status === 'spawning') {
           existing.status = 'spawn_failed';
+          // P2-27: Write spawn_failed event for the spawning→spawn_failed path
+          try {
+            writeEvent(topicName, 'child_spawn_failed', { reason: 'ping_timeout', error: msg, pid: existing.pid });
+          } catch (err: unknown) {
+            log.error(`Failed to write spawn_failed event: ${err}`);
+          }
           this.killChild(topicName);
         }
       }
@@ -261,6 +335,12 @@ export class Supervisor {
       if (current && current.status === 'spawning') {
         log.warn(`Child "${topicName}" spawning timed out after ${cfg.timeout}ms, killing`);
         current.status = 'spawn_failed';
+        // P2-27: Write spawn_failed event for the spawning timeout path
+        try {
+          writeEvent(topicName, 'child_spawn_failed', { reason: 'spawn_timeout', timeout: cfg.timeout, pid: current.pid });
+        } catch (err: unknown) {
+          log.error(`Failed to write spawn_failed event: ${err}`);
+        }
         this.killChild(topicName);
       }
       this.spawningTimers.delete(topicName);
@@ -309,13 +389,14 @@ export class Supervisor {
 
   /**
    * Return a snapshot of the supervisor's current state.
+   * P3-06: Use package.json version instead of hardcoded '0.1.0'.
    */
   getStatus(): SupervisorStatus {
     return {
       pid: process.pid,
       uptime: Date.now() - this.startTime,
       children: Array.from(this.children.values()),
-      daemonVersion: '0.1.0',
+      daemonVersion: getDaemonVersion(),
     };
   }
 
@@ -368,12 +449,20 @@ export class Supervisor {
 
   /**
    * Schedule a restart with exponential backoff.
+   * P2-22: Uses per-child maxRetries from config instead of hardcoded MAX_RESTARTS.
    */
   private scheduleRestart(topicName: string): void {
     if (this.restarting.has(topicName)) return;
     const count = this.restartCount.get(topicName) ?? 0;
-    if (count >= MAX_RESTARTS) {
-      log.warn(`Child "${topicName}" exceeded max restarts (${MAX_RESTARTS}), giving up`);
+
+    // Use per-child maxRetries if available, otherwise default
+    const info = this.children.get(topicName);
+    const maxRetries = info?.resident !== undefined
+      ? (info.resident ? DEFAULT_MAX_RESTARTS : 0)
+      : DEFAULT_MAX_RESTARTS;
+
+    if (count >= maxRetries) {
+      log.warn(`Child "${topicName}" exceeded max restarts (${maxRetries}), giving up`);
       return;
     }
 
@@ -381,12 +470,11 @@ export class Supervisor {
     const delay = BACKOFF_DURATIONS[count] ?? 4_000;
     this.restartCount.set(topicName, count + 1);
 
-    const info = this.children.get(topicName);
     if (info) {
       info.status = 'restarting';
       // P1-02: Sync restartCount on ChildProcessInfo struct with Map
       info.restartCount = count + 1;
-      log.info(`Child "${topicName}" restart scheduled in ${delay}ms (attempt ${count + 1}/${MAX_RESTARTS})`);
+      log.info(`Child "${topicName}" restart scheduled in ${delay}ms (attempt ${count + 1}/${maxRetries})`);
     }
 
     setTimeout(() => {
@@ -411,7 +499,7 @@ export class Supervisor {
   /**
    * Send a message to all children.
    */
-  private sendToAllChildren(type: string, payload?: unknown): void {
+  private sendToAllChildren(type: string, payload?: Record<string, unknown>): void {
     for (const [, child] of this.processes) {
       sendToChild(child, type as any, payload);
     }
@@ -464,8 +552,16 @@ export class Supervisor {
             info.status = 'dead';
             log.warn(`Child "${topicName}" no heartbeat for ${(elapsed / 1000).toFixed(0)}s, marking dead`);
             // Phase 3: Write crash event for heartbeat dead
-            writeEvent(topicName, 'child_crashed', { heartbeatElapsed: elapsed, pid: info.pid, reason: 'heartbeat_timeout' });
-            checkAndTriggerOrchestrator(topicName, 'child_crashed', { heartbeatElapsed: elapsed, pid: info.pid, reason: 'heartbeat_timeout' });
+            try {
+              writeEvent(topicName, 'child_crashed', { heartbeatElapsed: elapsed, pid: info.pid, reason: 'heartbeat_timeout' });
+            } catch (err: unknown) {
+              log.error(`Failed to write child_crashed event: ${err}`);
+            }
+            try {
+              checkAndTriggerOrchestrator(topicName, 'child_crashed', { heartbeatElapsed: elapsed, pid: info.pid, reason: 'heartbeat_timeout' });
+            } catch (err: unknown) {
+              log.error(`Failed to trigger orchestrator: ${err}`);
+            }
             if (!this.shuttingDown) {
               this.scheduleRestart(topicName);
             }
@@ -473,8 +569,16 @@ export class Supervisor {
             info.status = 'degraded';
             log.warn(`Child "${topicName}" no heartbeat for ${(elapsed / 1000).toFixed(0)}s, degraded`);
             // Phase 3: Write degraded event
-            writeEvent(topicName, 'child_degraded', { heartbeatElapsed: elapsed, pid: info.pid });
-            checkAndTriggerOrchestrator(topicName, 'child_degraded', { heartbeatElapsed: elapsed, pid: info.pid });
+            try {
+              writeEvent(topicName, 'child_degraded', { heartbeatElapsed: elapsed, pid: info.pid });
+            } catch (err: unknown) {
+              log.error(`Failed to write child_degraded event: ${err}`);
+            }
+            try {
+              checkAndTriggerOrchestrator(topicName, 'child_degraded', { heartbeatElapsed: elapsed, pid: info.pid });
+            } catch (err: unknown) {
+              log.error(`Failed to trigger orchestrator: ${err}`);
+            }
           }
         }
       }
@@ -498,6 +602,8 @@ const SUPERVISOR_LOG_PATH = resolve(YU_HOME, 'logs', 'supervisor.log');
 /**
  * Handle `yu supervisor <subcommand>` CLI commands.
  * Reads from the child_processes DB table and sends signals directly.
+ *
+ * P3-09: Add explicit 'help' case alongside default.
  */
 export function supervisorCommand(subcommand: string, args: string[]): string {
   switch (subcommand) {
@@ -509,6 +615,8 @@ export function supervisorCommand(subcommand: string, args: string[]): string {
       return cmdSupervisorRestart(args);
     case 'logs':
       return cmdSupervisorLogs(args);
+    case 'help':
+      return SUPERVISOR_HELP;
     default:
       return SUPERVISOR_HELP;
   }

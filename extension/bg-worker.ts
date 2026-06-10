@@ -95,16 +95,26 @@ async function executeTask(topicName: string, prompt: string): Promise<boolean> 
     ]) as string | null | undefined;
 
     if (result) {
-      const outcome = result.substring(0, 500);
-      bgSetSummary(topicName, `Completed: ${prompt}\n\n${outcome}`);
+      // P2-04: Store full result in IPC payload, truncation only for DB storage
+      const dbSummary = result.substring(0, 500);
+      bgSetSummary(topicName, `Completed: ${prompt}\n\n${dbSummary}`);
       log.info(`Task completed for "${topicName}"`);
+
+      // Send full result via IPC (no truncation)
+      const sent = send('task_result', { topicName, status: 'completed', result });
+      if (!sent) {
+        log.warn('Failed to send task_result IPC message — channel may be closed');
+      }
     } else {
       bgSetSummary(topicName, `Completed: ${prompt}\n\n(no output)`);
       log.info(`Task completed (empty result) for "${topicName}"`);
+
+      const sent = send('task_result', { topicName, status: 'completed' });
+      if (!sent) {
+        log.warn('Failed to send task_result IPC message — channel may be closed');
+      }
     }
 
-    // Send result via IPC
-    send('task_result', { topicName, status: 'completed' });
     return true;
 
   } catch (err: unknown) {
@@ -113,7 +123,10 @@ async function executeTask(topicName: string, prompt: string): Promise<boolean> 
     log.error(`Task failed for "${topicName}": ${msg}`);
 
     // Send error via IPC
-    send('error', { topicName, error: msg });
+    const sent = send('error', { topicName, error: msg });
+    if (!sent) {
+      log.warn('Failed to send error IPC message — channel may be closed');
+    }
     return false;
   }
 }
@@ -153,6 +166,9 @@ async function main(): Promise<void> {
   let residentMode = false;
   let currentTaskPromise: Promise<boolean> | null = null;
 
+  // Create a ref object so setupChildIPC can check mid-task state (P2-08)
+  const currentTaskRef = { current: currentTaskPromise as Promise<unknown> | null };
+
   setupChildIPC({
     'ping': () => {
       send('pong');
@@ -188,9 +204,11 @@ async function main(): Promise<void> {
       // Execute the new task
       currentTaskPromise = executeTask(topicName, data.prompt).finally(() => {
         currentTaskPromise = null;
+        currentTaskRef.current = null;
       });
+      currentTaskRef.current = currentTaskPromise;
     },
-  });
+  }, currentTaskRef);
 
   // Signal to parent that we're alive
   send('pong');

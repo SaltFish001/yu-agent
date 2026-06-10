@@ -409,7 +409,6 @@ Agent Commands:
   yu plan <task>               Generate implementation plan
   yu commit <msg>              Generate commit message
   yu doc <task>                Generate documentation
-  yu search <query>            Search codebase or web
   yu lsp <path>                LSP type check & fix
 
 Refactoring:
@@ -427,6 +426,13 @@ Knowledge Base (RAG):
   yu knowledge search <query>  Full-text search across project files (FTS5)
   yu knowledge index [dir]     Index/reindex project files
   yu knowledge status          Show knowledge base stats
+
+Memory (Conversation Context):
+  yu memory stats              Show memory usage stats
+  yu memory recent             Show recent conversation items
+  yu memory facts              Show stored facts from memory
+  yu memory scene              Show current scene/context
+  yu memory health             Check memory subsystem health
 
 Terminal Integration:
   yu terminal list             List current user's terminal processes
@@ -869,6 +875,7 @@ async function mainCli(): Promise<void> {
     const { supervisorCommand } = await import('../extension/supervisor.js');
     const out = supervisorCommand(sub, supervisorArgs);
     console.log(out);
+    process.stdout.write('\n');
     process.exit(0);
   }
 

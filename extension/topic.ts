@@ -95,10 +95,11 @@ export function initDb(db?: DatabaseSync): void {
   }
 
   // Phase 1: Create child_processes table for supervisor tracking
+  // P2-10: Use ON CONFLICT REPLACE for idempotent inserts
   d.exec(`
     CREATE TABLE IF NOT EXISTS child_processes (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
-      topic_name      TEXT UNIQUE NOT NULL,
+      topic_name      TEXT UNIQUE NOT NULL ON CONFLICT REPLACE,
       pid             INTEGER NOT NULL,
       parent_pid      INTEGER NOT NULL,
       status          TEXT NOT NULL DEFAULT 'running',
@@ -106,22 +107,50 @@ export function initDb(db?: DatabaseSync): void {
       fork_time       TEXT NOT NULL,
       last_heartbeat  TEXT,
       restart_count   INTEGER DEFAULT 0,
-      spawning_timeout INTEGER DEFAULT 30,
       created_at      TEXT NOT NULL,
       updated_at      TEXT NOT NULL
     )
   `);
 
   // Phase 3: Events table for event bus / orchestration
+  // P2-06: Added pid, parent_pid, seq, acknowledged columns
+  // P2-23: Renamed 'topic' to 'topic_name' for plan consistency
   d.exec(`
     CREATE TABLE IF NOT EXISTS events (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      topic       TEXT NOT NULL,
-      event_type  TEXT NOT NULL,
-      payload     TEXT DEFAULT '{}',
-      created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      topic_name    TEXT NOT NULL,
+      event_type    TEXT NOT NULL,
+      payload       TEXT DEFAULT '{}',
+      pid           INTEGER,
+      parent_pid    INTEGER,
+      seq           INTEGER,
+      acknowledged  INTEGER DEFAULT 0,
+      created_at    TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `);
+
+  // P2-07: Add performance indexes on events table
+  d.exec(`CREATE INDEX IF NOT EXISTS idx_events_topic_created ON events(topic_name, created_at)`);
+  d.exec(`CREATE INDEX IF NOT EXISTS idx_events_event_type ON events(event_type)`);
+
+  // P3-05: Migration — drop spawning_timeout column if it still exists in an older schema.
+  // SQLite does not support DROP COLUMN directly in older versions, but we can
+  // simply leave it as a no-op if the column doesn't cause issues. No migration needed
+  // since CREATE TABLE IF NOT EXISTS won't alter an existing table.
+
+  // P2-23: Migration — rename 'topic' to 'topic_name' in events if old column exists.
+  try {
+    // Check if the old 'topic' column still exists and 'topic_name' doesn't
+    const tableInfo = d.prepare("PRAGMA table_info('events')").all() as Array<{ name: string }>;
+    const hasTopic = tableInfo.some(c => c.name === 'topic');
+    const hasTopicName = tableInfo.some(c => c.name === 'topic_name');
+    if (hasTopic && !hasTopicName) {
+      // SQLite >= 3.25.0 supports RENAME COLUMN
+      d.exec("ALTER TABLE events RENAME COLUMN topic TO topic_name");
+    }
+  } catch {
+    // Column rename failed — old column may already be gone
+  }
 }
 
 // ── Internal helpers ──────────────────────────────────────
@@ -289,6 +318,9 @@ export function setSummary(name: string, summary: string): void {
 
 /**
  * Set a topic's status.
+ * P2-09: Extended validation to match all ChildStatus values.
+ * P2-11: Event writing moved to supervisor.ts's spawnChild/killChild.
+ *        Only topic-level events are written here.
  */
 export function setStatus(name: string, status: string): void {
   const db = getDb();
@@ -297,8 +329,15 @@ export function setStatus(name: string, status: string): void {
     throw new Error(`Topic "${name}" not found.`);
   }
 
-  if (!['idle', 'active', 'background', 'spawning', 'spawn_failed'].includes(status)) {
-    throw new Error(`Invalid status "${status}". Must be idle, active, background, spawning, or spawn_failed.`);
+  // P2-09: Full set of valid statuses matching ChildStatus + ExtendedTopicStatus
+  const validStatuses = [
+    'idle', 'active', 'background', 'spawning', 'spawn_failed',
+    'running', 'degraded', 'disconnected', 'dead', 'restarting', 'stopped',
+  ];
+  if (!validStatuses.includes(status)) {
+    throw new Error(
+      `Invalid status "${status}". Must be one of: ${validStatuses.join(', ')}.`
+    );
   }
 
   const oldStatus = topic.status;
@@ -307,14 +346,23 @@ export function setStatus(name: string, status: string): void {
     .run(status, new Date().toISOString(), topic.id);
 
   // ── Write events for relevant status transitions (Phase 3) ──
+  // P2-11: child_spawned event is now written by supervisor.ts spawnChild.
+  // We only write topic-level events here (child_task_done, child_crashed, etc.)
+  // for transitions that originate from the DB/topic side.
   if (oldStatus !== status) {
     const payload: Record<string, unknown> = { from: oldStatus, to: status };
-    if (status === 'spawning' || status === 'background') {
-      writeEvent(name, 'child_spawned', payload);
+    if (status === 'spawn_failed') {
+      // P2-27: Write child_spawn_failed event for spawning→spawn_failed path
+      writeEvent(name, 'child_spawn_failed', { ...payload, reason: 'spawn_timeout' });
     } else if (status === 'idle' && (oldStatus === 'background' || oldStatus === 'spawning')) {
       writeEvent(name, 'child_task_done', payload);
-    } else if (status === 'spawn_failed') {
-      writeEvent(name, 'child_crashed', payload);
+    } else if (status === 'degraded' || status === 'restarting' || status === 'stopped') {
+      // P2-08: Write events for new supervisor states
+      const eventType = status === 'degraded' ? 'child_degraded'
+        : status === 'restarting' ? 'child_restarting'
+        : status === 'stopped' ? 'child_stopped'
+        : 'child_status_change';
+      writeEvent(name, eventType, payload);
     }
   }
 }
@@ -356,12 +404,19 @@ export function getMaxBackground(): number {
  * Write an event to the events table for the event bus / orchestrator.
  * Events log status changes (child_spawned, child_task_done, child_crashed, child_degraded)
  * and are consumed by checkAndTriggerOrchestrator().
+ *
+ * P2-23: Uses 'topic_name' column instead of 'topic' for plan consistency.
  */
-export function writeEvent(topic: string, eventType: string, payload: Record<string, unknown> = {}): void {
+export function writeEvent(topicName: string, eventType: string, payload: Record<string, unknown> = {}): void {
   const db = getDb();
+  // Extract pid / parent_pid / seq from payload if present (P2-06)
+  const pid = (payload.pid as number) ?? null;
+  const parentPid = (payload.parent_pid as number) ?? null;
+  const seq = (payload.seq as number) ?? null;
   db.prepare(
-    'INSERT INTO events (topic, event_type, payload) VALUES (?, ?, ?)'
-  ).run(topic, eventType, JSON.stringify(payload));
+    `INSERT INTO events (topic_name, event_type, payload, pid, parent_pid, seq)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(topicName, eventType, JSON.stringify(payload), pid, parentPid, seq);
 }
 
 /**
@@ -652,6 +707,11 @@ function cmdArchive(args: string[]): string {
   }
 }
 
+/** Path to the supervisor daemon script (compiled JS) — same as above. */
+function daemonScriptExists(): boolean {
+  return existsSync(DAEMON_SCRIPT);
+}
+
 function cmdBg(args: string[]): string {
   if (args.length < 2) {
     return 'Usage: yu topic bg <name> <prompt...>';
@@ -663,6 +723,13 @@ function cmdBg(args: string[]): string {
   const topic = get(name);
   if (!topic) {
     return `Error: Topic "${name}" not found.`;
+  }
+
+  // P2-24: Ensure daemon script exists BEFORE setting topic to background.
+  // This avoids the scenario where we commit a topic to 'background' status
+  // but have no way to actually execute the task.
+  if (!daemonScriptExists()) {
+    return `Error: Supervisor daemon script not found at ${DAEMON_SCRIPT}. Build the project first (npx tsc).`;
   }
 
   // Check background limit first

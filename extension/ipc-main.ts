@@ -8,31 +8,30 @@
  */
 
 import type { ChildProcess } from 'node:child_process';
+import type { IpcMessageType, IpcMessage } from './types.js';
 
-export type IpcMessageType =
-  | 'ping'
-  | 'pong'
-  | 'task_result'
-  | 'error'
-  | 'status_update'
-  | 'heartbeat'
-  | 'parent:shutdown'
-  | 'parent:new_task'
-  | 'parent:die';
+// Shared message counter for seq generation
+let msgSeq = 0;
 
-export interface IpcMessage {
-  type: IpcMessageType;
-  payload?: unknown;
-  timestamp: number;
+/**
+ * Build an IpcMessage with auto-populated timestamp and optional seq.
+ */
+function buildMessage(type: IpcMessageType, payload?: Record<string, unknown>): IpcMessage {
+  return {
+    type,
+    payload,
+    timestamp: Date.now(),
+    seq: ++msgSeq,
+  };
 }
 
 /**
  * Send a JSON message to a child process via IPC.
  * Returns true if the message was queued, false if the channel is closed.
  */
-export function sendToChild(child: ChildProcess, type: IpcMessageType, payload?: unknown): boolean {
+export function sendToChild(child: ChildProcess, type: IpcMessageType, payload?: Record<string, unknown>): boolean {
   if (!child.connected) return false;
-  return child.send({ type, payload, timestamp: Date.now() } as IpcMessage);
+  return child.send(buildMessage(type, payload));
 }
 
 /**

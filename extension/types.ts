@@ -7,6 +7,32 @@
  * by Pi's internal AgentSession.
  */
 
+// ── IPC message types (P2-01, P2-02, P2-03) ──────────────
+
+/** Types of messages that can be exchanged between parent and child via IPC. */
+export type IpcMessageType =
+  | 'ping'
+  | 'pong'
+  | 'task_result'
+  | 'error'
+  | 'status_update'
+  | 'heartbeat'
+  | 'shutdown'
+  | 'parent:shutdown'
+  | 'parent:new_task'
+  | 'parent:die';
+
+/** A message exchanged between parent and child processes over IPC. */
+export interface IpcMessage {
+  type: IpcMessageType;
+  /** Event payload — must be a serialisable object or primitive. */
+  payload?: Record<string, unknown>;
+  /** Monotonic timestamp (ms since epoch) the message was created. */
+  timestamp: number;
+  /** Optional sequence number for deduplication at the receiver (P2-03). */
+  seq?: number;
+}
+
 // ── Legacy hook context types ──────────────────────────
 
 /** Context passed to the beforeChat hook. */
@@ -32,8 +58,8 @@ export interface HookActionResult {
 
 // ── Supervisor / Daemon types (Phase 0) ────────────────
 
-/** Extended topic status with supervisor lifecycle states. */
-export type ExtendedTopicStatus = 'idle' | 'active' | 'background' | 'spawning' | 'spawn_failed';
+/** Extended topic status with supervisor lifecycle states (P2-19). */
+export type ExtendedTopicStatus = 'idle' | 'active' | 'background' | 'spawning' | 'spawn_failed' | 'restarting' | 'degraded';
 
 /** Status of a child process managed by the supervisor. */
 export type ChildStatus =
@@ -71,6 +97,10 @@ export interface ChildSpawnConfig {
   spawning_timeout?: number;
   /** If true, child stays alive after task completion (default: true). */
   resident?: boolean;
+  /** Automatically restart on unexpected exit (default: true). */
+  autoRetry?: boolean;
+  /** Maximum restart attempts before giving up (default: 3). */
+  maxRetries?: number;
 }
 
 /** Status report from the supervisor daemon. */

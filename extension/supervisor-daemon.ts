@@ -131,6 +131,16 @@ const supervisor = new Supervisor();
 supervisor.start();
 console.log('Supervisor initialized');
 
+// ── P2-12: Periodic K7 re-check during daemon lifetime ────
+// Recheck for zombie background records every hour to catch
+// records that become stale while the daemon is running.
+setInterval(() => {
+  const recheckCount = cleanupZombieBackgroundRecords();
+  if (recheckCount > 0) {
+    console.log(`Periodic K7 re-check: cleaned up ${recheckCount} zombie background topic(s)`);
+  }
+}, 60 * 60 * 1000); // Every hour
+
 // ── Scan for existing background topics ─────────────────
 // P1-14: pickupBackgroundTasks() runs AFTER start() completes initialization
 // by being called from within start's initialization flow.
@@ -151,8 +161,13 @@ async function pickupBackgroundTasks(): Promise<void> {
     for (const topic of bgTopics) {
       console.log(`Picking up task for topic "${topic.name}": ${topic.summary.substring(0, 100)}`);
 
+      // P2-25: Add missing config fields to daemon task pickup
       const config: Partial<ChildSpawnConfig> = {
         timeout: 15_000,
+        spawning_timeout: 30_000,
+        resident: true,
+        autoRetry: true,
+        maxRetries: 3,
         env: {
           YU_DAEMON_PID: String(process.pid),
         },
@@ -216,9 +231,13 @@ setInterval(() => {
 
 // ── Signal handlers ─────────────────────────────────────
 
-process.on('SIGTERM', () => {
-  console.log('Received SIGTERM, shutting down gracefully...');
+/**
+ * P2-26: Extract common shutdown logic to ensure PID file is always cleaned up.
+ */
+function handleShutdown(signal: string): void {
+  console.log(`Received ${signal}, shutting down gracefully...`);
   supervisor.shutdown();
+  // P2-26: Clean up PID file even on non-SIGKILL shutdown paths
   try {
     if (existsSync(PID_PATH)) {
       writeFileSync(PID_PATH, '');
@@ -228,20 +247,10 @@ process.on('SIGTERM', () => {
   }
   console.log('Daemon shut down');
   process.exit(0);
-});
+}
 
-process.on('SIGINT', () => {
-  console.log('Received SIGINT, shutting down...');
-  supervisor.shutdown();
-  try {
-    if (existsSync(PID_PATH)) {
-      writeFileSync(PID_PATH, '');
-    }
-  } catch {
-    // Best-effort
-  }
-  process.exit(0);
-});
+process.on('SIGTERM', () => handleShutdown('SIGTERM'));
+process.on('SIGINT', () => handleShutdown('SIGINT'));
 
 // ── Uncaught exception handler ──────────────────────────
 
