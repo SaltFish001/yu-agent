@@ -27,6 +27,7 @@ import { homedir } from 'node:os';
 import { createLogger } from './logger.js';
 import { Supervisor } from './supervisor.js';
 import type { ChildSpawnConfig } from './types.js';
+import { DatabaseSync } from 'node:sqlite';
 
 // ── File paths ──────────────────────────────────────────
 
@@ -84,6 +85,45 @@ try {
   const msg = err instanceof Error ? err.message : String(err);
   console.error(`Failed to write PID file: ${msg}`);
   process.exit(1);
+}
+
+// ── K7 migration: clean up zombie background records ─────
+
+/**
+ * On startup, recover any topics stuck in 'background' status for
+ * over 24 hours (zombie records from prior crashes or exit(0) bugs).
+ * Sets them to 'idle' with a recovery note in the summary.
+ * Returns the number of records cleaned up.
+ */
+function cleanupZombieBackgroundRecords(): number {
+  try {
+    const db = new DatabaseSync(resolve(homedir(), '.yu', 'topics.db'));
+    db.exec('PRAGMA journal_mode=WAL');
+    db.exec('PRAGMA busy_timeout=5000');
+
+    const result = db.prepare(`
+      UPDATE topics
+      SET status = 'idle',
+          summary = summary || ' (recovered)'
+      WHERE status = 'background'
+        AND started_at IS NOT NULL
+        AND started_at < datetime('now', '-24 hours')
+    `).run() as { changes: number };
+
+    db.close();
+    return result.changes;
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`K7 migration failed: ${msg}`);
+    return 0;
+  }
+}
+
+// ── Run K7 migration before picking up tasks ─────────────
+
+const cleanedCount = cleanupZombieBackgroundRecords();
+if (cleanedCount > 0) {
+  console.log(`K7 migration: cleaned up ${cleanedCount} zombie background topic(s)`);
 }
 
 // ── Initialize Supervisor ───────────────────────────────

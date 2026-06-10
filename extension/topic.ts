@@ -19,7 +19,8 @@ import type { ExtendedTopicStatus } from './types.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const PROJECT_ROOT = resolve(__dirname, '..');
+// Compiled file is at dist/extension/topic.js, so go up 2 dirs to reach project root
+const PROJECT_ROOT = resolve(__dirname, '..', '..');
 
 // ── Types ─────────────────────────────────────────────────
 
@@ -92,6 +93,24 @@ export function initDb(db?: DatabaseSync): void {
       // Column already exists — ignore
     }
   }
+
+  // Phase 1: Create child_processes table for supervisor tracking
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS child_processes (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      topic_name      TEXT UNIQUE NOT NULL,
+      pid             INTEGER NOT NULL,
+      parent_pid      INTEGER NOT NULL,
+      status          TEXT NOT NULL DEFAULT 'running',
+      prompt          TEXT NOT NULL DEFAULT '',
+      fork_time       TEXT NOT NULL,
+      last_heartbeat  TEXT,
+      restart_count   INTEGER DEFAULT 0,
+      spawning_timeout INTEGER DEFAULT 30,
+      created_at      TEXT NOT NULL,
+      updated_at      TEXT NOT NULL
+    )
+  `);
 }
 
 // ── Internal helpers ──────────────────────────────────────

@@ -15,12 +15,14 @@ import { writeFileSync, appendFileSync, existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { createLogger } from './logger.js';
 import type { ChildProcessInfo, ChildSpawnConfig, SupervisorStatus, ChildStatus } from './types.js';
+import { sendToChild, waitForMessage } from './ipc-main.js';
 
 const log = createLogger('supervisor');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const PROJECT_ROOT = resolve(__dirname, '..');
+// Compiled file is at dist/extension/supervisor.js, so go up 2 dirs to reach project root
+const PROJECT_ROOT = resolve(__dirname, '..', '..');
 
 /** Path to the forked child process entry point. */
 const CHILD_ENTRY = resolve(PROJECT_ROOT, 'dist/extension/bg-worker.js');
@@ -29,7 +31,7 @@ const CHILD_ENTRY = resolve(PROJECT_ROOT, 'dist/extension/bg-worker.js');
 const DEFAULT_SPAWN_TIMEOUT = 15_000;
 
 /** Time to wait after SIGTERM before sending SIGKILL (ms). */
-const SIGKILL_DELAY = 5_000;
+const SIGKILL_DELAY = 10_000;
 
 export class Supervisor {
   /** TopicName → ChildProcessInfo (metadata / status). */
@@ -55,11 +57,13 @@ export class Supervisor {
   /**
    * Fork a child process for the given topic.
    * The child process runs bg-worker.ts which imports and calls schedulerHandler.
+   * After forking, sends a 'ping' and waits for 'pong' to confirm the child is alive.
    */
   spawnChild(topicName: string, config?: Partial<ChildSpawnConfig>): ChildProcess | undefined {
     const cfg: ChildSpawnConfig = {
       timeout: config?.timeout ?? DEFAULT_SPAWN_TIMEOUT,
       env: config?.env ?? {},
+      spawning_timeout: config?.spawning_timeout ?? 30_000,
     };
 
     if (!existsSync(CHILD_ENTRY)) {
@@ -72,6 +76,9 @@ export class Supervisor {
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
       env: {
         ...process.env,
+        // Explicitly pass critical env vars (N5 adversarial fix)
+        DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY ?? '',
+        DEEPSEEK_BASE_URL: process.env.DEEPSEEK_BASE_URL ?? '',
         ...cfg.env,
         YU_CHILD_MODE: '1',
         YU_SESSION_TAG: `bg:${topicName}`,
@@ -90,9 +97,38 @@ export class Supervisor {
 
     log.info(`Child forked for topic "${topicName}" (PID ${child.pid})`);
 
-    // ── IPC message handler (Phase 1: full IPC protocol) ──
-    child.on('message', (_msg: unknown) => {
-      // Phase 1: handle child:ready, child:heartbeat, child:done, etc.
+    // ── IPC message handler ──
+    child.on('message', (msg: unknown) => {
+      const typed = msg as { type?: string; payload?: unknown };
+      if (!typed?.type) return;
+
+      // Update child status based on IPC messages
+      const existing = this.children.get(topicName);
+      if (!existing) return;
+
+      switch (typed.type) {
+        case 'pong':
+          if (existing.status === 'spawning') {
+            existing.status = 'running';
+            log.info(`Child "${topicName}" is alive (pong received)`);
+          }
+          break;
+        case 'heartbeat':
+          if (existing.status === 'spawning') {
+            existing.status = 'running';
+          }
+          break;
+        case 'task_result':
+          existing.status = 'stopped';
+          log.info(`Child "${topicName}" completed task`);
+          break;
+        case 'error':
+          log.warn(`Child "${topicName}" reported error:`, typed.payload as Record<string, unknown> | undefined);
+          break;
+        case 'status_update':
+          log.debug(`Child "${topicName}" status:`, typed.payload as Record<string, unknown> | undefined);
+          break;
+      }
     });
 
     // ── Exit handler ──
@@ -113,7 +149,29 @@ export class Supervisor {
       this.processes.delete(topicName);
     });
 
-    // ── Spawning timeout: if child doesn't send 'child:ready' in time, kill ──
+    // ── Ping child to confirm it's alive ──
+    // Give the child a short moment to boot up before sending ping
+    setImmediate(async () => {
+      try {
+        sendToChild(child, 'ping');
+        await waitForMessage(child, 'pong', cfg.spawning_timeout ?? 30_000);
+        const existing = this.children.get(topicName);
+        if (existing && existing.status === 'spawning') {
+          existing.status = 'running';
+          log.info(`Child "${topicName}" confirmed alive via ping/pong`);
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log.warn(`Child "${topicName}" ping/pong failed: ${msg}`);
+        const existing = this.children.get(topicName);
+        if (existing && existing.status === 'spawning') {
+          existing.status = 'spawn_failed';
+          this.killChild(topicName);
+        }
+      }
+    });
+
+    // ── Spawning timeout: if child never responds to ping, kill ──
     setTimeout(() => {
       const current = this.children.get(topicName);
       if (current && current.status === 'spawning') {

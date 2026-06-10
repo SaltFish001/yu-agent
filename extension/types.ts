@@ -61,6 +61,11 @@ export interface ChildSpawnConfig {
   timeout: number;
   /** Extra environment variables to pass to the child. */
   env: Record<string, string>;
+  /**
+   * Maximum time in ms to wait for the child to send its first
+   * ready/pong signal before marking as spawn_failed (default: 30000).
+   */
+  spawning_timeout?: number;
 }
 
 /** Status report from the supervisor daemon. */
