@@ -31,6 +31,7 @@ const log = createLogger('bg-worker');
 // Use a longer busy_timeout (5000ms) to avoid contention with the
 // supervisor daemon which also writes to topics.db.
 const TOPICS_DB_PATH = resolve(homedir(), '.yu', 'topics.db');
+const TASK_TIMEOUT = 300_000; // 5 minutes — default timeout for handler() calls
 let _bgDb: DatabaseSync | null = null;
 
 function getBgDb(): DatabaseSync {
@@ -84,7 +85,14 @@ async function executeTask(topicName: string, prompt: string): Promise<boolean> 
   try {
     // Import and call scheduler
     const { handler } = await import('./scheduler.js');
-    const result = await handler(prompt, { source: 'topic_bg', topic: topicName });
+
+    // Wrap handler call in a timeout to prevent hanging indefinitely
+    const result = await Promise.race([
+      handler(prompt, { source: 'topic_bg', topic: topicName }),
+      new Promise<string | null>((_, reject) =>
+        setTimeout(() => reject(new Error(`Task timed out after ${TASK_TIMEOUT}ms`)), TASK_TIMEOUT),
+      ),
+    ]) as string | null | undefined;
 
     if (result) {
       const outcome = result.substring(0, 500);
@@ -123,6 +131,24 @@ async function main(): Promise<void> {
 
   log.info(`Background worker starting for topic "${topicName}"`);
 
+  // ── Register OS signal handlers (P1-05) ──
+  // These handle SIGTERM (graceful), SIGINT (interrupt), and SIGHUP (hangup)
+  // to prevent orphan children when the parent dies without cleanup.
+  function handleSignal(signal: string): void {
+    log.info(`Received ${signal}, flushing pending work and exiting`);
+    if (currentTaskPromise) {
+      // Wait briefly for the task to finish, then exit
+      currentTaskPromise.finally(() => process.exit(0));
+      // But don't wait forever — exit after 2s regardless
+      setTimeout(() => process.exit(0), 2000);
+    } else {
+      process.exit(0);
+    }
+  }
+  process.on('SIGTERM', () => handleSignal('SIGTERM'));
+  process.on('SIGINT', () => handleSignal('SIGINT'));
+  process.on('SIGHUP', () => handleSignal('SIGHUP'));
+
   // ── Set up IPC handlers ──
   let residentMode = false;
   let currentTaskPromise: Promise<boolean> | null = null;
@@ -154,8 +180,15 @@ async function main(): Promise<void> {
         log.warn('Received parent:new_task without prompt');
         return;
       }
-      // Execute the new task (fire-and-forget for now)
-      currentTaskPromise = executeTask(topicName, data.prompt);
+      // If a task is already running, reject/drop the second one (P1-07)
+      if (currentTaskPromise !== null) {
+        log.warn('Received parent:new_task while a task is already running, dropping');
+        return;
+      }
+      // Execute the new task
+      currentTaskPromise = executeTask(topicName, data.prompt).finally(() => {
+        currentTaskPromise = null;
+      });
     },
   });
 
@@ -174,6 +207,12 @@ async function main(): Promise<void> {
 
   const prompt = topic.summary.replace(/^Running: /, '');
 
+  // Start heartbeat interval BEFORE first task (P1-04)
+  // This ensures the parent sees heartbeats during long-running first tasks
+  const heartbeatInterval = setInterval(() => {
+    send('heartbeat', { topicName });
+  }, 5_000);
+
   // ── Execute the first task ──
   await executeTask(topicName, prompt);
 
@@ -184,11 +223,6 @@ async function main(): Promise<void> {
 
   // Report status to parent
   send('status_update', { topicName, status: 'resident' });
-
-  // Start heartbeat interval (every 5s)
-  const heartbeatInterval = setInterval(() => {
-    send('heartbeat', { topicName });
-  }, 5_000);
 
   // Wait for parent:shutdown or parent:die to trigger exit
   // The handlers are already registered via setupChildIPC above.

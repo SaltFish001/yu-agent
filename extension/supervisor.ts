@@ -63,6 +63,10 @@ export class Supervisor {
   private restarting = new Set<string>();
   /** True when supervisor is performing graceful shutdown. */
   private shuttingDown = false;
+  /** Topic names for which kill was explicitly requested (P1-03). */
+  private killRequested = new Set<string>();
+  /** Timer handles for spawning timeouts, keyed by topic name (P1-01). */
+  private spawningTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   /**
    * Start the supervisor heartbeat loop.
@@ -102,7 +106,17 @@ export class Supervisor {
         // Explicitly pass critical env vars (N5 adversarial fix)
         DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY ?? '',
         DEEPSEEK_BASE_URL: process.env.DEEPSEEK_BASE_URL ?? '',
-        ...cfg.env,
+        // P1-17: Filter sensitive keys from cfg.env to prevent trust boundary violations
+        ...Object.fromEntries(
+          Object.entries(cfg.env).filter(([key]) => {
+            const sensitivePatterns = ['DEEPSEEK_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'API_KEY', 'SECRET', 'TOKEN'];
+            const isSensitive = sensitivePatterns.some(p => key.toUpperCase().includes(p));
+            if (isSensitive) {
+              log.warn(`Filtering sensitive env key "${key}" from cfg.env override`);
+            }
+            return !isSensitive;
+          }),
+        ),
         YU_CHILD_MODE: '1',
         YU_SESSION_TAG: `bg:${topicName}`,
       },
@@ -143,8 +157,15 @@ export class Supervisor {
             this.lastHeartbeat.set(topicName, Date.now());
             log.info(`Child "${topicName}" is alive (pong received)`);
           }
-          // Reset restart count on successful spawn
+          // P1-01: Clear the spawning timeout now that we got a pong
+          const timer = this.spawningTimers.get(topicName);
+          if (timer) {
+            clearTimeout(timer);
+            this.spawningTimers.delete(topicName);
+          }
+          // P1-02: Reset restart count on successful spawn (sync both tracking locations)
           this.restartCount.set(topicName, 0);
+          existing.restartCount = 0;
           break;
         case 'heartbeat':
           this.lastHeartbeat.set(topicName, Date.now());
@@ -161,7 +182,11 @@ export class Supervisor {
           log.info(`Child "${topicName}" completed task`);
           break;
         case 'error':
-          log.warn(`Child "${topicName}" reported error:`, typed.payload as Record<string, unknown> | undefined);
+          // P1-06: Transition child to 'degraded' and log full error payload
+          existing.status = 'degraded';
+          log.error(`Child "${topicName}" reported error:`, typed.payload as Record<string, unknown> | undefined);
+          writeEvent(topicName, 'child_degraded', { reason: 'child_error', error: typed.payload as Record<string, unknown> | undefined, pid: existing.pid });
+          checkAndTriggerOrchestrator(topicName, 'child_degraded', { reason: 'child_error', error: typed.payload as Record<string, unknown> | undefined, pid: existing.pid });
           break;
         case 'status_update':
           log.debug(`Child "${topicName}" status:`, typed.payload as Record<string, unknown> | undefined);
@@ -186,6 +211,12 @@ export class Supervisor {
           writeEvent(topicName, 'child_crashed', { exitCode: code, pid: existing.pid });
           checkAndTriggerOrchestrator(topicName, 'child_crashed', { exitCode: code, pid: existing.pid, reason: 'non_zero_exit' });
         } else {
+          // P1-03: Check if kill was requested BEFORE setting 'stopped'
+          // This prevents the exit handler from overriding killChild's expected 'stopped' status
+          if (this.killRequested.has(topicName)) {
+            log.info(`Child "${topicName}" exited (code=0) after kill was requested, marking 'stopped'`);
+            this.killRequested.delete(topicName);
+          }
           existing.status = 'stopped';
           log.info(`Child "${topicName}" exited cleanly (code=0)`);
           // Phase 3: Write task done event
@@ -196,7 +227,8 @@ export class Supervisor {
       this.processes.delete(topicName);
 
       // Auto-restart on unexpected exit (not requested shutdown)
-      if (existing && !this.shuttingDown && existing.status !== 'stopped') {
+      // P1-03: Also skip restart if kill was explicitly requested
+      if (existing && !this.shuttingDown && !this.killRequested.has(topicName) && existing.status !== 'stopped') {
         this.scheduleRestart(topicName);
       }
     });
@@ -224,14 +256,16 @@ export class Supervisor {
     });
 
     // ── Spawning timeout: if child never responds to ping, kill ──
-    setTimeout(() => {
+    const spawnTimer = setTimeout(() => {
       const current = this.children.get(topicName);
       if (current && current.status === 'spawning') {
         log.warn(`Child "${topicName}" spawning timed out after ${cfg.timeout}ms, killing`);
         current.status = 'spawn_failed';
         this.killChild(topicName);
       }
+      this.spawningTimers.delete(topicName);
     }, cfg.timeout);
+    this.spawningTimers.set(topicName, spawnTimer);
 
     return child;
   }
@@ -248,6 +282,9 @@ export class Supervisor {
     if (info && info.status !== 'dead') {
       info.status = 'stopped';
     }
+
+    // P1-03: Mark that kill was requested so exit handler doesn't restart
+    this.killRequested.add(topicName);
 
     log.info(`Killing child for topic "${topicName}" (PID ${child.pid})`);
 
@@ -347,6 +384,8 @@ export class Supervisor {
     const info = this.children.get(topicName);
     if (info) {
       info.status = 'restarting';
+      // P1-02: Sync restartCount on ChildProcessInfo struct with Map
+      info.restartCount = count + 1;
       log.info(`Child "${topicName}" restart scheduled in ${delay}ms (attempt ${count + 1}/${MAX_RESTARTS})`);
     }
 
@@ -387,6 +426,8 @@ export class Supervisor {
     this.lastHeartbeat.clear();
     this.restartCount.clear();
     this.restarting.clear();
+    this.killRequested.clear();
+    this.spawningTimers.clear();
     log.info('Supervisor cleanup complete');
   }
 

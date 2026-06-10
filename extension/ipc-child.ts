@@ -77,4 +77,15 @@ export function setupChildIPC(handlers: Record<string, MessageHandler>): void {
     log.warn('Parent process disconnected, exiting');
     process.exit(0);
   });
+
+  // ── OS signal handlers (P1-05) ──
+  // These ensure the child exits cleanly when the parent sends SIGTERM/SIGINT
+  // or when the terminal sends SIGHUP, preventing orphan children.
+  function handleSignal(signal: string): void {
+    log.info(`Received ${signal}, exiting gracefully`);
+    process.exit(0);
+  }
+  process.on('SIGTERM', () => handleSignal('SIGTERM'));
+  process.on('SIGINT', () => handleSignal('SIGINT'));
+  process.on('SIGHUP', () => handleSignal('SIGHUP'));
 }

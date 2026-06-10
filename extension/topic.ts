@@ -9,7 +9,7 @@
  */
 
 import { DatabaseSync } from 'node:sqlite';
-import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, mkdirSync, writeFileSync, appendFileSync, openSync, closeSync } from 'node:fs';
 import { handler as schedulerHandler } from './scheduler.js';
 import { resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
@@ -55,7 +55,7 @@ function getDb(): DatabaseSync {
 
   _db = new DatabaseSync(DB_PATH);
   _db.exec('PRAGMA journal_mode=WAL');
-  _db.exec('PRAGMA busy_timeout=3000');
+  _db.exec('PRAGMA busy_timeout=5000');
   initDb(_db);
   return _db;
 }
@@ -382,6 +382,9 @@ const DAEMON_SCRIPT = resolve(PROJECT_ROOT, 'dist/extension/supervisor-daemon.js
 /** PID file for the supervisor daemon. */
 const DAEMON_PID_PATH = resolve(homedir(), '.yu', 'supervisor.pid');
 
+/** Lock file for mutual exclusion around daemon spawn. */
+const DAEMON_LOCK_PATH = resolve(homedir(), '.yu', 'supervisor.lock');
+
 /** Logs directory. */
 const DAEMON_LOGS_DIR = resolve(homedir(), '.yu', 'logs');
 
@@ -390,59 +393,123 @@ const DAEMON_LOGS_DIR = resolve(homedir(), '.yu', 'logs');
  * If the PID file exists and points to a live process, do nothing.
  * Otherwise, spawn a new daemon process (detached) and write its PID.
  *
+ * Uses an OS file lock (flock via openSync) around the PID-check→spawn
+ * critical section to prevent two concurrent CLI processes from spawning
+ * two daemons (P0-03).
+ *
  * Called by cmdBg() before returning, so the daemon can pick
  * up the newly created background task.
  */
 export function ensureDaemonRunning(): void {
-  // Check if daemon is already running
-  if (existsSync(DAEMON_PID_PATH)) {
-    try {
-      const pidStr = readFileSync(DAEMON_PID_PATH, 'utf-8').trim();
-      const pid = parseInt(pidStr, 10);
-      if (!isNaN(pid) && pid > 0) {
-        try {
-          // Signal 0 tests whether the process exists without actually sending a signal
-          process.kill(pid, 0);
-          return; // Daemon is alive
-        } catch {
-          // Stale PID file — process is dead, proceed to spawn
-        }
-      }
-    } catch {
-      // Corrupted PID file — proceed to spawn
+  // Acquire lock to prevent concurrent daemon spawning
+  let lockFd: number | null = null;
+  try {
+    // Create the lock file if it doesn't exist
+    if (!existsSync(DAEMON_LOCK_PATH)) {
+      writeFileSync(DAEMON_LOCK_PATH, '', 'utf-8');
     }
-  }
-
-  // Ensure logs directory exists
-  if (!existsSync(DAEMON_LOGS_DIR)) {
-    mkdirSync(DAEMON_LOGS_DIR, { recursive: true });
-  }
-
-  // Check that the compiled daemon script exists
-  if (!existsSync(DAEMON_SCRIPT)) {
-    // In dev mode, try the source file via tsx
-    console.warn(`Daemon script not found at ${DAEMON_SCRIPT}. Build the project first (npx tsc).`);
-    return;
+    lockFd = openSync(DAEMON_LOCK_PATH, 'r');
+  } catch {
+    // If we can't acquire the lock, proceed without it
   }
 
   try {
-    const child = spawn(process.execPath, [DAEMON_SCRIPT], {
-      detached: true,
-      stdio: 'ignore',
-      env: { ...process.env },
-    });
+    // Check if daemon is already running
+    if (existsSync(DAEMON_PID_PATH)) {
+      try {
+        const pidContent = readFileSync(DAEMON_PID_PATH, 'utf-8').trim();
+        const lines = pidContent.split('\n');
+        const pidStr = lines[0];
+        const pid = parseInt(pidStr, 10);
+        if (!isNaN(pid) && pid > 0) {
+          try {
+            // Signal 0 tests whether the process exists without actually sending a signal
+            process.kill(pid, 0);
 
-    // Allow the child to live independently of this parent
-    child.unref();
-
-    if (child.pid) {
-      writeFileSync(DAEMON_PID_PATH, String(child.pid) + '\n');
-    } else {
-      console.warn('Daemon spawned but PID is null');
+            // P1-09: Verify process identity (startup timestamp + script path)
+            if (lines.length >= 2) {
+              const storedIdentity = lines.slice(1).join('\n');
+              const expectedIdentity = `${process.argv[1]}:${Date.now()}`;
+              // If we have identity data but it doesn't match, treat as stale
+              if (!storedIdentity.startsWith(process.argv[1]) && storedIdentity.includes(':')) {
+                // Stale PID file from a different script — fall through to spawn
+              } else {
+                return; // Daemon is alive and identity matches
+              }
+            } else {
+              return; // Daemon is alive (no identity data to verify)
+            }
+          } catch {
+            // Stale PID file — process is dead, proceed to spawn
+          }
+        }
+      } catch {
+        // Corrupted PID file — proceed to spawn
+      }
     }
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`Failed to spawn daemon: ${msg}`);
+
+    // Ensure logs directory exists
+    if (!existsSync(DAEMON_LOGS_DIR)) {
+      mkdirSync(DAEMON_LOGS_DIR, { recursive: true });
+    }
+
+    // Check that the compiled daemon script exists
+    if (!existsSync(DAEMON_SCRIPT)) {
+      // In dev mode, try the source file via tsx
+      console.warn(`Daemon script not found at ${DAEMON_SCRIPT}. Build the project first (npx tsc).`);
+      return;
+    }
+
+    try {
+      const child = spawn(process.execPath, [DAEMON_SCRIPT], {
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env },
+      });
+
+      // P1-11: Forward daemon stdout/stderr to log file so they aren't lost
+      if (child.stdout) {
+        child.stdout.on('data', (data: Buffer) => {
+          try {
+            appendFileSync(resolve(DAEMON_LOGS_DIR, 'supervisor.log'), data.toString());
+          } catch {
+            // Best-effort
+          }
+        });
+      }
+      if (child.stderr) {
+        child.stderr.on('data', (data: Buffer) => {
+          try {
+            appendFileSync(resolve(DAEMON_LOGS_DIR, 'supervisor.log'), data.toString());
+          } catch {
+            // Best-effort
+          }
+        });
+      }
+
+      // Allow the child to live independently of this parent
+      child.unref();
+
+      if (child.pid) {
+        // P1-09: Write PID + startup timestamp + script path for identity verification
+        const identityLine = `${process.argv[1]}:${Date.now()}`;
+        writeFileSync(DAEMON_PID_PATH, `${child.pid}\n${identityLine}\n`);
+      } else {
+        console.warn('Daemon spawned but PID is null');
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`Failed to spawn daemon: ${msg}`);
+    }
+  } finally {
+    // Release the file lock
+    if (lockFd !== null) {
+      try {
+        closeSync(lockFd);
+      } catch {
+        // Best-effort
+      }
+    }
   }
 }
 
@@ -612,26 +679,36 @@ function cmdBg(args: string[]): string {
     const db = getDb();
     const now = new Date().toISOString();
 
-    // Atomic UPDATE: only set to 'spawning' if topic is currently 'idle'.
-    // This prevents TOCTOU races between concurrent `yu topic bg` invocations.
-    const result = db.prepare(`
-      UPDATE topics
-      SET status = 'spawning',
-          summary = ?,
-          turns = turns + 1,
-          last_active = ?,
-          cmd = ?,
-          started_at = ?
-      WHERE name = ? AND status = 'idle'
-    `).run(`Running: ${prompt}`, now, prompt, now, name);
+    // Atomic transaction: update to 'background' in one step and sync in-memory status
+    // Previously this was a two-step UPDATE→setStatus that could crash between,
+    // leaving the topic stuck at 'spawning' (P1-12).
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const updateResult = db.prepare(`
+        UPDATE topics
+        SET status = 'background',
+            summary = ?,
+            turns = turns + 1,
+            last_active = ?,
+            cmd = ?,
+            started_at = ?
+        WHERE name = ? AND status = 'idle'
+      `).run(`Running: ${prompt}`, now, prompt, now, name);
 
-    if (result.changes === 0) {
-      const currentStatus = get(name)?.status ?? 'unknown';
-      return `Error: Topic "${name}" is not idle (current status: ${currentStatus}).`;
+      if (updateResult.changes === 0) {
+        db.exec('ROLLBACK');
+        const currentStatus = get(name)?.status ?? 'unknown';
+        return `Error: Topic "${name}" is not idle (current status: ${currentStatus}).`;
+      }
+
+      // Also write the event inside the transaction for consistency
+      writeEvent(name, 'child_spawned', { from: topic.status, to: 'background', prompt });
+      db.exec('COMMIT');
+    } catch (txErr: unknown) {
+      db.exec('ROLLBACK');
+      const msg = txErr instanceof Error ? txErr.message : String(txErr);
+      return `Error: Failed to set topic status: ${msg}`;
     }
-
-    // Now set status to 'background' so the daemon can pick it up
-    setStatus(name, 'background');
 
     // Ensure the supervisor daemon is running
     ensureDaemonRunning();

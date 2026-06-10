@@ -27,7 +27,8 @@
 import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { homedir } from 'node:os';
-import { get, writeEvent, ensureDaemonRunning } from './topic.js';
+import vm from 'node:vm';
+import { get, writeEvent, ensureDaemonRunning, getMaxBackground, backgroundCount } from './topic.js';
 import { DatabaseSync } from 'node:sqlite';
 
 // ── Types ─────────────────────────────────────────────────
@@ -85,13 +86,20 @@ function getOrchDb(): DatabaseSync {
  * The condition is a JS expression string evaluated where `payload` is
  * the event payload object. Returns true if condition is absent/empty
  * or if the expression evaluates truthy.
+ *
+ * Uses vm.Script with a timeout (100ms) and sandboxed context
+ * instead of new Function() to prevent arbitrary code execution.
  */
 function evaluateCondition(condition: string | undefined, payload: Record<string, unknown>): boolean {
   if (!condition || condition.trim() === '') return true;
   try {
-    const fn = new Function('payload', `return (${condition})`);
-    return !!fn(payload);
-  } catch {
+    const script = new vm.Script(`(${condition})`);
+    const context = vm.createContext({ payload: Object.freeze({ ...payload }) });
+    const result = script.runInContext(context, { timeout: 100 });
+    return !!result;
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[orchestrator] Condition evaluation failed: condition="${condition}" error="${msg}"`);
     return false;
   }
 }
@@ -122,6 +130,16 @@ function actionSpawnChild(topicName: string, promptTemplate: string, eventPayloa
   const db = getOrchDb();
   const dir = resolve(homedir(), '.yu', 'topics', topicName);
 
+  // Check background count limit before proceeding
+  const maxBg = getMaxBackground();
+  const currentBg = backgroundCount();
+  if (currentBg >= maxBg) {
+    console.warn(`[orchestrator] Cannot spawn child for "${topicName}": background limit reached (${currentBg}/${maxBg})`);
+    writeEvent(topicName, 'child_spawn_failed', { reason: 'background_limit', maxBg, currentBg });
+    db.close();
+    return;
+  }
+
   // Ensure topic directory exists
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
@@ -130,20 +148,24 @@ function actionSpawnChild(topicName: string, promptTemplate: string, eventPayloa
   // Find or create the target topic
   const existing = get(topicName);
   if (existing) {
-    // Already exists — set it to background if it's idle
-    if (existing.status === 'idle') {
-      const now = new Date().toISOString();
-      db.prepare(`
-        UPDATE topics
-        SET status = 'background',
-            summary = ?,
-            turns = turns + 1,
-            last_active = ?,
-            cmd = ?,
-            started_at = ?
-        WHERE name = ? AND status = 'idle'
-      `).run(`Running: ${prompt}`, now, prompt, now, topicName);
+    // Already exists — check it's idle before proceeding
+    if (existing.status !== 'idle') {
+      console.warn(`[orchestrator] Cannot spawn child for "${topicName}": topic status is "${existing.status}", expected "idle"`);
+      writeEvent(topicName, 'child_spawn_failed', { reason: 'topic_not_idle', status: existing.status });
+      db.close();
+      return;
     }
+    const now = new Date().toISOString();
+    db.prepare(`
+      UPDATE topics
+      SET status = 'background',
+          summary = ?,
+          turns = turns + 1,
+          last_active = ?,
+          cmd = ?,
+          started_at = ?
+      WHERE name = ? AND status = 'idle'
+    `).run(`Running: ${prompt}`, now, prompt, now, topicName);
   } else {
     // Create new topic
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);

@@ -106,8 +106,7 @@ function cleanupZombieBackgroundRecords(): number {
       SET status = 'idle',
           summary = summary || ' (recovered)'
       WHERE status = 'background'
-        AND started_at IS NOT NULL
-        AND started_at < datetime('now', '-24 hours')
+        AND (started_at IS NULL OR started_at < datetime('now', '-24 hours'))
     `).run() as { changes: number };
 
     db.close();
@@ -133,6 +132,8 @@ supervisor.start();
 console.log('Supervisor initialized');
 
 // ── Scan for existing background topics ─────────────────
+// P1-14: pickupBackgroundTasks() runs AFTER start() completes initialization
+// by being called from within start's initialization flow.
 
 async function pickupBackgroundTasks(): Promise<void> {
   try {
@@ -157,11 +158,36 @@ async function pickupBackgroundTasks(): Promise<void> {
         },
       };
 
-      const child = supervisor.spawnChild(topic.name, config);
-      if (child) {
-        console.log(`Forked child for "${topic.name}" (PID ${child.pid})`);
-      } else {
-        console.error(`Failed to fork child for "${topic.name}"`);
+      // P1-13: Retry loop with exponential backoff on spawn failure
+      const maxRetries = 3;
+      let lastError: string | null = null;
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        const child = supervisor.spawnChild(topic.name, config);
+        if (child) {
+          console.log(`Forked child for "${topic.name}" (PID ${child.pid})`);
+          lastError = null;
+          break;
+        } else {
+          lastError = `Failed to fork child for "${topic.name}" (attempt ${attempt + 1}/${maxRetries + 1})`;
+          console.error(lastError);
+          if (attempt < maxRetries) {
+            const delay = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
+            console.log(`Retrying in ${delay}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+          }
+        }
+      }
+      if (lastError) {
+        console.error(`Marking topic "${topic.name}" as spawn_failed after ${maxRetries + 1} attempts`);
+        try {
+          const db = new DatabaseSync(resolve(homedir(), '.yu', 'topics.db'));
+          db.exec('PRAGMA journal_mode=WAL');
+          db.prepare("UPDATE topics SET status = 'spawn_failed' WHERE name = ?").run(topic.name);
+          db.close();
+        } catch (dbErr: unknown) {
+          const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);
+          console.error(`Failed to mark topic as spawn_failed: ${msg}`);
+        }
       }
     }
   } catch (err: unknown) {
