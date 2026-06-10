@@ -63,17 +63,6 @@ export function releaseConcurrencySlot(type: string): void {
   }
 }
 
-/**
- * Get the current concurrency snapshot (for monitoring / debugging).
- */
-export function getConcurrencySnapshot(): { global: number; byType: Record<string, number> } {
-  const byType: Record<string, number> = {};
-  for (const [type, count] of activeByType) {
-    byType[type] = count;
-  }
-  return { global: activeAgents.size, byType };
-}
-
 // ── Types ──────────────────────────────────────────────
 
 export interface AgentTask {

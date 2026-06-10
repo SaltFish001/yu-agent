@@ -108,33 +108,6 @@ await testAsync('parseSchedulerOutput: pass_through', async () => {
   ok(result !== null);
   strictEqual(result.pass_through, true);
 });
-await testAsync('validateOutput: coding 有效', async () => {
-  const mod = await import(resolve(ROOT, 'dist/extension/template.js'));
-  const result = mod.validateOutput('coding', { status: 'success', files_modified: ['a.ts'], summary: '', details: [] });
-  strictEqual(result.valid, true);
-});
-await testAsync('validateOutput: review 有效', async () => {
-  const mod = await import(resolve(ROOT, 'dist/extension/template.js'));
-  const result = mod.validateOutput('review', { status: 'approved', findings: [] });
-  strictEqual(result.valid, true);
-});
-await testAsync('validateOutput: 未知类型报错', async () => {
-  const mod = await import(resolve(ROOT, 'dist/extension/template.js'));
-  const result = mod.validateOutput('unknown', {});
-  strictEqual(result.valid, false);
-  ok(result.errors[0].includes('unknown'));
-});
-await testAsync('validateOutput: lsp 有效', async () => {
-  const mod = await import(resolve(ROOT, 'dist/extension/template.js'));
-  const result = mod.validateOutput('lsp', { status: 'clean', errors_fixed: [], errors_remaining: [] });
-  strictEqual(result.valid, true);
-});
-await testAsync('validateOutput: coding 状态无效', async () => {
-  const mod = await import(resolve(ROOT, 'dist/extension/template.js'));
-  const result = mod.validateOutput('coding', { status: 'invalid_status', files_modified: [] });
-  strictEqual(result.valid, false);
-});
-
 // 4. config.js — 代理类型配置
 console.log('\n⚙️  config — 代理类型配置');
 await testAsync('AGENT_TYPES 包含所有 8 种类型', async () => {

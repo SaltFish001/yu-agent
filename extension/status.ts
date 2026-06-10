@@ -115,15 +115,6 @@ export function writeMCPStatus(
   upsertMCP(tag, JSON.stringify({ updatedAt, servers }), updatedAt);
 }
 
-/** Write LSP status independently. */
-export function writeLSPStatus(
-  servers: LSPServerStatus[],
-  updatedAt: number = Date.now(),
-): void {
-  const tag = getSessionTag();
-  upsertLSP(tag, JSON.stringify({ updatedAt, servers }), updatedAt);
-}
-
 /** Write team mode status independently. */
 export function writeTeamStatus(
   team: TeamStatus,

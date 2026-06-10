@@ -5,18 +5,6 @@
  * This module validates the output and returns a normalized result.
  */
 
-export type AgentStatus =
-  | 'success' | 'partial' | 'failed'
-  | 'approved' | 'changes_requested'
-  | 'clean' | 'fixed' | 'unresolved'
-  | 'committed' | 'nothing_to_commit'
-  | 'complete';
-
-export interface ValidationResult {
-  valid: boolean;
-  errors: string[];
-}
-
 /** Coding agent output schema. */
 export interface CodingOutput {
   status: 'success' | 'partial' | 'failed';
@@ -221,75 +209,4 @@ export function parseSchedulerOutput(text: string): SchedulerOutput | null {
   }
 
   return null;
-}
-
-/**
- * Validate the output against the expected schema for the given agent type.
- * Returns list of validation errors (empty = valid).
- */
-export function validateOutput(type: string, output: unknown): ValidationResult {
-  const errors: string[] = [];
-  const obj = output as Record<string, unknown>;
-
-  if (!obj || typeof obj !== 'object') {
-    return { valid: false, errors: ['output is not an object'] };
-  }
-
-  switch (type) {
-    case 'coding': {
-      if (!['success', 'partial', 'failed'].includes(obj.status as string)) {
-        errors.push('status must be success|partial|failed');
-      }
-      if (!Array.isArray(obj.files_modified)) {
-        errors.push('files_modified must be an array');
-      }
-      break;
-    }
-    case 'review': {
-      if (!['approved', 'changes_requested'].includes(obj.status as string)) {
-        errors.push('status must be approved|changes_requested');
-      }
-      if (!Array.isArray(obj.findings)) {
-        errors.push('findings must be an array');
-      }
-      break;
-    }
-    case 'lsp': {
-      if (!['clean', 'fixed', 'unresolved'].includes(obj.status as string)) {
-        errors.push('status must be clean|fixed|unresolved');
-      }
-      break;
-    }
-    case 'commit': {
-      if (!['committed', 'nothing_to_commit'].includes(obj.status as string)) {
-        errors.push('status must be committed|nothing_to_commit');
-      }
-      break;
-    }
-    case 'search': {
-      if (!Array.isArray(obj.results)) {
-        errors.push('results must be an array');
-      }
-      break;
-    }
-    case 'plan': {
-      if (obj.status !== 'complete') {
-        errors.push('status must be complete');
-      }
-      if (!Array.isArray(obj.modules)) {
-        errors.push('modules must be an array');
-      }
-      break;
-    }
-    case 'doc': {
-      if (obj.status !== 'success') {
-        errors.push('status must be success');
-      }
-      break;
-    }
-    default:
-      errors.push(`unknown agent type: ${type}`);
-  }
-
-  return { valid: errors.length === 0, errors };
 }

@@ -104,23 +104,6 @@ test('parseSchedulerOutput: pass_through', async () => {
   ok(result !== null);
   strictEqual(result.pass_through, true);
 });
-test('validateOutput: coding 有效', async () => {
-  const { validateOutput } = await import('../dist/extension/template.js');
-  const result = validateOutput('coding', { status: 'success', files_modified: ['a.ts'], summary: '', details: [] });
-  strictEqual(result.valid, true);
-});
-test('validateOutput: review 有效', async () => {
-  const { validateOutput } = await import('../dist/extension/template.js');
-  const result = validateOutput('review', { status: 'approved', findings: [] });
-  strictEqual(result.valid, true);
-});
-test('validateOutput: 未知类型报错', async () => {
-  const { validateOutput } = await import('../dist/extension/template.js');
-  const result = validateOutput('unknown', {});
-  strictEqual(result.valid, false);
-  ok(result.errors[0].includes('unknown'));
-});
-
 // 4. config.ts — 代理类型配置
 console.log('\n⚙️  config — 代理类型配置');
 test('AGENT_TYPES 包含所有 7 种类型', async () => {
