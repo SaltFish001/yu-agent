@@ -17,6 +17,8 @@ import { createLogger } from './logger.js';
 import type { ChildProcessInfo, ChildSpawnConfig, SupervisorStatus, ChildStatus } from './types.js';
 import { sendToChild, waitForMessage } from './ipc-main.js';
 import { DatabaseSync } from 'node:sqlite';
+import { writeEvent } from './topic.js';
+import { checkAndTriggerOrchestrator } from './orchestrator.js';
 
 const log = createLogger('supervisor');
 
@@ -121,6 +123,10 @@ export class Supervisor {
 
     log.info(`Child forked for topic "${topicName}" (PID ${child.pid})`);
 
+    // ── Phase 3: Write spawn event and check orchestrator ──
+    writeEvent(topicName, 'child_spawned', { pid: child.pid, status: 'spawning' });
+    checkAndTriggerOrchestrator(topicName, 'child_spawned', { pid: child.pid, status: 'spawning' });
+
     // ── IPC message handler ──
     child.on('message', (msg: unknown) => {
       const typed = msg as { type?: string; payload?: unknown };
@@ -163,19 +169,28 @@ export class Supervisor {
       }
     });
 
-    // ── Exit handler with auto-restart ──
+    // ── Exit handler with auto-restart + event bus (Phase 3) ──
     child.on('exit', (code, signal) => {
       const existing = this.children.get(topicName);
       if (existing) {
         if (signal) {
           existing.status = 'dead';
           log.warn(`Child "${topicName}" killed by signal ${signal}`);
+          // Phase 3: Write crash event
+          writeEvent(topicName, 'child_crashed', { signal, pid: existing.pid });
+          checkAndTriggerOrchestrator(topicName, 'child_crashed', { signal, pid: existing.pid, reason: 'killed' });
         } else if (code !== null && code !== 0) {
           existing.status = 'dead';
           log.warn(`Child "${topicName}" exited with code ${code}`);
+          // Phase 3: Write crash event
+          writeEvent(topicName, 'child_crashed', { exitCode: code, pid: existing.pid });
+          checkAndTriggerOrchestrator(topicName, 'child_crashed', { exitCode: code, pid: existing.pid, reason: 'non_zero_exit' });
         } else {
           existing.status = 'stopped';
           log.info(`Child "${topicName}" exited cleanly (code=0)`);
+          // Phase 3: Write task done event
+          writeEvent(topicName, 'child_task_done', { exitCode: code ?? 0, pid: existing.pid });
+          checkAndTriggerOrchestrator(topicName, 'child_task_done', { exitCode: code ?? 0, pid: existing.pid, status: 'completed' });
         }
       }
       this.processes.delete(topicName);
@@ -407,12 +422,18 @@ export class Supervisor {
           if (elapsed > DEAD_THRESHOLD) {
             info.status = 'dead';
             log.warn(`Child "${topicName}" no heartbeat for ${(elapsed / 1000).toFixed(0)}s, marking dead`);
+            // Phase 3: Write crash event for heartbeat dead
+            writeEvent(topicName, 'child_crashed', { heartbeatElapsed: elapsed, pid: info.pid, reason: 'heartbeat_timeout' });
+            checkAndTriggerOrchestrator(topicName, 'child_crashed', { heartbeatElapsed: elapsed, pid: info.pid, reason: 'heartbeat_timeout' });
             if (!this.shuttingDown) {
               this.scheduleRestart(topicName);
             }
           } else if (elapsed > DEGRADED_THRESHOLD && info.status === 'running') {
             info.status = 'degraded';
             log.warn(`Child "${topicName}" no heartbeat for ${(elapsed / 1000).toFixed(0)}s, degraded`);
+            // Phase 3: Write degraded event
+            writeEvent(topicName, 'child_degraded', { heartbeatElapsed: elapsed, pid: info.pid });
+            checkAndTriggerOrchestrator(topicName, 'child_degraded', { heartbeatElapsed: elapsed, pid: info.pid });
           }
         }
       }

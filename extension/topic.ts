@@ -111,6 +111,17 @@ export function initDb(db?: DatabaseSync): void {
       updated_at      TEXT NOT NULL
     )
   `);
+
+  // Phase 3: Events table for event bus / orchestration
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS events (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      topic       TEXT NOT NULL,
+      event_type  TEXT NOT NULL,
+      payload     TEXT DEFAULT '{}',
+      created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
 }
 
 // ── Internal helpers ──────────────────────────────────────
@@ -290,8 +301,22 @@ export function setStatus(name: string, status: string): void {
     throw new Error(`Invalid status "${status}". Must be idle, active, background, spawning, or spawn_failed.`);
   }
 
+  const oldStatus = topic.status;
+
   db.prepare('UPDATE topics SET status = ?, last_active = ? WHERE id = ?')
     .run(status, new Date().toISOString(), topic.id);
+
+  // ── Write events for relevant status transitions (Phase 3) ──
+  if (oldStatus !== status) {
+    const payload: Record<string, unknown> = { from: oldStatus, to: status };
+    if (status === 'spawning' || status === 'background') {
+      writeEvent(name, 'child_spawned', payload);
+    } else if (status === 'idle' && (oldStatus === 'background' || oldStatus === 'spawning')) {
+      writeEvent(name, 'child_task_done', payload);
+    } else if (status === 'spawn_failed') {
+      writeEvent(name, 'child_crashed', payload);
+    }
+  }
 }
 
 /**
@@ -325,6 +350,18 @@ export function getMaxBackground(): number {
     // ignore — fall through to default
   }
   return 3;
+}
+
+/**
+ * Write an event to the events table for the event bus / orchestrator.
+ * Events log status changes (child_spawned, child_task_done, child_crashed, child_degraded)
+ * and are consumed by checkAndTriggerOrchestrator().
+ */
+export function writeEvent(topic: string, eventType: string, payload: Record<string, unknown> = {}): void {
+  const db = getDb();
+  db.prepare(
+    'INSERT INTO events (topic, event_type, payload) VALUES (?, ?, ?)'
+  ).run(topic, eventType, JSON.stringify(payload));
 }
 
 /**
