@@ -94,25 +94,25 @@ await testAsync('writeEvent inserts event row', async () => {
   // Verify it's in the DB
   const db = getDb();
   const rows = db.prepare(
-    "SELECT topic, event_type, payload FROM events WHERE topic = 'test-topic'"
+    "SELECT topic_name, event_type, payload FROM events WHERE topic_name = 'test-topic'"
   ).all();
   db.close();
 
   ok(rows.length >= 1, 'should have at least 1 event row');
   const row = rows[rows.length - 1];
-  strictEqual(row.topic, 'test-topic');
+  strictEqual(row.topic_name, 'test-topic');
   strictEqual(row.event_type, 'child_spawned');
   const payload = JSON.parse(row.payload);
   strictEqual(payload.pid, 12345);
 
   // Cleanup
   const db2 = getDb();
-  db2.prepare("DELETE FROM events WHERE topic = 'test-topic'").run();
+  db2.prepare("DELETE FROM events WHERE topic_name = 'test-topic'").run();
   db2.close();
 });
 
-// 3. setStatus writes events
-await testAsync('setStatus writes child_spawned for background transition', async () => {
+// 3. writeEvent from supervisor path (child_spawned) + setStatus event writing
+await testAsync('writeEvent child_spawned + setStatus writes events', async () => {
   const mod = await import(resolve(ROOT, 'dist/extension/topic.js'));
 
   // Ensure test topic exists
@@ -126,35 +126,41 @@ await testAsync('setStatus writes child_spawned for background transition', asyn
 
   // Clear any prior events for this topic
   const db = getDb();
-  db.prepare("DELETE FROM events WHERE topic = ?").run(topicName);
+  db.prepare("DELETE FROM events WHERE topic_name = ?").run(topicName);
   db.close();
 
-  // Transition to background → should write child_spawned
+  // P2-11: child_spawned is now written by supervisor.ts spawnChild, not setStatus.
+  // Simulate what supervisor does: direct writeEvent call for child_spawned.
+  mod.writeEvent(topicName, 'child_spawned', { from: 'idle', to: 'background' });
+
+  // Transition from background → idle → should write child_task_done
   mod.setStatus(topicName, 'background');
-
-  const db2 = getDb();
-  const events = db2.prepare(
-    "SELECT event_type, payload FROM events WHERE topic = ? ORDER BY id DESC LIMIT 1"
-  ).get(topicName);
-  db2.close();
-
-  ok(events, 'should have an event');
-  strictEqual(events.event_type, 'child_spawned', 'should be child_spawned');
-
-  // Transition back to idle → should write child_task_done
   mod.setStatus(topicName, 'idle');
 
-  const db3 = getDb();
-  const doneEvent = db3.prepare(
-    "SELECT event_type, payload FROM events WHERE topic = ? AND event_type = 'child_task_done' ORDER BY id DESC LIMIT 1"
-  ).get(topicName);
-  db3.close();
+  // Also test spawn_failed event
+  mod.setStatus(topicName, 'spawn_failed');
 
-  ok(doneEvent, 'should have child_task_done event');
-  strictEqual(doneEvent.event_type, 'child_task_done');
+  const db2 = getDb();
+  const allEvents = db2.prepare(
+    "SELECT event_type, payload FROM events WHERE topic_name = ? ORDER BY id ASC"
+  ).all(topicName);
+  db2.close();
+
+  ok(allEvents.length >= 3, `should have at least 3 events, got ${allEvents.length}`);
+
+  const spawnedEvent = allEvents.find(e => e.event_type === 'child_spawned');
+  ok(spawnedEvent, 'should have child_spawned event (from writeEvent)');
+
+  const doneEvent = allEvents.find(e => e.event_type === 'child_task_done');
+  ok(doneEvent, 'should have child_task_done event (from setStatus idle transition)');
+
+  const failEvent = allEvents.find(e => e.event_type === 'child_spawn_failed');
+  ok(failEvent, 'should have child_spawn_failed event (from setStatus spawn_failed)');
 
   // Cleanup
-  cleanTestTopic(getDb(), topicName);
+  const db3 = getDb();
+  db3.prepare("DELETE FROM events WHERE topic_name = ?").run(topicName);
+  db3.close();
 });
 
 // 4. Orchestrator rules trigger actions
@@ -214,7 +220,7 @@ await testAsync('orchestrator rule triggers spawn_child', async () => {
     // but writeEvent uses it internally. Let's query directly.
     const db = getDb();
     const orchEvents = db.prepare(
-      "SELECT event_type, payload FROM events WHERE topic = 'orchestrated-target' AND event_type = 'child_spawned' ORDER BY id DESC LIMIT 1"
+      "SELECT event_type, payload FROM events WHERE topic_name = 'orchestrated-target' AND event_type = 'child_spawned' ORDER BY id DESC LIMIT 1"
     ).get();
     db.close();
 

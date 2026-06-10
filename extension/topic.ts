@@ -139,6 +139,7 @@ export function initDb(db?: DatabaseSync): void {
   // since CREATE TABLE IF NOT EXISTS won't alter an existing table.
 
   // P2-23: Migration — rename 'topic' to 'topic_name' in events if old column exists.
+  // Also add new columns that were added in P2-06 but don't exist in old tables.
   try {
     // Check if the old 'topic' column still exists and 'topic_name' doesn't
     const tableInfo = d.prepare("PRAGMA table_info('events')").all() as Array<{ name: string }>;
@@ -148,8 +149,20 @@ export function initDb(db?: DatabaseSync): void {
       // SQLite >= 3.25.0 supports RENAME COLUMN
       d.exec("ALTER TABLE events RENAME COLUMN topic TO topic_name");
     }
+
+    // P2-06: Add missing columns if not present (for tables created before P2-06)
+    const addColIfMissing = (colDef: string) => {
+      const colName = colDef.split(' ')[0];
+      if (!tableInfo.some(c => c.name === colName)) {
+        d.exec(`ALTER TABLE events ADD COLUMN ${colDef}`);
+      }
+    };
+    addColIfMissing('pid INTEGER');
+    addColIfMissing('parent_pid INTEGER');
+    addColIfMissing('seq INTEGER');
+    addColIfMissing('acknowledged INTEGER DEFAULT 0');
   } catch {
-    // Column rename failed — old column may already be gone
+    // Column migration failed — columns may already be gone
   }
 }
 
