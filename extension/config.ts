@@ -171,7 +171,7 @@ export interface AgentTypeConfig {
   displayName: string;
   description: string;
   model: string;
-  thinking: 'max' | 'high';
+  thinking: 'max' | 'high' | 'medium' | 'low';
   maxTurns: number;
   builtinToolNames: string[];
   systemPrompt: string;
@@ -182,7 +182,8 @@ export interface AgentTypeConfig {
 function loadPrompt(name: string): string {
   try {
     const path = resolve(PROMPTS_DIR, `${name}.md`);
-    return readFileSync(path, 'utf-8');
+    const content = readFileSync(path, 'utf-8');
+    return content;
   } catch (err) {
     log.warn(`Prompt file not found for agent type "${name}", using fallback`, err);
     return `You are a ${name} agent. Complete the assigned task.`;
@@ -271,7 +272,7 @@ export const AGENT_TYPES: Record<string, AgentTypeConfig> = {
     displayName: 'Chat Agent',
     description: '非编程类对话与问答',
     model: 'v4-flash',
-    thinking: 'high',
+    thinking: 'max',
     maxTurns: 10,
     builtinToolNames: ['read', 'grep', 'find', 'bash'],
     systemPrompt: loadPrompt('chat'),
@@ -281,7 +282,7 @@ export const AGENT_TYPES: Record<string, AgentTypeConfig> = {
     displayName: 'General Purpose Agent',
     description: '通用意图识别与任务分发',
     model: 'v4-flash',
-    thinking: 'high',
+    thinking: 'max',
     maxTurns: 3,
     builtinToolNames: [],
     systemPrompt: loadPrompt('scheduler'),
@@ -293,12 +294,17 @@ export function getAgentTypeNames(): string[] {
   return Object.keys(AGENT_TYPES);
 }
 
-/** Get agent type config by name (case-insensitive). */
+/** Get agent type config by name (case-insensitive displayName also supported). */
 export function getAgentTypeConfig(name: string): AgentTypeConfig | undefined {
+  // Try internal name first (case-insensitive)
   const key = Object.keys(AGENT_TYPES).find(
     (k) => k.toLowerCase() === name.toLowerCase(),
   );
-  return key ? AGENT_TYPES[key] : undefined;
+  if (key) return AGENT_TYPES[key];
+  // Fall back to displayName search (first match)
+  return Object.values(AGENT_TYPES).find(
+    (cfg) => cfg.displayName.toLowerCase() === name.toLowerCase(),
+  );
 }
 
 /**

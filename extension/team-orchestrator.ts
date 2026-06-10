@@ -14,6 +14,7 @@ import { resolve, } from 'node:path';
 import { execSync } from 'node:child_process';
 import type { SchedulerPlan } from './classifier.js';
 import { TEMP_DIR } from './paths.js';
+import { AGENT_TYPES } from './config.js';
 
 // ── Constants ──────────────────────────────────────────
 
@@ -37,8 +38,8 @@ export async function runTeamMode(
     active: true,
     mode: 'architect-searcher',
     members: [
-      { role: 'architect', status: 'running', model: 'v4-pro' },
-      { role: 'searcher', status: 'running', model: 'v4-flash' },
+      { role: 'architect', status: 'running', model: AGENT_TYPES['plan'].model },
+      { role: 'searcher', status: 'running', model: AGENT_TYPES['search'].model },
     ],
     currentPhase: 'research',
     sharedDir,
@@ -47,13 +48,13 @@ export async function runTeamMode(
   // Phase 1: Architect + Searcher in parallel
   const architectTask: AgentTask = {
     type: 'plan',
-    model: 'v4-pro',
+    model: AGENT_TYPES['plan'].model,
     id: 'team-architect',
     task: `分析现有代码结构并出方案。将方案写入 ${planFile}`,
   };
   const searcherTask: AgentTask = {
     type: 'search',
-    model: 'v4-flash',
+    model: AGENT_TYPES['search'].model,
     id: 'team-searcher',
     task: `搜索相关信息。结果写入 ${resolve(sharedDir, 'context.md')}`,
   };
@@ -131,7 +132,7 @@ export async function runTeamMode(
     members: [
       { role: 'architect', status: 'completed' },
       { role: 'searcher', status: 'completed' },
-      ...modules.map(() => ({ role: 'coder', status: 'running' as const, model: 'v4-flash' })),
+      ...modules.map(() => ({ role: 'coder', status: 'running' as const, model: AGENT_TYPES['coding'].model })),
       ...modules.map(() => ({ role: 'reviewer', status: 'waiting' as const })),
     ],
     currentPhase: 'coding',
@@ -141,7 +142,7 @@ export async function runTeamMode(
   // Create one Coder task per module and run in parallel
   const coderTasks: AgentTask[] = modules.map((mod, i) => ({
     type: 'coding',
-    model: 'v4-flash',
+    model: AGENT_TYPES['coding'].model,
     id: `team-coder-${i}`,
     task: `实现模块: ${mod.name}。遵循 plan.md 的方案。\n\n模块文件: ${(mod.files || []).join(', ')}\n\n约束: 只实现本模块 ${mod.name} 的内容，不要改其他模块的代码。`,
     files: mod.files.length > 0 ? mod.files : undefined,
@@ -175,7 +176,7 @@ export async function runTeamMode(
     // Create one Reviewer task per module
     const reviewerTasks: AgentTask[] = modules.map((mod, i) => ({
       type: 'review',
-      model: 'v4-flash',
+      model: AGENT_TYPES['review'].model,
       id: `team-reviewer-${i}-r${round}`,
       task: `审查模块 "${mod.name}" 的代码实现。\n模块文件: ${mod.files.join(', ')}\n\n根据 plan.md 的方案评估实现质量。返回 approved 或 changes_requested。如果 changes_requested，请列出具体问题。`,
       files: mod.files.length > 0 ? mod.files : undefined,
@@ -208,7 +209,7 @@ export async function runTeamMode(
       log.info(`Review round ${round + 1}: changes requested, cycling back to Coders`);
       const coderRetryTasks: AgentTask[] = modules.map((mod, i) => ({
         type: 'coding',
-        model: 'v4-flash',
+        model: AGENT_TYPES['coding'].model,
         id: `team-coder-${i}-fix-r${round}`,
         task: `根据 review 反馈修复模块 "${mod.name}" 的问题。\n\nReview 反馈:\n${changesDetails.join('\n---\n')}\n\n只修复列出的问题，不要改动其他代码。`,
         files: mod.files.length > 0 ? mod.files : undefined,

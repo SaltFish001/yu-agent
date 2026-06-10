@@ -52,6 +52,9 @@ export interface ChildProcessInfo {
   topicName: string;
   status: ChildStatus;
   startedAt: number;
+  lastHeartbeat: number;
+  restartCount: number;
+  resident?: boolean;
   memoryEstimate?: number;
 }
 
@@ -66,6 +69,8 @@ export interface ChildSpawnConfig {
    * ready/pong signal before marking as spawn_failed (default: 30000).
    */
   spawning_timeout?: number;
+  /** If true, child stays alive after task completion (default: true). */
+  resident?: boolean;
 }
 
 /** Status report from the supervisor daemon. */

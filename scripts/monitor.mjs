@@ -6,14 +6,10 @@
  * Reads status files from ~/yu-agent/status/ and displays
  * a live-updating dashboard in the terminal.
  *
- * Usage:
- *   node scripts/monitor.mjs          # live-updating dashboard
- *   node scripts/monitor.mjs --once   # single snapshot, no loop
- *
  * Zero external dependencies — uses only Node.js built-ins.
  */
 
-import { readFileSync, watch, existsSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -28,7 +24,6 @@ const RESET = '\x1B[0m';
 const RED = '\x1B[31m';
 const GREEN = '\x1B[32m';
 const YELLOW = '\x1B[33m';
-const _BLUE = '\x1B[34m';
 const CYAN = '\x1B[36m';
 const GRAY = '\x1B[90m';
 
@@ -42,7 +37,7 @@ const glyph = (status) => {
     case 'connected': return `${GREEN}●${RESET}`;
     case 'disconnected': return `${GRAY}○${RESET}`;
     case 'error': return `${RED}✗${RESET}`;
-    default: return `?`;
+    default: return `${DIM}?${RESET}`;
   }
 };
 
@@ -88,26 +83,35 @@ function render() {
   const mcp = readJSON('mcp.json');
   const lsp = readJSON('lsp.json');
   const team = readJSON('team.json');
-  const summary = readJSON('summary.json');
+  const rawSummary = readJSON('summary.json');
+  const summary = rawSummary?.summary ?? rawSummary;
   const cache = readJSON('cache.json');
 
   const lines = [];
 
   lines.push(`${BOLD}┌─ yu-agent monitor ─────────────────────────────${RESET}`);
-  lines.push(`│ ${BOLD}Summary:${RESET} ${summaryLine(summary?.summary || summary)}`);
+  lines.push(`│ ${BOLD}Summary:${RESET} ${summaryLine(summary)}`);
   lines.push(`│ ${DIM}Updated: ${agents?.updatedAt ? fmtTime(agents.updatedAt) : 'never'}${RESET}`);
   if (agents) {
     lines.push(`│ ${DIM}Status:  ${agents.agents?.length || 0} agents tracked${RESET}`);
   }
 
   // ── Cache stats ──────────────────────────────────────
-  if (cache && cache.totalHits > 0) {
-    const hitRate = `${(cache.hitRate * 100).toFixed(1)}%`;
+  if (cache) {
     lines.push(`│`);
     lines.push(`│ ${BOLD}Session Cache${RESET}`);
-    lines.push(`│  ${GREEN}✓${RESET} Hits:   ${cache.totalHits}  ${DIM}(${hitRate})${RESET}`);
-    lines.push(`│  ${RED}✗${RESET} Misses: ${cache.totalMisses}`);
-    lines.push(`│  ${DIM}  Turns:  ${cache.turnCount}  ·  Cost: ${cache.totalCost}${RESET}`);
+    if (cache.totalHits > 0 || cache.totalMisses > 0) {
+      const hitRate = cache.totalHits > 0
+        ? `${(cache.hitRate * 100).toFixed(1)}%`
+        : '0.0%';
+      lines.push(`│  ${GREEN}✓${RESET} Hits:   ${cache.totalHits}  ${DIM}(${hitRate})${RESET}`);
+      lines.push(`│  ${RED}✗${RESET} Misses: ${cache.totalMisses}`);
+      if (cache.turnCount != null) {
+        lines.push(`│  ${DIM}  Turns:  ${cache.turnCount}  ·  Cost: ${cache.totalCost ?? '-'}${RESET}`);
+      }
+    } else {
+      lines.push(`│  ${DIM}(no data)${RESET}`);
+    }
   }
 
   // ── Sub-agents ───────────────────────────────────────
@@ -165,9 +169,32 @@ function render() {
   return lines.join('\n');
 }
 
-// ── Main ───────────────────────────────────────────────
+// ── Args ───────────────────────────────────────────────
+
+const HELP_TEXT = `Usage: node scripts/monitor.mjs [options]
+
+Options:
+  --once             Single snapshot, no polling loop
+  --interval <ms>    Polling interval in milliseconds (default: 1000)
+  --help, -h         Show this help message
+`;
 
 const args = process.argv.slice(2);
+
+if (args.includes('--help') || args.includes('-h')) {
+  console.log(HELP_TEXT);
+  process.exit(0);
+}
+
+// Parse --interval
+let pollInterval = 1000;
+const intervalIdx = args.indexOf('--interval');
+if (intervalIdx !== -1 && intervalIdx + 1 < args.length) {
+  const parsed = parseInt(args[intervalIdx + 1], 10);
+  if (!isNaN(parsed) && parsed > 0) {
+    pollInterval = parsed;
+  }
+}
 
 if (args.includes('--once')) {
   // Single snapshot
@@ -175,36 +202,26 @@ if (args.includes('--once')) {
   process.exit(0);
 }
 
-// Live dashboard — watch for file changes
+// Live dashboard — polling mode
 if (!existsSync(STATUS_DIR)) {
   console.error(`Status directory not found: ${STATUS_DIR}`);
   console.error('Start yu-agent first to generate status files.');
   process.exit(1);
 }
 
-console.log(CLEAR);
-console.log(render());
-
-// Watch for any JSON change in status dir
-try {
-  watch(STATUS_DIR, (_eventType, filename) => {
-    if (filename?.endsWith('.json')) {
-      console.log(CLEAR);
-      console.log(render());
-    }
-  });
-
-  // Auto-refresh every 3s too
-  setInterval(() => {
-    console.log(CLEAR);
-    console.log(render());
-  }, 3000);
-} catch (err) {
-  console.error(`Watch error: ${err.message}`);
+let frame = 0;
+function tick() {
+  const ts = new Date().toLocaleTimeString();
+  console.log(`${CLEAR}${DIM}polling @ ${ts} · frame ${++frame} · interval ${pollInterval}ms${RESET}`);
+  console.log(render());
 }
+
+tick();
+const intervalId = setInterval(tick, pollInterval);
 
 // Handle Ctrl+C gracefully
 process.on('SIGINT', () => {
+  clearInterval(intervalId);
   console.log(`\n${DIM}monitor stopped${RESET}`);
   process.exit(0);
 });

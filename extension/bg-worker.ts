@@ -8,6 +8,9 @@
  * Phase 1: IPC protocol (ping/pong, shutdown, task results),
  *          dedicated DB connection with busy_timeout=5000.
  *
+ * Phase 2: Resident mode — after task completes, enters wait loop
+ *          for `parent:new_task` or `parent:shutdown` messages.
+ *
  * Usage (called by Supervisor.spawnChild):
  *   node dist/extension/bg-worker.js --topic-name=frontend
  */
@@ -71,6 +74,42 @@ function bgSetSummary(name: string, summary: string): void {
     .run(summary, find.id);
 }
 
+/**
+ * Execute a single task for the given topic.
+ * Shared between initial execution and parent:new_task.
+ */
+async function executeTask(topicName: string, prompt: string): Promise<boolean> {
+  log.info(`Executing: ${prompt.substring(0, 200)}`);
+
+  try {
+    // Import and call scheduler
+    const { handler } = await import('./scheduler.js');
+    const result = await handler(prompt, { source: 'topic_bg', topic: topicName });
+
+    if (result) {
+      const outcome = result.substring(0, 500);
+      bgSetSummary(topicName, `Completed: ${prompt}\n\n${outcome}`);
+      log.info(`Task completed for "${topicName}"`);
+    } else {
+      bgSetSummary(topicName, `Completed: ${prompt}\n\n(no output)`);
+      log.info(`Task completed (empty result) for "${topicName}"`);
+    }
+
+    // Send result via IPC
+    send('task_result', { topicName, status: 'completed' });
+    return true;
+
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    bgSetSummary(topicName, `Failed: ${prompt}\n\n${msg}`);
+    log.error(`Task failed for "${topicName}": ${msg}`);
+
+    // Send error via IPC
+    send('error', { topicName, error: msg });
+    return false;
+  }
+}
+
 async function main(): Promise<void> {
   // Parse --topic-name argument
   const topicName = process.argv
@@ -85,6 +124,9 @@ async function main(): Promise<void> {
   log.info(`Background worker starting for topic "${topicName}"`);
 
   // ── Set up IPC handlers ──
+  let residentMode = false;
+  let currentTaskPromise: Promise<boolean> | null = null;
+
   setupChildIPC({
     'ping': () => {
       send('pong');
@@ -92,6 +134,28 @@ async function main(): Promise<void> {
     'shutdown': () => {
       log.info('Received shutdown from parent, exiting');
       process.exit(0);
+    },
+    'parent:shutdown': () => {
+      log.info('Received parent:shutdown, cleaning up and exiting');
+      bgSetStatus(topicName, 'idle');
+      process.exit(0);
+    },
+    'parent:die': () => {
+      log.info('Received parent:die, exiting immediately');
+      process.exit(0);
+    },
+    'parent:new_task': (payload: unknown) => {
+      if (!residentMode) {
+        log.warn('Received new_task but not in resident mode, ignoring');
+        return;
+      }
+      const data = payload as { prompt?: string; options?: Record<string, unknown> } | undefined;
+      if (!data?.prompt) {
+        log.warn('Received parent:new_task without prompt');
+        return;
+      }
+      // Execute the new task (fire-and-forget for now)
+      currentTaskPromise = executeTask(topicName, data.prompt);
     },
   });
 
@@ -110,37 +174,31 @@ async function main(): Promise<void> {
 
   const prompt = topic.summary.replace(/^Running: /, '');
 
-  log.info(`Executing: ${prompt}`);
+  // ── Execute the first task ──
+  await executeTask(topicName, prompt);
 
-  try {
-    // Import and call scheduler
-    const { handler } = await import('./scheduler.js');
-    const result = await handler(prompt, { source: 'topic_bg', topic: topicName });
+  // ── Enter resident mode ──
+  bgSetStatus(topicName, 'idle');
+  residentMode = true;
+  log.info(`Entering resident mode for topic "${topicName}"`);
 
-    if (result) {
-      const outcome = result.substring(0, 500);
-      bgSetSummary(topicName, `Completed: ${prompt}\n\n${outcome}`);
-      log.info(`Task completed for "${topicName}"`);
-    } else {
-      bgSetSummary(topicName, `Completed: ${prompt}\n\n(no output)`);
-      log.info(`Task completed (empty result) for "${topicName}"`);
-    }
+  // Report status to parent
+  send('status_update', { topicName, status: 'resident' });
 
-    // Send result via IPC
-    send('task_result', { topicName, status: 'completed' });
+  // Start heartbeat interval (every 5s)
+  const heartbeatInterval = setInterval(() => {
+    send('heartbeat', { topicName });
+  }, 5_000);
 
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    bgSetSummary(topicName, `Failed: ${prompt}\n\n${msg}`);
-    log.error(`Task failed for "${topicName}": ${msg}`);
-
-    // Send error via IPC
-    send('error', { topicName, error: msg });
-  } finally {
-    bgSetStatus(topicName, 'idle');
-    log.info(`Worker exiting for topic "${topicName}"`);
-    process.exit(0);
-  }
+  // Wait for parent:shutdown or parent:die to trigger exit
+  // The handlers are already registered via setupChildIPC above.
+  // We keep the process alive by waiting indefinitely.
+  await new Promise<void>(() => {
+    // This promise never resolves on its own.
+    // The 'parent:shutdown' or 'parent:die' handler calls process.exit(0).
+    // The 'shutdown' handler also calls process.exit(0).
+    // We just need to keep the event loop alive.
+  });
 }
 
 main().catch(err => {

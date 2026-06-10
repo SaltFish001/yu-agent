@@ -11,11 +11,12 @@
 import { fork, type ChildProcess } from 'node:child_process';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { writeFileSync, appendFileSync, existsSync, mkdirSync } from 'node:fs';
+import { writeFileSync, appendFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { createLogger } from './logger.js';
 import type { ChildProcessInfo, ChildSpawnConfig, SupervisorStatus, ChildStatus } from './types.js';
 import { sendToChild, waitForMessage } from './ipc-main.js';
+import { DatabaseSync } from 'node:sqlite';
 
 const log = createLogger('supervisor');
 
@@ -33,6 +34,18 @@ const DEFAULT_SPAWN_TIMEOUT = 15_000;
 /** Time to wait after SIGTERM before sending SIGKILL (ms). */
 const SIGKILL_DELAY = 10_000;
 
+/** Max consecutive restarts before giving up. */
+const MAX_RESTARTS = 3;
+
+/** Exponential backoff durations (ms) for restart 0, 1, 2. */
+const BACKOFF_DURATIONS = [1_000, 2_000, 4_000];
+
+/** Milliseconds without heartbeat before marking degraded. */
+const DEGRADED_THRESHOLD = 15_000;
+
+/** Milliseconds without heartbeat before marking dead. */
+const DEAD_THRESHOLD = 30_000;
+
 export class Supervisor {
   /** TopicName → ChildProcessInfo (metadata / status). */
   readonly children = new Map<string, ChildProcessInfo>();
@@ -40,6 +53,14 @@ export class Supervisor {
   private processes = new Map<string, ChildProcess>();
   private startTime = Date.now();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  /** Track last heartbeat timestamp per child. */
+  private lastHeartbeat = new Map<string, number>();
+  /** Track restart attempts per child. */
+  private restartCount = new Map<string, number>();
+  /** Topic names currently being restarted (prevent re-entrant restarts). */
+  private restarting = new Set<string>();
+  /** True when supervisor is performing graceful shutdown. */
+  private shuttingDown = false;
 
   /**
    * Start the supervisor heartbeat loop.
@@ -90,6 +111,9 @@ export class Supervisor {
       topicName,
       status: 'spawning',
       startedAt: Date.now(),
+      lastHeartbeat: Date.now(),
+      restartCount: 0,
+      resident: config?.resident ?? true,
     };
 
     this.children.set(topicName, info);
@@ -110,16 +134,24 @@ export class Supervisor {
         case 'pong':
           if (existing.status === 'spawning') {
             existing.status = 'running';
+            this.lastHeartbeat.set(topicName, Date.now());
             log.info(`Child "${topicName}" is alive (pong received)`);
           }
+          // Reset restart count on successful spawn
+          this.restartCount.set(topicName, 0);
           break;
         case 'heartbeat':
-          if (existing.status === 'spawning') {
+          this.lastHeartbeat.set(topicName, Date.now());
+          existing.lastHeartbeat = Date.now();
+          if (existing.status === 'spawning' || existing.status === 'degraded') {
             existing.status = 'running';
           }
           break;
         case 'task_result':
-          existing.status = 'stopped';
+          // Resident children stay alive — don't set 'stopped'
+          if (!existing.resident) {
+            existing.status = 'stopped';
+          }
           log.info(`Child "${topicName}" completed task`);
           break;
         case 'error':
@@ -131,7 +163,7 @@ export class Supervisor {
       }
     });
 
-    // ── Exit handler ──
+    // ── Exit handler with auto-restart ──
     child.on('exit', (code, signal) => {
       const existing = this.children.get(topicName);
       if (existing) {
@@ -147,6 +179,11 @@ export class Supervisor {
         }
       }
       this.processes.delete(topicName);
+
+      // Auto-restart on unexpected exit (not requested shutdown)
+      if (existing && !this.shuttingDown && existing.status !== 'stopped') {
+        this.scheduleRestart(topicName);
+      }
     });
 
     // ── Ping child to confirm it's alive ──
@@ -231,43 +268,364 @@ export class Supervisor {
   }
 
   /**
-   * Graceful shutdown: kill all children and stop heartbeat.
+   * Graceful shutdown: send IPC shutdown to all children,
+   * wait 10s, then force-kill remaining.
    */
   shutdown(): void {
     log.info('Supervisor shutting down');
+    this.shuttingDown = true;
 
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
 
-    for (const [topicName] of this.children) {
-      this.killChild(topicName);
+    // Send graceful shutdown to all children via IPC
+    const shutdownPromises: Array<Promise<unknown>> = [];
+    for (const [topicName, child] of this.processes) {
+      const sent = sendToChild(child, 'parent:shutdown', { reason: 'parent_terminating' });
+      if (sent) {
+        // Wait for child to exit, or timeout and SIGKILL
+        shutdownPromises.push(new Promise<void>((resolve) => {
+          const timeout = setTimeout(() => {
+            log.warn(`Child "${topicName}" did not exit gracefully, force killing`);
+            this.killChild(topicName);
+            resolve();
+          }, SIGKILL_DELAY);
+
+          child.once('exit', () => {
+            clearTimeout(timeout);
+            resolve();
+          });
+        }));
+      } else {
+        // IPC channel closed, force kill
+        this.killChild(topicName);
+      }
     }
+
+    if (shutdownPromises.length > 0) {
+      Promise.allSettled(shutdownPromises).then(() => {
+        log.info('All children terminated');
+        this.cleanup();
+      });
+    } else {
+      this.cleanup();
+    }
+  }
+
+  /**
+   * Schedule a restart with exponential backoff.
+   */
+  private scheduleRestart(topicName: string): void {
+    if (this.restarting.has(topicName)) return;
+    const count = this.restartCount.get(topicName) ?? 0;
+    if (count >= MAX_RESTARTS) {
+      log.warn(`Child "${topicName}" exceeded max restarts (${MAX_RESTARTS}), giving up`);
+      return;
+    }
+
+    this.restarting.add(topicName);
+    const delay = BACKOFF_DURATIONS[count] ?? 4_000;
+    this.restartCount.set(topicName, count + 1);
+
+    const info = this.children.get(topicName);
+    if (info) {
+      info.status = 'restarting';
+      log.info(`Child "${topicName}" restart scheduled in ${delay}ms (attempt ${count + 1}/${MAX_RESTARTS})`);
+    }
+
+    setTimeout(() => {
+      this.restarting.delete(topicName);
+      if (this.shuttingDown) return;
+      this.spawnChild(topicName, { resident: info?.resident ?? true });
+    }, delay);
+  }
+
+  /**
+   * Manually restart a child via CLI.
+   */
+  restartChild(topicName: string): boolean {
+    const existing = this.children.get(topicName);
+    if (!existing) return false;
+
+    this.killChild(topicName);
+    this.scheduleRestart(topicName);
+    return true;
+  }
+
+  /**
+   * Send a message to all children.
+   */
+  private sendToAllChildren(type: string, payload?: unknown): void {
+    for (const [, child] of this.processes) {
+      sendToChild(child, type as any, payload);
+    }
+  }
+
+  /**
+   * Clean up after all children are gone.
+   */
+  private cleanup(): void {
+    this.children.clear();
+    this.processes.clear();
+    this.lastHeartbeat.clear();
+    this.restartCount.clear();
+    this.restarting.clear();
+    log.info('Supervisor cleanup complete');
   }
 
   // ── Private: periodic health check ────────────────────
 
   private checkChildren(): void {
+    const now = Date.now();
     for (const [topicName, info] of this.children) {
       const child = this.processes.get(topicName);
+
+      // Process-level checks
       if (!child || child.killed) {
-        info.status = 'dead';
+        if (info.status !== 'stopped' && info.status !== 'dead') {
+          info.status = 'dead';
+          log.warn(`Child "${topicName}" process gone, marking dead`);
+          if (!this.shuttingDown) {
+            this.scheduleRestart(topicName);
+          }
+        }
         continue;
       }
 
-      // If exitCode is set, process has exited
       if (child.exitCode !== null) {
         info.status = child.exitCode === 0 ? 'stopped' : 'dead';
+        continue;
+      }
+
+      // Heartbeat-based degraded/dead detection (only for running/degraded)
+      if (info.status === 'running' || info.status === 'degraded') {
+        const lhb = this.lastHeartbeat.get(topicName) ?? info.lastHeartbeat;
+        if (lhb) {
+          const elapsed = now - lhb;
+          if (elapsed > DEAD_THRESHOLD) {
+            info.status = 'dead';
+            log.warn(`Child "${topicName}" no heartbeat for ${(elapsed / 1000).toFixed(0)}s, marking dead`);
+            if (!this.shuttingDown) {
+              this.scheduleRestart(topicName);
+            }
+          } else if (elapsed > DEGRADED_THRESHOLD && info.status === 'running') {
+            info.status = 'degraded';
+            log.warn(`Child "${topicName}" no heartbeat for ${(elapsed / 1000).toFixed(0)}s, degraded`);
+          }
+        }
       }
     }
 
-    // Log status periodically (every 5th check ≈ every 25s)
+    // Log status periodically
     if (this.children.size > 0) {
       const alive = Array.from(this.children.values()).filter(
-        c => c.status !== 'dead' && c.status !== 'stopped',
+        c => c.status !== 'dead' && c.status !== 'stopped' && c.status !== 'spawn_failed',
       ).length;
       log.debug(`Heartbeat: ${alive} alive / ${this.children.size} total children`);
     }
   }
 }
+
+// ── Supervisor CLI command handler ─────────────────────────
+
+const YU_HOME = resolve(homedir(), '.yu');
+const SUPERVISOR_LOG_PATH = resolve(YU_HOME, 'logs', 'supervisor.log');
+
+/**
+ * Handle `yu supervisor <subcommand>` CLI commands.
+ * Reads from the child_processes DB table and sends signals directly.
+ */
+export function supervisorCommand(subcommand: string, args: string[]): string {
+  switch (subcommand) {
+    case 'status':
+      return cmdSupervisorStatus(args);
+    case 'stop':
+      return cmdSupervisorStop(args);
+    case 'restart':
+      return cmdSupervisorRestart(args);
+    case 'logs':
+      return cmdSupervisorLogs(args);
+    default:
+      return SUPERVISOR_HELP;
+  }
+}
+
+function getChildProcessesDb(): DatabaseSync | null {
+  try {
+    const dbPath = resolve(YU_HOME, 'topics.db');
+    if (!existsSync(dbPath)) return null;
+    const db = new DatabaseSync(dbPath);
+    db.exec('PRAGMA busy_timeout=3000');
+    return db;
+  } catch {
+    return null;
+  }
+}
+
+function cmdSupervisorStatus(args: string[]): string {
+  const topicFilter = args[0]; // optional topic name filter
+
+  const db = getChildProcessesDb();
+  if (!db) {
+    return 'No supervisor database found. Start a background task first (yu topic bg).';
+  }
+
+  const rows = db.prepare(
+    'SELECT topic_name, pid, parent_pid, status, prompt, fork_time, last_heartbeat, restart_count FROM child_processes ORDER BY fork_time DESC'
+  ).all() as Array<Record<string, unknown>>;
+
+  db.close();
+
+  if (rows.length === 0) {
+    return 'No child processes registered.';
+  }
+
+  const lines: string[] = [];
+  lines.push('Supervisor Children:');
+  lines.push('');
+
+  for (const row of rows) {
+    const name = row.topic_name as string;
+    if (topicFilter && name !== topicFilter) continue;
+    const pid = row.pid as number;
+    const status = row.status as string;
+    const prompt = (row.prompt as string) || '';
+    const forkTime = row.fork_time as string;
+    const lastHb = row.last_heartbeat as string | null;
+    const restartCount = row.restart_count as number ?? 0;
+
+    const statusIcon = status === 'running' ? '▶' : status === 'restarting' ? '🔄' : status === 'degraded' ? '⚠' : status === 'dead' ? '✗' : '○';
+    const hbInfo = lastHb ? `last hb: ${new Date(lastHb).toLocaleTimeString()}` : 'no heartbeat yet';
+
+    lines.push(
+      `  ${statusIcon} ${name}` +
+      `  [${status}]  PID ${pid}  ${hbInfo}  restarts: ${restartCount}`
+    );
+    if (prompt) {
+      lines.push(`     ${prompt.substring(0, 120)}`);
+    }
+  }
+
+  lines.push('');
+  lines.push(`Total: ${rows.length} child process(es)`);
+  return lines.join('\n');
+}
+
+function cmdSupervisorStop(args: string[]): string {
+  if (args.length === 0) {
+    return 'Usage: yu supervisor stop <topic>';
+  }
+
+  const topicName = args[0];
+  const db = getChildProcessesDb();
+  if (!db) return 'No supervisor database found.';
+
+  const row = db.prepare(
+    'SELECT pid, status FROM child_processes WHERE topic_name = ?'
+  ).get(topicName) as { pid: number; status: string } | undefined;
+
+  if (!row) {
+    db.close();
+    return `No child process found for topic "${topicName}".`;
+  }
+
+  // Update status in DB
+  db.prepare(
+    'UPDATE child_processes SET status = ?, updated_at = ? WHERE topic_name = ?'
+  ).run('stopped', new Date().toISOString(), topicName);
+  db.close();
+
+  // Send SIGTERM to the child process
+  try {
+    process.kill(row.pid, 'SIGTERM');
+    return `Sent SIGTERM to child "${topicName}" (PID ${row.pid}).`;
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return `Child "${topicName}" (PID ${row.pid}) may already be dead: ${msg}`;
+  }
+}
+
+function cmdSupervisorRestart(args: string[]): string {
+  if (args.length === 0) {
+    return 'Usage: yu supervisor restart <topic>';
+  }
+
+  const topicName = args[0];
+  const db = getChildProcessesDb();
+  if (!db) return 'No supervisor database found.';
+
+  const row = db.prepare(
+    'SELECT pid, status FROM child_processes WHERE topic_name = ?'
+  ).get(topicName) as { pid: number; status: string } | undefined;
+
+  if (!row) {
+    db.close();
+    return `No child process found for topic "${topicName}".`;
+  }
+
+  // Kill the child process
+  try {
+    process.kill(row.pid, 'SIGTERM');
+  } catch {
+    // Already dead
+  }
+
+  // Update DB: set topic status to 'background' so daemon picks it up
+  db.prepare(
+    'UPDATE child_processes SET status = ?, updated_at = ? WHERE topic_name = ?'
+  ).run('restarting', new Date().toISOString(), topicName);
+
+  const topicRow = db.prepare(
+    'SELECT id FROM topics WHERE LOWER(name) = LOWER(?)'
+  ).get(topicName) as { id: string } | undefined;
+
+  if (topicRow) {
+    db.prepare(
+      'UPDATE topics SET status = ?, last_active = ? WHERE id = ?'
+    ).run('background', new Date().toISOString(), topicRow.id);
+  }
+
+  db.close();
+  return `Restart initiated for child "${topicName}" (PID ${row.pid} was killed). The daemon will pick up the new task.`;
+}
+
+function cmdSupervisorLogs(args: string[]): string {
+  const topicName = args[0];
+  if (!topicName) {
+    return 'Usage: yu supervisor logs <topic> [n]';
+  }
+
+  const nLines = args[1] ? parseInt(args[1], 10) : 10;
+  if (isNaN(nLines) || nLines < 1) {
+    return 'Error: n must be a positive integer.';
+  }
+
+  if (!existsSync(SUPERVISOR_LOG_PATH)) {
+    return `Supervisor log not found at ${SUPERVISOR_LOG_PATH}.`;
+  }
+
+  try {
+    const content = readFileSync(SUPERVISOR_LOG_PATH, 'utf-8');
+    const lines = content.split('\n').filter((l: string) => l.includes(topicName));
+    const tail = lines.slice(-nLines);
+    if (tail.length === 0) {
+      return `No log entries found for topic "${topicName}".`;
+    }
+    return tail.join('\n');
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return `Error reading supervisor log: ${msg}`;
+  }
+}
+
+const SUPERVISOR_HELP = `yu supervisor — Supervisor management
+
+Usage:
+  yu supervisor status              Show all child process statuses
+  yu supervisor status <topic>      Show single child detail
+  yu supervisor stop <topic>        Gracefully stop a child process
+  yu supervisor restart <topic>     Restart a child process
+  yu supervisor logs <topic> [n]    Show last n lines of child log (default: 10)
+`;

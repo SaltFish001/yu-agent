@@ -472,6 +472,12 @@ Topic Management:
   yu topic bg <name> <prompt>  Start a background task on a topic
   yu topic status              Show background task progress
 
+Supervisor:
+  yu supervisor status [<topic>]  Show child process statuses
+  yu supervisor stop <topic>      Stop a child process
+  yu supervisor restart <topic>   Restart a child process
+  yu supervisor logs <topic> [n]  Show last n lines of child log
+
 General:
   yu help [command]            Show this help, or help for a specific command
   yu --help / -h               Same as "yu help"
@@ -593,6 +599,20 @@ Useful for testing or when Pi's dispatch doesn't match your intent.`;
       return `yu install <package> — Install an MCP server package
 
 Installs a new MCP server and adds it to ~/.yu/mcp.config.json.`;
+
+    case 'supervisor':
+      return `yu supervisor — Supervisor management
+
+Manages child processes (agents) forked by the supervisor daemon.
+Allows checking status, stopping, restarting, and viewing logs.
+
+Usage:
+  yu supervisor status [<topic>]      Show child process(es) status
+  yu supervisor stop <topic>          Gracefully stop a child process
+  yu supervisor restart <topic>       Restart a child process
+  yu supervisor logs <topic> [n]      Show last n lines of child log (default: 10)
+
+Data read from ~/.yu/topics.db (child_processes table).`;
 
     case 'topic':
       return `yu topic — Topic management
@@ -840,6 +860,16 @@ async function mainCli(): Promise<void> {
       console.log(result);
     }
     return;
+  }
+
+  // `yu supervisor <subcommand>` — supervisor management
+  if (args[0] === 'supervisor') {
+    const sub = args[1] || 'help';
+    const supervisorArgs = args.slice(2);
+    const { supervisorCommand } = await import('../extension/supervisor.js');
+    const out = supervisorCommand(sub, supervisorArgs);
+    console.log(out);
+    process.exit(0);
   }
 
   // `yu topic <subcommand>` — topic management

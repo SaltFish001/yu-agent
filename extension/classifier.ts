@@ -36,7 +36,8 @@ function loadSchedulerPrompt(): string {
       log.warn('scheduler.md not found at', path);
       return '';
     }
-    return readFileSync(path, 'utf-8');
+    const content = readFileSync(path, 'utf-8');
+    return content;
   } catch (err) {
     log.warn('Failed to load scheduler prompt', err);
     return '';

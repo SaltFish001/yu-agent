@@ -17,7 +17,10 @@ export type IpcMessageType =
   | 'task_result'
   | 'error'
   | 'status_update'
-  | 'heartbeat';
+  | 'heartbeat'
+  | 'parent:shutdown'
+  | 'parent:new_task'
+  | 'parent:die';
 
 export interface IpcMessage {
   type: IpcMessageType;
