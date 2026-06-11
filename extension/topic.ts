@@ -369,6 +369,8 @@ export function setStatus(name: string, status: string): void {
       writeEvent(name, 'child_spawn_failed', { ...payload, reason: 'spawn_timeout' });
     } else if (status === 'idle' && (oldStatus === 'background' || oldStatus === 'spawning')) {
       writeEvent(name, 'child_task_done', payload);
+      // P2-28: Also emit task.completed event for the cross-topic event channel
+      writeEvent(name, 'task.completed', { status: 'completed', from_status: oldStatus, summary: topic.summary || '' });
     } else if (status === 'degraded' || status === 'restarting' || status === 'stopped') {
       // P2-08: Write events for new supervisor states
       const eventType = status === 'degraded' ? 'child_degraded'
@@ -430,6 +432,43 @@ export function writeEvent(topicName: string, eventType: string, payload: Record
     `INSERT INTO events (topic_name, event_type, payload, pid, parent_pid, seq)
      VALUES (?, ?, ?, ?, ?, ?)`
   ).run(topicName, eventType, JSON.stringify(payload), pid, parentPid, seq);
+}
+
+/**
+ * Retrieve all unacknowledged events for a given topic (or '' for broadcast).
+ * Returns events ordered by creation time (oldest first).
+ */
+export function pendingEvents(topicName: string): Array<{
+  id: number;
+  topic_name: string;
+  event_type: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+}> {
+  const db = getDb();
+  const rows = db.prepare(
+    `SELECT id, topic_name, event_type, payload, created_at
+     FROM events
+     WHERE acknowledged = 0
+       AND (topic_name = ? OR topic_name = '')
+     ORDER BY created_at ASC`
+  ).all(topicName) as Array<Record<string, unknown>>;
+
+  return rows.map((r) => ({
+    id: r.id as number,
+    topic_name: r.topic_name as string,
+    event_type: r.event_type as string,
+    payload: JSON.parse((r.payload as string) || '{}'),
+    created_at: r.created_at as string,
+  }));
+}
+
+/**
+ * Mark an event as acknowledged so it won't appear in pendingEvents().
+ */
+export function acknowledgeEvent(eventId: number): void {
+  const db = getDb();
+  db.prepare('UPDATE events SET acknowledged = 1 WHERE id = ?').run(eventId);
 }
 
 /**
@@ -658,6 +697,21 @@ function cmdSwitch(args: string[]): string {
   const name = args[0];
   try {
     switchTopic(name);
+
+    // P2-28: Check for pending events on the target topic and inject as context
+    const events = pendingEvents(name);
+    if (events.length > 0) {
+      const summaries = events
+        .map((e) => `[${e.created_at}] ${e.event_type}: ${JSON.stringify(e.payload)}`)
+        .join('\n      ');
+      console.log(`[topic] Pending events for "${name}":\n      ${summaries}`);
+
+      // Auto-acknowledge events after delivery
+      for (const ev of events) {
+        acknowledgeEvent(ev.id);
+      }
+    }
+
     return `Switched to topic "${name}". CWD is now ${process.cwd()}.`;
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
