@@ -478,10 +478,3 @@ export async function stopMCPManager(): Promise<void> {
   _servers.clear();
   writeAllStatus();
 }
-
-/**
- * 即时刷新状态写入（供 scheduler 在关键节点调用）。
- */
-export function flushMCPStatus(): void {
-  writeAllStatus();
-}

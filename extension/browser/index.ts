@@ -105,14 +105,3 @@ export async function webExtract(opts: WebExtractOptions): Promise<BrowserAction
   }
 }
 
-/**
- * Get a quick summary of browser tool capabilities.
- */
-export function getBrowserToolInfo(): string {
-  return [
-    'Available browser actions:',
-    '  web_search(query, limit?) — Search the web via DuckDuckGo',
-    '  web_extract(url, maxLength?) — Fetch and extract webpage content',
-    'No API key required.',
-  ].join('\n');
-}

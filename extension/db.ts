@@ -498,27 +498,6 @@ export function getSessionMeta(tag: string): SessionMeta | null {
   };
 }
 
-/** Archive a session (soft-delete with timestamp). */
-export function archiveSession(tag: string): void {
-  const db = getDb();
-  db.prepare('UPDATE sessions SET archived_at = ?, updated_at = ? WHERE tag = ?')
-    .run(Date.now(), Date.now(), tag);
-}
-
-/** Un-archive a session. */
-export function unarchiveSession(tag: string): void {
-  const db = getDb();
-  db.prepare('UPDATE sessions SET archived_at = 0, updated_at = ? WHERE tag = ?')
-    .run(Date.now(), tag);
-}
-
-/** Set the parent session (for session forking/branching). */
-export function setSessionParent(tag: string, parentTag: string): void {
-  const db = getDb();
-  db.prepare('UPDATE sessions SET parent_id = ?, updated_at = ? WHERE tag = ?')
-    .run(parentTag, Date.now(), tag);
-}
-
 export function listSessions(): SessionMeta[] {
   const db = getDb();
   const rows = db.prepare(
@@ -560,24 +539,6 @@ export function deleteSession(tag: string): void {
     db.exec('ROLLBACK');
     throw e;
   }
-}
-
-export function deleteOldSessions(cutoffMs: number): number {
-  const db = getDb();
-  // Skip archived sessions — they are soft-deleted and preserved
-  const rows = db.prepare(
-    'SELECT tag FROM sessions WHERE updated_at < ? AND archived_at = 0',
-  ).all(cutoffMs) as { tag: string }[];
-  for (const r of rows) {
-    deleteSession(r.tag);
-  }
-  return rows.length;
-}
-
-export function sessionCount(): number {
-  const db = getDb();
-  const row = db.prepare('SELECT COUNT(*) AS cnt FROM sessions').get() as { cnt: number };
-  return row.cnt;
 }
 
 // ── Agents ───────────────────────────────────────────────
@@ -842,96 +803,18 @@ export function deleteTodo(id: number): void {
   db.prepare('DELETE FROM todos WHERE id = ?').run(id);
 }
 
-// ── Slug generation (P3) ────────────────────────────────
+// ── Summary stats ────────────────────────────────────────
 
-const ADJECTIVES = [
-  'curious', 'brave', 'calm', 'eager', 'fancy', 'golden', 'happy', 'jolly',
-  'keen', 'lucky', 'merry', 'neat', 'proud', 'quick', 'quiet', 'rapid',
-  'shy', 'silent', 'sunny', 'swift', 'tiny', 'warm', 'wise', 'young',
-  'bold', 'bright', 'cool', 'crisp', 'dapper', 'droll', 'faint', 'fresh',
-  'gentle', 'grand', 'humble', 'jolly', 'kind', 'lively', 'mellow', 'mild',
-  'noble', 'odd', 'peppy', 'plain', 'regal', 'royal', 'sharp', 'smooth',
-  'spry', 'stark', 'sturdy', 'subtle', 'sweet', 'tame', 'taut', 'vast',
-];
-
-const NOUNS = [
-  'cabin', 'brook', 'cloud', 'dawn', 'delta', 'dune', 'echo', 'ember',
-  'frost', 'glade', 'glen', 'harbor', 'haven', 'islet', 'knoll', 'lagoon',
-  'marsh', 'meadow', 'mirth', 'moss', 'oasis', 'pixel', 'pond', 'prairie',
-  'reef', 'ridge', 'rivet', 'rock', 'shallows', 'shard', 'spark', 'stone',
-  'surge', 'swamp', 'swirl', 'thaw', 'torch', 'tower', 'trace', 'vale',
-  'vertex', 'vista', 'vortex', 'wisp', 'yield', 'zenith', 'bloom', 'cove',
-];
-
-/**
- * Generate a random readable slug like "curious-cabin".
- */
-export function generateSlug(): string {
-  const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
-  const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
-  return `${adj}-${noun}`;
+export interface UpdateSummaryOptions {
+  /** 'accumulate' (default): add values to existing counts (old updateSessionSummary behavior).
+   *  'replace': overwrite existing counts (old updateSessionSummaryStats behavior). */
+  mode?: 'accumulate' | 'replace';
 }
 
 /**
- * Ensure a session has a slug. If empty, generate one and save it.
+ * Update session summary stats. Merges the old updateSessionSummary (accumulate)
+ * and updateSessionSummaryStats (replace) into one function with a mode parameter.
  */
-export function ensureSlug(tag: string): string {
-  const meta = getSessionMeta(tag);
-  if (meta?.slug) return meta.slug;
-  const slug = generateSlug();
-  const db = getDb();
-  db.prepare('UPDATE sessions SET slug = ?, updated_at = ? WHERE tag = ?')
-    .run(slug, Date.now(), tag);
-  return slug;
-}
-
-// ── Session fork (P2) ───────────────────────────────────
-
-/**
- * Fork a session: create a new session with the same messages.
- * Returns the new session tag.
- */
-export function forkSession(
-  sourceTag: string,
-  newTag: string,
-  newName?: string,
-): SessionMeta | null {
-  const source = getSessionMeta(sourceTag);
-  if (!source) return null;
-
-  const db = getDb();
-  const now = Date.now();
-  const slug = generateSlug();
-
-  // Create new session
-  upsertSession(newTag, {
-    name: newName || `${source.name} (fork)` || slug,
-    cwd: source.cwd,
-    agent: source.agent || undefined,
-    model: source.model !== '{}' ? source.model : undefined,
-    parentId: sourceTag,
-    slug,
-  });
-
-  // Copy messages
-  const messages = getMessages(sourceTag);
-  for (const msg of messages) {
-    insertMessage(newTag, msg.role, msg.content, msg.timeCreated);
-  }
-
-  // Copy todos
-  const todos = getTodos(sourceTag);
-  for (const todo of todos) {
-    db.prepare(
-      'INSERT INTO todos (session_id, content, status, priority, position, time_created, time_updated) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    ).run(newTag, todo.content, 'pending', todo.priority, todo.position, now, now);
-  }
-
-  return getSessionMeta(newTag);
-}
-
-// ── Summary stats (P4) ──────────────────────────────────
-
 export function updateSessionSummary(
   tag: string,
   data: {
@@ -939,18 +822,22 @@ export function updateSessionSummary(
     additions?: number;
     deletions?: number;
   },
+  opts?: UpdateSummaryOptions,
 ): void {
   const db = getDb();
+  const mode = opts?.mode ?? 'accumulate';
+  const op = mode === 'accumulate' ? '+' : '';
   db.prepare(`
     UPDATE sessions SET
-      summary_files = summary_files + ?,
-      summary_additions = summary_additions + ?,
-      summary_deletions = summary_deletions + ?,
+      summary_files = summary_files ${op} ?,
+      summary_additions = summary_additions ${op} ?,
+      summary_deletions = summary_deletions ${op} ?,
       updated_at = ?
     WHERE tag = ?
   `).run(data.files ?? 0, data.additions ?? 0, data.deletions ?? 0, Date.now(), tag);
 }
 
+/** @deprecated Use updateSessionSummary with { mode: 'replace' } instead. */
 export function updateSessionSummaryStats(
   tag: string,
   data: {
@@ -959,15 +846,7 @@ export function updateSessionSummaryStats(
     deletions?: number;
   },
 ): void {
-  const db = getDb();
-  db.prepare(`
-    UPDATE sessions SET
-      summary_files = ?,
-      summary_additions = ?,
-      summary_deletions = ?,
-      updated_at = ?
-    WHERE tag = ?
-  `).run(data.files ?? 0, data.additions ?? 0, data.deletions ?? 0, Date.now(), tag);
+  updateSessionSummary(tag, data, { mode: 'replace' });
 }
 
 // ── Token Usage ──────────────────────────────────────────

@@ -144,24 +144,6 @@ async function main(): Promise<void> {
 
   log.info(`Background worker starting for topic "${topicName}"`);
 
-  // ── Register OS signal handlers (P1-05) ──
-  // These handle SIGTERM (graceful), SIGINT (interrupt), and SIGHUP (hangup)
-  // to prevent orphan children when the parent dies without cleanup.
-  function handleSignal(signal: string): void {
-    log.info(`Received ${signal}, flushing pending work and exiting`);
-    if (currentTaskPromise) {
-      // Wait briefly for the task to finish, then exit
-      currentTaskPromise.finally(() => process.exit(0));
-      // But don't wait forever — exit after 2s regardless
-      setTimeout(() => process.exit(0), 2000);
-    } else {
-      process.exit(0);
-    }
-  }
-  process.on('SIGTERM', () => handleSignal('SIGTERM'));
-  process.on('SIGINT', () => handleSignal('SIGINT'));
-  process.on('SIGHUP', () => handleSignal('SIGHUP'));
-
   // ── Set up IPC handlers ──
   let residentMode = false;
   let currentTaskPromise: Promise<boolean> | null = null;

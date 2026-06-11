@@ -15,7 +15,7 @@
 import { DatabaseSync, type DatabaseSync as Database } from 'node:sqlite';
 import { readFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import { resolve, relative, extname, basename, dirname, join } from 'node:path';
-import { YU_HOME } from '../paths.js';
+import { YU_HOME, formatBytes } from '../paths.js';
 
 // ── Constants ──────────────────────────────────────────
 
@@ -378,12 +378,4 @@ export function knowledgeCommand(subcommand: string, args: string[]): string {
              '       yu knowledge index [project-dir]\n' +
              '       yu knowledge status';
   }
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  const val = bytes / 1024 ** i;
-  return `${val.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }

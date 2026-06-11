@@ -44,10 +44,9 @@
   },
   "dependencies": {
     "@colbymchenry/codegraph": "latest",
-    "@earendil-works/pi-coding-agent": ">=0.74.0",
-    "@tintinweb/pi-subagents": "^0.8.0",
+    "@earendil-works/pi-coding-agent": "^0.79.1",
+    "@tintinweb/pi-subagents": "^0.10.0",
     "duckduckgo-websearch": "^2.0.3",
-    "opencode-codebase-index": "latest",
     "zod": "^3.23.8"
   },
   "devDependencies": {

@@ -160,19 +160,8 @@ export class Supervisor {
 
     // ── Phase 3: Write spawn event and check orchestrator (P2-11) ──
     // Moved from topic.ts setStatus to here — event is now written at actual spawn time.
-    // P2-13: Wrap event writes in try/catch to prevent crashes.
-    try {
-      writeEvent(topicName, 'child_spawned', { pid: child.pid, status: 'spawning' });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log.error(`Failed to write child_spawned event for "${topicName}": ${msg}`);
-    }
-    try {
-      checkAndTriggerOrchestrator(topicName, 'child_spawned', { pid: child.pid, status: 'spawning' });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log.error(`Failed to trigger orchestrator for "${topicName}": ${msg}`);
-    }
+    this.safeWriteEvent(topicName, 'child_spawned', { pid: child.pid, status: 'spawning' });
+    this.safeTriggerOrchestrator(topicName, 'child_spawned', { pid: child.pid, status: 'spawning' });
 
     // ── IPC message handler ──
     child.on('message', (msg: unknown) => {
@@ -219,18 +208,8 @@ export class Supervisor {
           existing.status = 'degraded';
           log.error(`Child "${topicName}" reported error:`, typed.payload as Record<string, unknown> | undefined);
           // P2-13: Wrap event writes in try/catch
-          try {
-            writeEvent(topicName, 'child_degraded', { reason: 'child_error', error: typed.payload as Record<string, unknown> | undefined, pid: existing.pid });
-          } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            log.error(`Failed to write child_degraded event for "${topicName}": ${msg}`);
-          }
-          try {
-            checkAndTriggerOrchestrator(topicName, 'child_degraded', { reason: 'child_error', error: typed.payload as Record<string, unknown> | undefined, pid: existing.pid });
-          } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            log.error(`Failed to trigger orchestrator for "${topicName}": ${msg}`);
-          }
+          this.safeWriteEvent(topicName, 'child_degraded', { reason: 'child_error', error: typed.payload as Record<string, unknown> | undefined, pid: existing.pid });
+          this.safeTriggerOrchestrator(topicName, 'child_degraded', { reason: 'child_error', error: typed.payload as Record<string, unknown> | undefined, pid: existing.pid });
           break;
         case 'status_update':
           log.debug(`Child "${topicName}" status:`, typed.payload as Record<string, unknown> | undefined);
@@ -246,30 +225,14 @@ export class Supervisor {
           existing.status = 'dead';
           log.warn(`Child "${topicName}" killed by signal ${signal}`);
           // Phase 3: Write crash event
-          try {
-            writeEvent(topicName, 'child_crashed', { signal, pid: existing.pid });
-          } catch (err: unknown) {
-            log.error(`Failed to write child_crashed event: ${err}`);
-          }
-          try {
-            checkAndTriggerOrchestrator(topicName, 'child_crashed', { signal, pid: existing.pid, reason: 'killed' });
-          } catch (err: unknown) {
-            log.error(`Failed to trigger orchestrator: ${err}`);
-          }
+          this.safeWriteEvent(topicName, 'child_crashed', { signal, pid: existing.pid });
+          this.safeTriggerOrchestrator(topicName, 'child_crashed', { signal, pid: existing.pid, reason: 'killed' });
         } else if (code !== null && code !== 0) {
           existing.status = 'dead';
           log.warn(`Child "${topicName}" exited with code ${code}`);
           // Phase 3: Write crash event
-          try {
-            writeEvent(topicName, 'child_crashed', { exitCode: code, pid: existing.pid });
-          } catch (err: unknown) {
-            log.error(`Failed to write child_crashed event: ${err}`);
-          }
-          try {
-            checkAndTriggerOrchestrator(topicName, 'child_crashed', { exitCode: code, pid: existing.pid, reason: 'non_zero_exit' });
-          } catch (err: unknown) {
-            log.error(`Failed to trigger orchestrator: ${err}`);
-          }
+          this.safeWriteEvent(topicName, 'child_crashed', { exitCode: code, pid: existing.pid });
+          this.safeTriggerOrchestrator(topicName, 'child_crashed', { exitCode: code, pid: existing.pid, reason: 'non_zero_exit' });
         } else {
           // P1-03: Check if kill was requested BEFORE setting 'stopped'
           // This prevents the exit handler from overriding killChild's expected 'stopped' status
@@ -280,16 +243,8 @@ export class Supervisor {
           existing.status = 'stopped';
           log.info(`Child "${topicName}" exited cleanly (code=0)`);
           // Phase 3: Write task done event
-          try {
-            writeEvent(topicName, 'child_task_done', { exitCode: code ?? 0, pid: existing.pid });
-          } catch (err: unknown) {
-            log.error(`Failed to write child_task_done event: ${err}`);
-          }
-          try {
-            checkAndTriggerOrchestrator(topicName, 'child_task_done', { exitCode: code ?? 0, pid: existing.pid, status: 'completed' });
-          } catch (err: unknown) {
-            log.error(`Failed to trigger orchestrator: ${err}`);
-          }
+          this.safeWriteEvent(topicName, 'child_task_done', { exitCode: code ?? 0, pid: existing.pid });
+          this.safeTriggerOrchestrator(topicName, 'child_task_done', { exitCode: code ?? 0, pid: existing.pid, status: 'completed' });
         }
       }
       this.processes.delete(topicName);
@@ -319,11 +274,7 @@ export class Supervisor {
         if (existing && existing.status === 'spawning') {
           existing.status = 'spawn_failed';
           // P2-27: Write spawn_failed event for the spawning→spawn_failed path
-          try {
-            writeEvent(topicName, 'child_spawn_failed', { reason: 'ping_timeout', error: msg, pid: existing.pid });
-          } catch (err: unknown) {
-            log.error(`Failed to write spawn_failed event: ${err}`);
-          }
+          this.safeWriteEvent(topicName, 'child_spawn_failed', { reason: 'ping_timeout', error: msg, pid: existing.pid });
           this.killChild(topicName);
         }
       }
@@ -336,11 +287,7 @@ export class Supervisor {
         log.warn(`Child "${topicName}" spawning timed out after ${cfg.timeout}ms, killing`);
         current.status = 'spawn_failed';
         // P2-27: Write spawn_failed event for the spawning timeout path
-        try {
-          writeEvent(topicName, 'child_spawn_failed', { reason: 'spawn_timeout', timeout: cfg.timeout, pid: current.pid });
-        } catch (err: unknown) {
-          log.error(`Failed to write spawn_failed event: ${err}`);
-        }
+        this.safeWriteEvent(topicName, 'child_spawn_failed', { reason: 'spawn_timeout', timeout: cfg.timeout, pid: current.pid });
         this.killChild(topicName);
       }
       this.spawningTimers.delete(topicName);
@@ -398,6 +345,30 @@ export class Supervisor {
       children: Array.from(this.children.values()),
       daemonVersion: getDaemonVersion(),
     };
+  }
+
+  /**
+   * Safely write an event to the event bus, catching and logging errors.
+   */
+  private safeWriteEvent(topicName: string, kind: string, data: Record<string, unknown>): void {
+    try {
+      writeEvent(topicName, kind, data);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.error(`Failed to write ${kind} event for "${topicName}": ${msg}`);
+    }
+  }
+
+  /**
+   * Safely trigger the orchestrator, catching and logging errors.
+   */
+  private safeTriggerOrchestrator(topicName: string, eventType: string, data: Record<string, unknown>): void {
+    try {
+      checkAndTriggerOrchestrator(topicName, eventType, data);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.error(`Failed to trigger orchestrator for "${topicName}": ${msg}`);
+    }
   }
 
   /**
