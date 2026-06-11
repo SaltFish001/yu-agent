@@ -282,7 +282,10 @@ export function switchTopic(name: string): void {
   `).run(now, topic.id);
 
   // Update cwd for the main session
-  process.chdir(topic.dir);
+  // Guard: only chdir if the topic's directory still exists
+  if (topic.dir && existsSync(topic.dir)) {
+    process.chdir(topic.dir);
+  }
 }
 
 /**
@@ -469,6 +472,28 @@ export function pendingEvents(topicName: string): Array<{
 export function acknowledgeEvent(eventId: number): void {
   const db = getDb();
   db.prepare('UPDATE events SET acknowledged = 1 WHERE id = ?').run(eventId);
+}
+
+/**
+ * Delete events older than maxAgeDays.
+ * Returns the number of deleted rows.
+ * Exported for cron jobs and `yu doctor`.
+ */
+export function cleanOldEvents(maxAgeDays: number = 7): number {
+  const db = getDb();
+  const cutoffDate = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000);
+  // Format as 'YYYY-MM-DD HH:MM:SS' to match SQLite datetime('now') output
+  const cutoff = cutoffDate.toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
+  const result = db.prepare("DELETE FROM events WHERE created_at < ?").run(cutoff);
+  return Number(result.changes);
+}
+
+/**
+ * Test helper — override the internal DB singleton with an in-memory DB.
+ * Pass null to reset to the real file-based DB.
+ */
+export function __setDbForTest(db: DatabaseSync | null): void {
+  _db = db;
 }
 
 /**
@@ -700,6 +725,20 @@ function cmdSwitch(args: string[]): string {
   const name = args[0];
   try {
     switchTopic(name);
+
+    // Auto-cleanup old events on topic switch (only if > 1000 events exist)
+    try {
+      const db = getDb();
+      const countRow = db.prepare('SELECT COUNT(*) AS cnt FROM events').get() as { cnt: number };
+      if (Number(countRow?.cnt ?? 0) > 1000) {
+        const removed = cleanOldEvents(7);
+        if (removed > 0) {
+          console.log(`[topic] Cleaned up ${removed} old event(s).`);
+        }
+      }
+    } catch {
+      // best-effort cleanup
+    }
 
     // P2-28: Check for pending events on the target topic and inject as context
     const events = pendingEvents(name);
