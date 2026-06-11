@@ -60,6 +60,9 @@ interface OrchestratorConfig {
 
 const ORCHESTRATOR_PATH = resolve(homedir(), '.yu', 'orchestrator.json');
 
+// P2-20: Connection cache for getOrchDb() — prevents resource leaks
+const _orchDbCache = new Map<string, DatabaseSync>();
+
 // P2-22: Circuit breaker — track orchestration depth per event to prevent
 // infinite recursion loops. Each time an event triggers an orchestration action
 // that writes a new event, depth increases. If depth exceeds MAX_ORCH_DEPTH,
@@ -100,14 +103,35 @@ function loadRules(): OrchestratorRule[] {
 }
 
 /**
- * Open a dedicated DB connection for orchestration writes.
+ * Open a shared DB connection for orchestration writes.
+ * Uses a module-level cache to avoid opening a new DatabaseSync every call.
+ * P2-20: Connection cache prevents resource leaks.
  */
 function getOrchDb(): DatabaseSync {
   const dbPath = resolve(homedir(), '.yu', 'topics.db');
-  const db = new DatabaseSync(dbPath);
-  db.exec('PRAGMA journal_mode=WAL');
-  db.exec('PRAGMA busy_timeout=5000');
+  let db = _orchDbCache.get(dbPath);
+  if (!db) {
+    db = new DatabaseSync(dbPath);
+    db.exec('PRAGMA journal_mode=WAL');
+    db.exec('PRAGMA busy_timeout=5000');
+    _orchDbCache.set(dbPath, db);
+  }
   return db;
+}
+
+/**
+ * Close all cached orchestrator DB connections.
+ * Call during shutdown to clean up resources.
+ */
+export function closeOrchDb(): void {
+  for (const [key, db] of _orchDbCache) {
+    try {
+      db.close();
+    } catch {
+      // Best-effort close
+    }
+  }
+  _orchDbCache.clear();
 }
 
 /**
@@ -197,7 +221,6 @@ function actionSpawnChild(topicName: string, promptTemplate: string, eventPayloa
       db.exec('ROLLBACK');
       console.warn(`[orchestrator] Cannot spawn child for "${topicName}": background limit reached (${currentBg}/${maxBg})`);
       writeEvent(topicName, 'child_spawn_failed', { reason: 'background_limit', maxBg, currentBg });
-      db.close();
       return;
     }
 
@@ -212,7 +235,6 @@ function actionSpawnChild(topicName: string, promptTemplate: string, eventPayloa
         db.exec('ROLLBACK');
         console.warn(`[orchestrator] Cannot spawn child for "${topicName}": topic status is "${topicRow.status}", expected "idle"`);
         writeEvent(topicName, 'child_spawn_failed', { reason: 'topic_not_idle', status: topicRow.status });
-        db.close();
         return;
       }
       const now = new Date().toISOString();
@@ -242,11 +264,10 @@ function actionSpawnChild(topicName: string, promptTemplate: string, eventPayloa
     db.exec('ROLLBACK');
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[orchestrator] Transaction failed for spawn_child on "${topicName}": ${msg}`);
-    db.close();
     return;
   }
 
-  db.close();
+  // No db.close() — connection is cached and shared (P2-20)
 
   // Write orchestrator event for traceability
   writeEvent(topicName, 'child_spawned', { source: 'orchestrator', prompt });

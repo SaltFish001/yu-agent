@@ -55,35 +55,24 @@ function writeLog(level: string, message: string): void {
   }
 }
 
-// Override console.log/error to go to the log file
-const origLog = console.log;
-const origError = console.error;
-const origWarn = console.warn;
-
-console.log = (...args: unknown[]) => {
-  writeLog('INFO', args.map(String).join(' '));
-};
-console.error = (...args: unknown[]) => {
-  writeLog('ERROR', args.map(String).join(' '));
-};
-console.warn = (...args: unknown[]) => {
-  writeLog('WARN', args.map(String).join(' '));
-};
-
-// Also redirect actual stdout/stderr for any code that uses process.stdout.write
-const logStream = appendFileSync.bind(null, LOG_FILE, 'utf-8') as unknown as (chunk: string) => void;
-
-// We can't easily override process.stdout.write without breaking things,
-// so console overrides above are the primary mechanism.
+/**
+ * P2-19: Structured daemon log helper.
+ * Writes a formatted log entry to the supervisor log file with a proper
+ * daemon-level prefix. Uses fs.appendFileSync directly as a fallback
+ * instead of monkey-patching console.* methods.
+ */
+function daemonLog(level: string, message: string): void {
+  writeLog(level, message);
+}
 
 // ── Write PID file ──────────────────────────────────────
 
 try {
   writeFileSync(PID_PATH, String(process.pid) + '\n');
-  console.log(`Daemon started (PID ${process.pid})`);
+  daemonLog('INFO', `Daemon started (PID ${process.pid})`);
 } catch (err: unknown) {
   const msg = err instanceof Error ? err.message : String(err);
-  console.error(`Failed to write PID file: ${msg}`);
+  daemonLog('ERROR', `Failed to write PID file: ${msg}`);
   process.exit(1);
 }
 
@@ -113,7 +102,7 @@ function cleanupZombieBackgroundRecords(): number {
     return result.changes;
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(`K7 migration failed: ${msg}`);
+    daemonLog('ERROR', `K7 migration failed: ${msg}`);
     return 0;
   }
 }
@@ -122,14 +111,14 @@ function cleanupZombieBackgroundRecords(): number {
 
 const cleanedCount = cleanupZombieBackgroundRecords();
 if (cleanedCount > 0) {
-  console.log(`K7 migration: cleaned up ${cleanedCount} zombie background topic(s)`);
+  daemonLog('INFO', `K7 migration: cleaned up ${cleanedCount} zombie background topic(s)`);
 }
 
 // ── Initialize Supervisor ───────────────────────────────
 
 const supervisor = new Supervisor();
 supervisor.start();
-console.log('Supervisor initialized');
+daemonLog('INFO', 'Supervisor initialized');
 
 // ── P2-12: Periodic K7 re-check during daemon lifetime ────
 // Recheck for zombie background records every hour to catch
@@ -137,7 +126,7 @@ console.log('Supervisor initialized');
 setInterval(() => {
   const recheckCount = cleanupZombieBackgroundRecords();
   if (recheckCount > 0) {
-    console.log(`Periodic K7 re-check: cleaned up ${recheckCount} zombie background topic(s)`);
+    daemonLog('INFO', `Periodic K7 re-check: cleaned up ${recheckCount} zombie background topic(s)`);
   }
 }, 60 * 60 * 1000); // Every hour
 
@@ -152,14 +141,14 @@ async function pickupBackgroundTasks(): Promise<void> {
     const bgTopics = topics.filter(t => t.status === 'background');
 
     if (bgTopics.length === 0) {
-      console.log('No pending background tasks found');
+      daemonLog('INFO', 'No pending background tasks found');
       return;
     }
 
-    console.log(`Found ${bgTopics.length} pending background task(s)`);
+    daemonLog('INFO', `Found ${bgTopics.length} pending background task(s)`);
 
     for (const topic of bgTopics) {
-      console.log(`Picking up task for topic "${topic.name}": ${topic.summary.substring(0, 100)}`);
+      daemonLog('INFO', `Picking up task for topic "${topic.name}": ${topic.summary.substring(0, 100)}`);
 
       // P2-25: Add missing config fields to daemon task pickup
       const config: Partial<ChildSpawnConfig> = {
@@ -179,21 +168,21 @@ async function pickupBackgroundTasks(): Promise<void> {
       for (let attempt = 0; attempt <= maxRetries; attempt++) {
         const child = supervisor.spawnChild(topic.name, config);
         if (child) {
-          console.log(`Forked child for "${topic.name}" (PID ${child.pid})`);
+          daemonLog('INFO', `Forked child for "${topic.name}" (PID ${child.pid})`);
           lastError = null;
           break;
         } else {
           lastError = `Failed to fork child for "${topic.name}" (attempt ${attempt + 1}/${maxRetries + 1})`;
-          console.error(lastError);
+          daemonLog('ERROR', lastError);
           if (attempt < maxRetries) {
             const delay = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
-            console.log(`Retrying in ${delay}ms...`);
+            daemonLog('INFO', `Retrying in ${delay}ms...`);
             await new Promise(resolve => setTimeout(resolve, delay));
           }
         }
       }
       if (lastError) {
-        console.error(`Marking topic "${topic.name}" as spawn_failed after ${maxRetries + 1} attempts`);
+        daemonLog('ERROR', `Marking topic "${topic.name}" as spawn_failed after ${maxRetries + 1} attempts`);
         try {
           const db = new DatabaseSync(resolve(homedir(), '.yu', 'topics.db'));
           db.exec('PRAGMA journal_mode=WAL');
@@ -201,20 +190,20 @@ async function pickupBackgroundTasks(): Promise<void> {
           db.close();
         } catch (dbErr: unknown) {
           const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);
-          console.error(`Failed to mark topic as spawn_failed: ${msg}`);
+          daemonLog('ERROR', `Failed to mark topic as spawn_failed: ${msg}`);
         }
       }
     }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(`Error picking up background tasks: ${msg}`);
+    daemonLog('ERROR', `Error picking up background tasks: ${msg}`);
   }
 }
 
 // ── Run pickup ──────────────────────────────────────────
 
 pickupBackgroundTasks().catch(err => {
-  console.error('Fatal error during task pickup:', String(err));
+  daemonLog('ERROR', `Fatal error during task pickup: ${String(err)}`);
 });
 
 // ── Status reporting interval ───────────────────────────
@@ -225,7 +214,7 @@ setInterval(() => {
     c.status !== 'dead' && c.status !== 'stopped' && c.status !== 'spawn_failed',
   );
   if (status.children.length > 0) {
-    console.log(`Status: ${alive.length} running / ${status.children.length} total (uptime: ${Math.round(status.uptime / 1000)}s)`);
+    daemonLog('INFO', `Status: ${alive.length} running / ${status.children.length} total (uptime: ${Math.round(status.uptime / 1000)}s)`);
   }
 }, 30_000); // Every 30 seconds
 
@@ -235,7 +224,7 @@ setInterval(() => {
  * P2-26: Extract common shutdown logic to ensure PID file is always cleaned up.
  */
 function handleShutdown(signal: string): void {
-  console.log(`Received ${signal}, shutting down gracefully...`);
+  daemonLog('INFO', `Received ${signal}, shutting down gracefully...`);
   supervisor.shutdown();
   // P2-26: Clean up PID file even on non-SIGKILL shutdown paths
   try {
@@ -245,7 +234,7 @@ function handleShutdown(signal: string): void {
   } catch {
     // Best-effort
   }
-  console.log('Daemon shut down');
+  daemonLog('INFO', 'Daemon shut down');
   process.exit(0);
 }
 
@@ -255,14 +244,14 @@ process.on('SIGINT', () => handleShutdown('SIGINT'));
 // ── Uncaught exception handler ──────────────────────────
 
 process.on('uncaughtException', (err) => {
-  console.error(`Uncaught exception: ${err.message}\n${err.stack ?? ''}`);
+  daemonLog('ERROR', `Uncaught exception: ${err.message}\n${err.stack ?? ''}`);
   // Don't exit — try to stay alive
 });
 
 process.on('unhandledRejection', (reason) => {
-  console.error(`Unhandled rejection: ${String(reason)}`);
+  daemonLog('ERROR', `Unhandled rejection: ${String(reason)}`);
 });
 
 // ── Keep alive ──────────────────────────────────────────
 
-console.log('Daemon ready, waiting for tasks...');
+daemonLog('INFO', 'Daemon ready, waiting for tasks...');
