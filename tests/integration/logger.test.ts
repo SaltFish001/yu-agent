@@ -122,4 +122,85 @@ describe('Logger', () => {
     expect(rowsB.length).toBeGreaterThan(0);
     expect(rowsB[0].message).toContain('module B');
   });
+
+  // ── Additional level coverage ───────────────────────────
+
+  it('persists fatal-level entries', async () => {
+    const log = createLogger('test-logger');
+    log.fatal('critical error occurred');
+
+    await flushLogs();
+
+    const db = getDb();
+    const rows = db
+      .prepare("SELECT * FROM logs WHERE level = 'fatal' AND module = ?")
+      .all('test-logger') as Array<Record<string, unknown>>;
+
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows[0].message).toContain('critical error');
+    expect(rows[0].level).toBe('fatal');
+  });
+
+  // ── Data field ──────────────────────────────────────────
+
+  it('persists data field alongside log entry', async () => {
+    const log = createLogger('test-logger');
+    log.info('with data', { userId: 42, action: 'test', tags: ['a', 'b'] });
+
+    await flushLogs();
+
+    const db = getDb();
+    const rows = db
+      .prepare("SELECT * FROM logs WHERE level = 'info' AND module = ?")
+      .all('test-logger') as Array<Record<string, unknown>>;
+
+    expect(rows.length).toBeGreaterThan(0);
+    const dataField = JSON.parse(rows[0].data as string);
+    expect(dataField.userId).toBe(42);
+    expect(dataField.action).toBe('test');
+    expect(dataField.tags).toEqual(['a', 'b']);
+  });
+
+  // ── Timestamp ───────────────────────────────────────────
+
+  it('includes valid ISO 8601 timestamp in DB entry', async () => {
+    const log = createLogger('test-logger');
+    log.info('timestamp check');
+
+    await flushLogs();
+
+    const db = getDb();
+    const rows = db
+      .prepare("SELECT * FROM logs WHERE module = ? AND level = 'info'")
+      .all('test-logger') as Array<Record<string, unknown>>;
+
+    expect(rows.length).toBeGreaterThan(0);
+    const ts = rows[0].timestamp as string;
+    expect(ts).toBeTruthy();
+    // Verify ISO 8601 format
+    expect(() => new Date(ts)).not.toThrow();
+    expect(new Date(ts).toISOString()).toBe(ts);
+  });
+
+  // ── Error serialization ─────────────────────────────────
+
+  it('serializes error with stack trace for fatal level', async () => {
+    const log = createLogger('test-logger');
+    const err = new Error('fatal failure');
+    log.fatal('system crashed', err);
+
+    await flushLogs();
+
+    const db = getDb();
+    const rows = db
+      .prepare("SELECT * FROM logs WHERE level = 'fatal' AND module = ?")
+      .all('test-logger') as Array<Record<string, unknown>>;
+
+    expect(rows.length).toBeGreaterThan(0);
+    const errorField = JSON.parse(rows[0].error as string);
+    expect(errorField.name).toBe('Error');
+    expect(errorField.message).toBe('fatal failure');
+    expect(errorField.stack).toBeTruthy();
+    expect(errorField.stack).toContain('Error: fatal failure');
+  });
 });
