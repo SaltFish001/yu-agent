@@ -632,6 +632,7 @@ Usage:
   yu topic archive <name>          Archive a topic (soft-delete)
   yu topic bg <name> <prompt...>   Run a background task on a topic
   yu topic status                  Show background task progress
+  yu topic events [topic-name]     Show pending events for a topic (default: all topics grouped)
 
 Data stored in ~/.yu/topics.db (SQLite).`;
 
@@ -651,6 +652,8 @@ export function topicCommand(subcommand: string, args: string[]): string {
       return cmdBg(args);
     case 'status':
       return cmdStatus();
+    case 'events':
+      return cmdEvents(args);
     case 'help':
     default:
       return HELP_TEXT;
@@ -875,6 +878,110 @@ function cmdStatus(): string {
     lines.push(`  ⏳ ${t.name}`);
     lines.push(`     summary: ${t.summary || '(no summary)'}`);
     lines.push(`     turns: ${t.turns}  ${lastActive}`);
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Retrieve all unacknowledged events across all topics.
+ */
+function pendingEventsAll(): Array<{
+  id: number;
+  topic_name: string;
+  event_type: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+}> {
+  const db = getDb();
+  const rows = db.prepare(
+    `SELECT id, topic_name, event_type, payload, created_at
+     FROM events
+     WHERE acknowledged = 0
+     ORDER BY topic_name, created_at ASC`
+  ).all() as Array<Record<string, unknown>>;
+
+  return rows.map((r) => ({
+    id: r.id as number,
+    topic_name: r.topic_name as string,
+    event_type: r.event_type as string,
+    payload: JSON.parse((r.payload as string) || '{}'),
+    created_at: r.created_at as string,
+  }));
+}
+
+function cmdEvents(args: string[]): string {
+  const topicName = args[0];
+
+  if (topicName) {
+    // Show events for a specific topic
+    const topic = findByName(topicName);
+    if (!topic) {
+      return `Error: Topic "${topicName}" not found.`;
+    }
+
+    const events = pendingEvents(topicName);
+    const recentEvents = events.slice(-20);
+
+    if (recentEvents.length === 0) {
+      return `No pending events for topic "${topicName}".`;
+    }
+
+    const lines: string[] = [];
+    lines.push(`Events for topic "${topicName}" (${recentEvents.length} pending):`);
+    lines.push('');
+    for (const ev of recentEvents) {
+      const payloadStr = JSON.stringify(ev.payload);
+      const truncated = payloadStr.length > 60 ? payloadStr.slice(0, 60) + '…' : payloadStr;
+      const fromTo = ev.payload?.from && ev.payload?.to
+        ? `${ev.payload.from as string} → ${ev.payload.to as string}`
+        : '';
+      lines.push(
+        `  #${ev.id}  ${ev.event_type}${fromTo ? '  ' + fromTo : ''}` +
+        `  ${ev.created_at}`
+      );
+      if (truncated !== '{}') {
+        lines.push(`         ${truncated}`);
+      }
+    }
+    return lines.join('\n');
+  }
+
+  // No topic specified — show events for all topics grouped
+  const allEvents = pendingEventsAll();
+  if (allEvents.length === 0) {
+    return 'No pending events found.';
+  }
+
+  // Group by topic_name
+  const grouped = new Map<string, typeof allEvents>();
+  for (const ev of allEvents) {
+    const list = grouped.get(ev.topic_name) || [];
+    list.push(ev);
+    grouped.set(ev.topic_name, list);
+  }
+
+  const lines: string[] = [];
+  lines.push(`Pending events (${allEvents.length} total):`);
+  lines.push('');
+
+  for (const [topicName, topicEvents] of grouped) {
+    lines.push(`  ── ${topicName} ──`);
+    const recent = topicEvents.slice(-20);
+    for (const ev of recent) {
+      const payloadStr = JSON.stringify(ev.payload);
+      const truncated = payloadStr.length > 60 ? payloadStr.slice(0, 60) + '…' : payloadStr;
+      const fromTo = ev.payload?.from && ev.payload?.to
+        ? `${ev.payload.from as string} → ${ev.payload.to as string}`
+        : '';
+      lines.push(
+        `    #${ev.id}  ${ev.event_type}${fromTo ? '  ' + fromTo : ''}  ${ev.created_at}`
+      );
+      if (truncated !== '{}') {
+        lines.push(`           ${truncated}`);
+      }
+    }
     lines.push('');
   }
 

@@ -14,7 +14,7 @@
 import { createLogger } from './logger.js';
 const log = createLogger('index');
 
-import type { ExtensionAPI, ExtensionCommandContext, ContextEvent } from '@earendil-works/pi-coding-agent';
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, ContextEvent } from '@earendil-works/pi-coding-agent';
 import { registerAgents, validateMcpConfig, validateEnvVars } from './config.js';
 import { startMCPManager } from './mcp-manager.js';
 import { setupMonitor } from './monitor.js';
@@ -124,6 +124,16 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   // ── Input hook (beforeChat equivalent) ──────────────────
   // Intercepts user input in Pi interactive mode, runs it through the
   // scheduler for intent classification and plan execution.
+
+  /**
+   * Adapter: ExtensionContext → Record<string, unknown>
+   * Avoids unsafe `ctx as unknown as Record<string, unknown>` cast.
+   * Only passes fields that executePlan's sessionContext actually uses.
+   */
+  function adaptContext(ctx: ExtensionContext): Record<string, unknown> {
+    return { cwd: ctx.cwd, hasUI: ctx.hasUI, mode: ctx.mode };
+  }
+
   pi.on('input', async (event, ctx) => {
     if (_inBeforeChat) {
       return; // re-entry guard
@@ -150,7 +160,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       // (allow empty agents array — executePlan validates internally)
       if (plan.intent && plan.agents) {
         const { executePlan } = await import('./scheduler.js');
-        const result = await executePlan(plan, inputText, ctx as unknown as Record<string, unknown>);
+        const result = await executePlan(plan, inputText, adaptContext(ctx));
         if (result) {
           // Output the result. In TUI interactive mode, paste into editor
           // so the user sees the response.

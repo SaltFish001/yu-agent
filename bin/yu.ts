@@ -354,6 +354,59 @@ async function runDoctor(jsonOutput?: boolean): Promise<void> {
     results.push({ name: 'Checkpoints', ok: true, detail: `检查失败: ${msg}` });
   }
 
+  // ── Event Channel ──
+  try {
+    const { existsSync: fsExistsSync } = await import('node:fs');
+    const { resolve: resolvePath } = await import('node:path');
+    const { homedir: osHomedir } = await import('node:os');
+    const topicsDbPath = resolvePath(osHomedir(), '.yu', 'topics.db');
+    const dbExists = fsExistsSync(topicsDbPath);
+
+    if (!dbExists) {
+      results.push({
+        name: '事件通道',
+        ok: true,
+        detail: 'topics.db 不存在 (事件通道未初始化, 首次使用时会自动创建)',
+      });
+    } else {
+      const { DatabaseSync } = await import('node:sqlite');
+      const eventDb = new DatabaseSync(topicsDbPath);
+      try {
+        const totalRow = eventDb.prepare('SELECT COUNT(*) AS cnt FROM events').get() as { cnt: number };
+        const unackRow = eventDb.prepare('SELECT COUNT(*) AS cnt FROM events WHERE acknowledged = 0').get() as { cnt: number };
+        const topicsWithPending = eventDb.prepare(
+          `SELECT DISTINCT topic_name FROM events WHERE acknowledged = 0 ORDER BY topic_name`
+        ).all() as Array<{ topic_name: string }>;
+
+        const totalEvents = totalRow?.cnt ?? 0;
+        const unacknowledged = unackRow?.cnt ?? 0;
+        const pendingTopics = topicsWithPending.map(r => r.topic_name);
+
+        if (totalEvents > 0) {
+          const topicList = pendingTopics.length > 0
+            ? pendingTopics.join(', ')
+            : 'none';
+          results.push({
+            name: '事件通道',
+            ok: unacknowledged === 0,
+            detail: `✅ 正常 (总计 ${totalEvents} 事件, ${unacknowledged} 未确认, 待处理主题: ${topicList})`,
+          });
+        } else {
+          results.push({
+            name: '事件通道',
+            ok: true,
+            detail: '✅ 正常 (无事件记录)',
+          });
+        }
+      } finally {
+        eventDb.close();
+      }
+    }
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    results.push({ name: '事件通道', ok: false, detail: `诊断失败: ${msg}` });
+  }
+
   // ── Print results ──
   let allOk = true;
   for (const r of results) {
@@ -634,7 +687,7 @@ async function mainCli(): Promise<void> {
       // Ensure dir exists
       mkdirSync(resolve(homedir(), '.yu'), { recursive: true });
       writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
-      console.log(`Hook "${hookName}" ${current ? 'disabled' : 'enabled'}.`);
+      console.log(`Hook "${hookName}" ${!current ? 'disabled' : 'enabled'}.`);
       process.exit(0);
     }
 

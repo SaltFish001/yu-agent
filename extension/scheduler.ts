@@ -49,36 +49,30 @@ export async function executePlan(
   userInput: string,
   sessionContext: Record<string, unknown> = {},
 ): Promise<string | null> {
-  // ── Pass-through: dispatch to chat agent ──
-  if (plan.pass_through) {
-    try {
-      const chatResult = await spawnAgentWithTimeout({
-        type: 'chat',
-        model: 'v4-flash',
-        id: 'chat-1',
-        task: userInput,
-      }, {});
-      return chatResult?.response || '';
-    } catch (err) {
-      log.warn('Chat agent failed, falling back to pass-through', err);
-      return null;
-    } finally {
-      flushFinalStatus();
+  try {
+    // ── Pass-through: dispatch to chat agent ──
+    if (plan.pass_through) {
+      try {
+        const chatResult = await spawnAgentWithTimeout({
+          type: 'chat',
+          model: 'v4-flash',
+          id: 'chat-1',
+          task: userInput,
+        }, {});
+        return chatResult?.response || '';
+      } catch (err) {
+        log.warn('Chat agent failed, falling back to pass-through', err);
+        return null;
+      }
     }
-  }
 
-  // ── Team mode: multi-agent orchestration ──
-  if (plan.intent === 'team') {
-    try {
+    // ── Team mode: multi-agent orchestration ──
+    if (plan.intent === 'team') {
       const result = await runTeamMode(plan, sessionContext);
       return result;
-    } finally {
-      flushFinalStatus();
     }
-  }
 
-  // ── Multi-agent execution ──
-  try {
+    // ── Multi-agent execution ──
     // Step 2: Build agent map
     const agentTasks = (plan.agents || []).map((a) => ({
       type: a.type,
@@ -140,7 +134,6 @@ export async function executePlan(
         } catch {
           log.warn('git checkout 失败，请手动还原。');
         }
-        flushFinalStatus();
         return '用户已放弃本次变更。';
       }
     }
