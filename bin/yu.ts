@@ -622,6 +622,12 @@ async function mainCli(): Promise<void> {
         process.exit(1);
       }
       const hooks = (config.hooks || {}) as Record<string, { enabled: boolean }>;
+      // Validate: only known hook names can be toggled
+      const knownHooks = ['beforeChat'];
+      if (!knownHooks.includes(hookName)) {
+        console.error(`Unknown hook "${hookName}". Available hooks: ${knownHooks.join(', ')}`);
+        process.exit(1);
+      }
       const current = hooks[hookName]?.enabled ?? true;
       hooks[hookName] = { enabled: !current };
       config.hooks = hooks;

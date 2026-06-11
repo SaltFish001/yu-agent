@@ -147,7 +147,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       if (plan.pass_through) return;
 
       // Execute the plan if we have intent + agents
-      if (plan.intent && plan.agents && plan.agents.length > 0) {
+      // (allow empty agents array — executePlan validates internally)
+      if (plan.intent && plan.agents) {
         const { executePlan } = await import('./scheduler.js');
         const result = await executePlan(plan, inputText, ctx as unknown as Record<string, unknown>);
         if (result) {
