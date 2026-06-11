@@ -18,10 +18,26 @@ import type { ExtensionAPI, ExtensionCommandContext, ContextEvent } from '@earen
 import { registerAgents, validateMcpConfig, validateEnvVars } from './config.js';
 import { startMCPManager } from './mcp-manager.js';
 import { setupMonitor } from './monitor.js';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { MCP_CONFIG_PATH } from './paths.js';
+
+// Module-level re-entry guard to prevent infinite recursion in the input hook
+let _inBeforeChat = false;
+
+/** Load ~/.yu/config.json */
+function loadConfig(): Record<string, unknown> {
+  try {
+    const configPath = resolve(homedir(), '.yu', 'config.json');
+    if (existsSync(configPath)) {
+      return JSON.parse(readFileSync(configPath, 'utf-8'));
+    }
+  } catch {
+    // non-fatal
+  }
+  return {};
+}
 
 export default async function (pi: ExtensionAPI): Promise<void> {
   // Inject DeepSeek API key from ~/.yu/config.json into env for Pi's auth system
@@ -104,6 +120,56 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   } catch (err) {
     log.warn('Environment variable validation failed (non-fatal)', err);
   }
+
+  // ── Input hook (beforeChat equivalent) ──────────────────
+  // Intercepts user input in Pi interactive mode, runs it through the
+  // scheduler for intent classification and plan execution.
+  pi.on('input', async (event, ctx) => {
+    if (_inBeforeChat) {
+      return; // re-entry guard
+    }
+    _inBeforeChat = true;
+    try {
+      // Check config: is the scheduler hook enabled?
+      const config = loadConfig();
+      const hooks = config.hooks as Record<string, { enabled: boolean }> | undefined;
+      if (hooks?.beforeChat?.enabled === false) {
+        return; // hook disabled, let Pi handle normally
+      }
+
+      const inputText = event.text?.trim();
+      if (!inputText) return;
+
+      const { classifyIntent } = await import('./classifier.js');
+      const plan = await classifyIntent(inputText, {});
+
+      // Pass-through: let Pi handle it
+      if (plan.pass_through) return;
+
+      // Execute the plan if we have intent + agents
+      if (plan.intent && plan.agents && plan.agents.length > 0) {
+        const { executePlan } = await import('./scheduler.js');
+        const result = await executePlan(plan, inputText, ctx as unknown as Record<string, unknown>);
+        if (result) {
+          // Output the result. In TUI interactive mode, paste into editor
+          // so the user sees the response.
+          if (ctx.hasUI) {
+            ctx.ui.pasteToEditor(result);
+          } else {
+            console.log(result);
+          }
+          return { action: 'handled' as const };
+        }
+      }
+
+      return;
+    } catch (err) {
+      log.warn('Input hook error (non-fatal, passing through)', err);
+      return;
+    } finally {
+      _inBeforeChat = false;
+    }
+  });
 
   // Register all 7 agent types with pi-subagents
   registerAgents();

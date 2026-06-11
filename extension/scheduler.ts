@@ -37,6 +37,176 @@ import { getRelevantContext } from './knowledge/index.js';
 import { verifyWithLsp, runTests } from './verifier.js';
 import { runTeamMode } from './team-orchestrator.js';
 
+// ── executePlan: shared logic for handler() and beforeChat hook ──
+
+/**
+ * Execute a scheduler plan after classification.
+ * Handles pass-through chat, team mode, and multi-agent execution.
+ * Returns a response string, or null for unhandled pass-through.
+ */
+export async function executePlan(
+  plan: import('./classifier.js').SchedulerPlan,
+  userInput: string,
+  sessionContext: Record<string, unknown> = {},
+): Promise<string | null> {
+  // ── Pass-through: dispatch to chat agent ──
+  if (plan.pass_through) {
+    try {
+      const chatResult = await spawnAgentWithTimeout({
+        type: 'chat',
+        model: 'v4-flash',
+        id: 'chat-1',
+        task: userInput,
+      }, {});
+      return chatResult?.response || '';
+    } catch (err) {
+      log.warn('Chat agent failed, falling back to pass-through', err);
+      return null;
+    } finally {
+      flushFinalStatus();
+    }
+  }
+
+  // ── Team mode: multi-agent orchestration ──
+  if (plan.intent === 'team') {
+    try {
+      const result = await runTeamMode(plan, sessionContext);
+      return result;
+    } finally {
+      flushFinalStatus();
+    }
+  }
+
+  // ── Multi-agent execution ──
+  try {
+    // Step 2: Build agent map
+    const agentTasks = (plan.agents || []).map((a) => ({
+      type: a.type,
+      model: a.model,
+      id: a.id,
+      files: a.files,
+      task: userInput,
+    }));
+    const agentMap = new Map(agentTasks.map((t) => [t.id, t]));
+
+    // Step 3: Execute parallel groups in order
+    const allResults = new Map<string, SpawnResult>();
+    const groups = plan.parallel_groups || agentTasks.map((t) => [t.id]);
+
+    const context: Record<string, unknown> = { decisions: loadDecisions() };
+
+    // 注入知识库上下文（RAG）
+    try {
+      const knowledgeContext = getRelevantContext(userInput, 5);
+      if (knowledgeContext.length > 0) {
+        context.knowledge = knowledgeContext;
+      }
+    } catch {
+      // 非阻塞，知识库不可用不影响执行
+    }
+
+    for (const group of groups) {
+      const groupResults = await runParallelGroup(group, agentMap, context);
+      for (const [id, result] of groupResults) {
+        allResults.set(id, result);
+      }
+    }
+
+    // Step 4: Collect modified files
+    const modifiedFiles: string[] = [];
+    for (const [, result] of allResults) {
+      const output = parseAgentOutput(result?.response || '');
+      if (output && 'files_modified' in output && Array.isArray((output as CodingOutput).files_modified)) {
+        modifiedFiles.push(...(output as CodingOutput).files_modified);
+      }
+    }
+
+    // Step 4b: Diff review — show the agent what changed
+    let diffInfo: ReturnType<typeof reviewDiff> | undefined;
+    if (modifiedFiles.length > 0) {
+      diffInfo = reviewDiff();
+      printDiffSummary(diffInfo);
+    }
+
+    // Step 4c: 交互审批 — 用户确认后才继续 LSP 验证
+    if (diffInfo && diffInfo.hasChanges) {
+      const approved = await confirmDiff(diffInfo);
+      if (!approved) {
+        // 用户放弃变更：还原工作区
+        try {
+          const { execSync } = await import('node:child_process');
+          execSync('git checkout -- .', { encoding: 'utf-8', timeout: 10_000 });
+          log.info('已还原所有未暂存变更。');
+        } catch {
+          log.warn('git checkout 失败，请手动还原。');
+        }
+        flushFinalStatus();
+        return '用户已放弃本次变更。';
+      }
+    }
+
+    // Step 5: LSP verification
+    let lspOk = true;
+    if (modifiedFiles.length > 0) {
+      const lspDone = checkpointGuard('lsp_verify', modifiedFiles, {
+        intent: plan.intent,
+        agents: plan.agents?.map((a) => a.type),
+      });
+      try {
+        const lspResult = await verifyWithLsp(modifiedFiles, []);
+        if (!lspResult.ok) {
+          lspOk = false;
+          const errorSummary = lspResult.errors
+            .slice(0, 10)
+            .map((e) => `${(e as Record<string, unknown>).file || '?'}:${(e as Record<string, unknown>).line || '?'} — ${(e as Record<string, unknown>).error || '?'}`)
+            .join('\n      ');
+          log.warn(`LSP verification failed with ${lspResult.errors.length} remaining errors`, { errors: errorSummary });
+        }
+      } finally {
+        lspDone();
+      }
+    }
+
+    // Step 6: Run tests (skip if LSP has errors — tests will likely fail anyway)
+    if (modifiedFiles.length > 0 && lspOk) {
+      await runTests(modifiedFiles);
+    } else if (modifiedFiles.length > 0 && !lspOk) {
+      log.info('Skipping tests due to unresolved LSP errors');
+    }
+
+    // Step 7: Save decision
+    const commitDone = checkpointGuard('commit', modifiedFiles, {
+      intent: plan.intent,
+      lspOk,
+    });
+    try {
+      if (plan.intent) {
+        saveDecision(`${Date.now()}-${plan.intent}`, {
+          intent: plan.intent,
+          agents: plan.agents,
+          files: modifiedFiles,
+        });
+      }
+      commitDone();
+    } catch {
+      commitDone();
+    }
+
+    // Step 8: Aggregate and return
+    const summaries: string[] = [];
+    for (const [, result] of allResults) {
+      const output = parseAgentOutput(result?.response || '');
+      if (output && 'summary' in output) {
+        summaries.push((output as CodingOutput).summary);
+      }
+    }
+
+    return summaries.join('\n') || JSON.stringify(Object.fromEntries(allResults));
+  } finally {
+    flushFinalStatus();
+  }
+}
+
 // ── Main handler ───────────────────────────────────────
 
 export async function handler(
@@ -50,162 +220,8 @@ export async function handler(
     // Step 1: Classify intent via scheduler agent
     const plan = await classifyIntent(userInput, sessionContext as Record<string, unknown>);
 
-    // ── Pass-through: dispatch to chat agent ──
-    if (plan.pass_through) {
-      try {
-        const chatResult = await spawnAgentWithTimeout({
-          type: 'chat',
-          model: 'v4-flash',
-          id: 'chat-1',
-          task: userInput,
-        }, {});
-        return chatResult?.response || '';
-      } catch (err) {
-        log.warn('Chat agent failed, falling back to pass-through', err);
-        return null;
-      } finally {
-        flushFinalStatus();
-      }
-    }
-
-    // ── Team mode: multi-agent orchestration ──
-    if (plan.intent === 'team') {
-      try {
-        const result = await runTeamMode(plan, sessionContext as Record<string, unknown>);
-        return result;
-      } finally {
-        flushFinalStatus();
-      }
-    }
-
-    // ── Multi-agent execution ──
-    try {
-      // Step 2: Build agent map
-      const agentTasks = (plan.agents || []).map((a) => ({
-        type: a.type,
-        model: a.model,
-        id: a.id,
-        files: a.files,
-        task: userInput,
-      }));
-      const agentMap = new Map(agentTasks.map((t) => [t.id, t]));
-
-      // Step 3: Execute parallel groups in order
-      const allResults = new Map<string, SpawnResult>();
-      const groups = plan.parallel_groups || agentTasks.map((t) => [t.id]);
-
-      const context: Record<string, unknown> = { decisions: loadDecisions() };
-
-      // 注入知识库上下文（RAG）
-      try {
-        const knowledgeContext = getRelevantContext(userInput, 5);
-        if (knowledgeContext.length > 0) {
-          context.knowledge = knowledgeContext;
-        }
-      } catch {
-        // 非阻塞，知识库不可用不影响执行
-      }
-
-      for (const group of groups) {
-        const groupResults = await runParallelGroup(group, agentMap, context);
-        for (const [id, result] of groupResults) {
-          allResults.set(id, result);
-        }
-      }
-
-      // Step 4: Collect modified files
-      const modifiedFiles: string[] = [];
-      for (const [, result] of allResults) {
-        const output = parseAgentOutput(result?.response || '');
-        if (output && 'files_modified' in output && Array.isArray((output as CodingOutput).files_modified)) {
-          modifiedFiles.push(...(output as CodingOutput).files_modified);
-        }
-      }
-
-      // Step 4b: Diff review — show the agent what changed
-      let diffInfo: ReturnType<typeof reviewDiff> | undefined;
-      if (modifiedFiles.length > 0) {
-        diffInfo = reviewDiff();
-        printDiffSummary(diffInfo);
-      }
-
-      // Step 4c: 交互审批 — 用户确认后才继续 LSP 验证
-      if (diffInfo && diffInfo.hasChanges) {
-        const approved = await confirmDiff(diffInfo);
-        if (!approved) {
-          // 用户放弃变更：还原工作区
-          try {
-            const { execSync } = await import('node:child_process');
-            execSync('git checkout -- .', { encoding: 'utf-8', timeout: 10_000 });
-            log.info('已还原所有未暂存变更。');
-          } catch {
-            log.warn('git checkout 失败，请手动还原。');
-          }
-          flushFinalStatus();
-          return '用户已放弃本次变更。';
-        }
-      }
-
-      // Step 5: LSP verification
-      let lspOk = true;
-      if (modifiedFiles.length > 0) {
-        const lspDone = checkpointGuard('lsp_verify', modifiedFiles, {
-          intent: plan.intent,
-          agents: plan.agents?.map((a) => a.type),
-        });
-        try {
-          const lspResult = await verifyWithLsp(modifiedFiles, []);
-          if (!lspResult.ok) {
-            lspOk = false;
-            const errorSummary = lspResult.errors
-              .slice(0, 10)
-              .map((e) => `${(e as Record<string, unknown>).file || '?'}:${(e as Record<string, unknown>).line || '?'} — ${(e as Record<string, unknown>).error || '?'}`)
-              .join('\n      ');
-            log.warn(`LSP verification failed with ${lspResult.errors.length} remaining errors`, { errors: errorSummary });
-          }
-        } finally {
-          lspDone();
-        }
-      }
-
-      // Step 6: Run tests (skip if LSP has errors — tests will likely fail anyway)
-      if (modifiedFiles.length > 0 && lspOk) {
-        await runTests(modifiedFiles);
-      } else if (modifiedFiles.length > 0 && !lspOk) {
-        log.info('Skipping tests due to unresolved LSP errors');
-      }
-
-      // Step 7: Save decision
-      const commitDone = checkpointGuard('commit', modifiedFiles, {
-        intent: plan.intent,
-        lspOk,
-      });
-      try {
-        if (plan.intent) {
-          saveDecision(`${Date.now()}-${plan.intent}`, {
-            intent: plan.intent,
-            agents: plan.agents,
-            files: modifiedFiles,
-          });
-        }
-        commitDone();
-      } catch {
-        commitDone();
-      }
-
-      // Step 8: Aggregate and return
-      const summaries: string[] = [];
-      for (const [, result] of allResults) {
-        const output = parseAgentOutput(result?.response || '');
-        if (output && 'summary' in output) {
-          summaries.push((output as CodingOutput).summary);
-        }
-      }
-
-      return summaries.join('\n') || JSON.stringify(Object.fromEntries(allResults));
-    } finally {
-      flushFinalStatus();
-    }
+    // Step 2: Execute the plan
+    return await executePlan(plan, userInput, sessionContext as Record<string, unknown>);
   } catch (err) {
     log.error('Scheduler handler failed', err, {
       userInput: userInput.slice(0, 200),
