@@ -10,7 +10,6 @@
 
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync, readFileSync, mkdirSync, writeFileSync, appendFileSync, openSync, closeSync } from 'node:fs';
-import { handler as schedulerHandler } from './scheduler.js';
 import { resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';

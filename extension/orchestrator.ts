@@ -64,10 +64,7 @@ const ORCHESTRATOR_PATH = resolve(homedir(), '.yu', 'orchestrator.json');
 const _orchDbCache = new Map<string, DatabaseSync>();
 
 // P2-22: Circuit breaker — track orchestration depth per event to prevent
-// infinite recursion loops. Each time an event triggers an orchestration action
-// that writes a new event, depth increases. If depth exceeds MAX_ORCH_DEPTH,
-// the chain is broken.
-const ORCH_DEPTH_KEY = Symbol('orchestrator_depth');
+// infinite recursion loops. Uses module-level counter.
 const MAX_ORCH_DEPTH = 5;
 
 /**

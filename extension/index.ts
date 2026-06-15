@@ -14,11 +14,11 @@
 import { createLogger } from './logger.js';
 const log = createLogger('index');
 
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, ContextEvent } from '@earendil-works/pi-coding-agent';
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { registerAgents, validateMcpConfig, validateEnvVars } from './config.js';
 import { startMCPManager } from './mcp-manager.js';
 import { setupMonitor } from './monitor.js';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { MCP_CONFIG_PATH } from './paths.js';

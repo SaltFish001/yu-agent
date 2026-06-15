@@ -53,15 +53,46 @@ export async function executePlan(
     // ── Pass-through: dispatch to chat agent ──
     if (plan.pass_through) {
       try {
-        const chatResult = await spawnAgentWithTimeout({
-          type: 'chat',
-          model: 'v4-flash',
-          id: 'chat-1',
-          task: userInput,
-        }, {});
+        // Try Pi SDK spawn first (has tool access). Add hard timeout to
+        // prevent hanging when provider is misconfigured.
+        const chatResult = await Promise.race([
+          spawnAgentWithTimeout({
+            type: 'chat',
+            model: 'v4-flash',
+            id: 'chat-1',
+            task: userInput,
+          }, {}),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Pi spawn timeout')), 30_000)
+          ),
+        ]);
         return chatResult?.response || '';
       } catch (err) {
-        log.warn('Chat agent failed, falling back to pass-through', err);
+        log.warn('Chat agent via Pi failed, falling back to direct API', err);
+        // Fallback: direct DeepSeek API (no Pi dependency)
+        try {
+          const { chatCompletion } = await import('./deepseek.js');
+          const { readFileSync, existsSync } = await import('node:fs');
+          const { resolve } = await import('node:path');
+          const { homedir } = await import('node:os');
+          const chatPromptPath = resolve(homedir(), '.yu', 'prompts', 'chat.md');
+          const systemPrompt = existsSync(chatPromptPath)
+            ? readFileSync(chatPromptPath, 'utf-8')
+            : 'You are a helpful assistant.';
+          const result = await chatCompletion({
+            model: 'deepseek-chat',
+            messages: [
+              { role: 'system', content: systemPrompt || 'You are a helpful assistant.' },
+              { role: 'user', content: userInput },
+            ],
+            max_tokens: 4096,
+            temperature: 0.7,
+          });
+          if (result?.choices?.[0]?.message?.content) {
+            return result.choices[0].message.content;
+          }
+        } catch { /* fallback failed too */ }
+        log.warn('All chat paths failed, returning null');
         return null;
       }
     }
