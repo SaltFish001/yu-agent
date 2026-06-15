@@ -16,13 +16,6 @@ import { pollAndInject, ackMessages, resolveBaseDir, getStatePath } from './mail
 import { readFile } from 'node:fs/promises';
 import { RuntimeStateSchema } from './types.js';
 
-// ── Team context attached to spawn config ──────────────
-
-export interface TeamContext {
-  teamRunId: string;
-  memberName: string;
-}
-
 // ── Team-aware session wrapper ─────────────────────────
 
 export class TeamSession {
@@ -119,19 +112,3 @@ export class TeamSession {
   }
 }
 
-// ── Global team session registry ───────────────────────
-
-/** Active team sessions keyed by sessionId */
-const teamSessionRegistry = new Map<string, TeamSession>();
-
-export function registerTeamSession(sessionId: string, teamCtx: TeamContext): void {
-  teamSessionRegistry.set(sessionId, new TeamSession(teamCtx.teamRunId, teamCtx.memberName));
-}
-
-export function unregisterTeamSession(sessionId: string): void {
-  teamSessionRegistry.delete(sessionId);
-}
-
-export function getTeamSession(sessionId: string): TeamSession | undefined {
-  return teamSessionRegistry.get(sessionId);
-}
