@@ -10,6 +10,7 @@
     "extension/**/*.ts",
     "bin/**/*.ts",
     "scripts/**/*.mjs",
+    "scripts/**/*.ts",
     "tests/**/*.ts"
   ]
 }

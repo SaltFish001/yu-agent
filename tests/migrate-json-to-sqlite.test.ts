@@ -1,9 +1,8 @@
 /**
- * Tests for scripts/migrate-json-to-sqlite.mjs
+ * Tests for scripts/migrate-json-to-sqlite.ts
  *
  * One-shot migration tool that reads JSON session files from a directory
- * and writes them into a SQLite database. Runs via Node.js subprocess
- * (uses node:sqlite which Bun doesn't support).
+ * and writes them into a SQLite database using bun:sqlite.
  */
 
 import { describe, test, expect } from 'bun:test'
@@ -12,7 +11,7 @@ import { resolve } from 'path'
 import { tmpdir } from 'os'
 import { rmSync } from 'fs'
 
-const SCRIPT = resolve(import.meta.dir, '..', 'scripts', 'migrate-json-to-sqlite.mjs')
+const SCRIPT = resolve(import.meta.dir, '..', 'scripts', 'migrate-json-to-sqlite.ts')
 
 // ── Fixture helpers ──────────────────────────────────────
 
@@ -28,7 +27,7 @@ function makeTempDir(): string {
 
 /** Run the migration script and return { exitCode, stdout, stderr } */
 function runMigration(dir: string): { exitCode: number; stdout: string; stderr: string } {
-  const result = Bun.spawnSync(['node', SCRIPT, '--dir', dir], {
+  const result = Bun.spawnSync(['bun', 'run', SCRIPT, '--dir', dir], {
     env: { ...process.env },
   })
   return {
@@ -38,15 +37,15 @@ function runMigration(dir: string): { exitCode: number; stdout: string; stderr: 
   }
 }
 
-/** Read a SQLite DB file as JSON via node -e, retrying on transient failures */
+/** Read a SQLite DB file as JSON via bun -e, retrying on transient failures */
 function readDbJson(dbPath: string, table: string): unknown[] {
   const result = Bun.spawnSync([
-    'node',
+    'bun',
     '-e',
     `
-      import { DatabaseSync } from 'node:sqlite';
-      const db = new DatabaseSync('${dbPath}');
-      const rows = db.prepare('SELECT * FROM ${table} ORDER BY tag').all();
+      import { Database } from 'bun:sqlite';
+      const db = new Database('${dbPath}');
+      const rows = db.query('SELECT * FROM ${table} ORDER BY tag').all();
       db.close();
       console.log(JSON.stringify(rows));
     `,

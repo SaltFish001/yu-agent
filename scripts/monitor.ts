@@ -1,19 +1,16 @@
-#!/usr/bin/env node
-
 /**
  * yu-agent standalone monitor.
  *
  * Reads status files from ~/yu-agent/status/ and displays
  * a live-updating dashboard in the terminal.
  *
- * Zero external dependencies — uses only Node.js built-ins.
+ * Zero external dependencies — uses only Bun built-ins.
  */
 
-import { existsSync, readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { resolve } from 'node:path'
+import { existsSync } from 'fs'
+import { resolve } from 'path'
 
-const STATUS_DIR = resolve(homedir(), '.yu')
+const STATUS_DIR = resolve(process.env.HOME || process.cwd(), '.yu')
 
 // ── Terminal helpers ───────────────────────────────────
 
@@ -27,8 +24,18 @@ const YELLOW = '\x1B[33m'
 const CYAN = '\x1B[36m'
 const GRAY = '\x1B[90m'
 
-const glyph = (status) => {
-  switch (status) {
+type AgentStatus =
+  | 'running'
+  | 'queued'
+  | 'completed'
+  | 'failed'
+  | 'interrupted'
+  | 'connected'
+  | 'disconnected'
+  | 'error'
+
+const glyph = (status: string): string => {
+  switch (status as AgentStatus) {
     case 'running':
       return `${CYAN}●${RESET}`
     case 'queued':
@@ -50,7 +57,7 @@ const glyph = (status) => {
   }
 }
 
-const fmtDur = (ms) => {
+const fmtDur = (ms: number | null | undefined): string => {
   if (ms == null) return ''
   const s = Math.round(ms / 1000)
   if (s < 60) return `${s}s`
@@ -58,19 +65,20 @@ const fmtDur = (ms) => {
   return `${m}m${s % 60}s`
 }
 
-const fmtTime = (ts) => {
+const fmtTime = (ts: string | number | null | undefined): string => {
   if (!ts) return ''
   const d = new Date(ts)
   return d.toLocaleTimeString()
 }
 
-// ── File readers ───────────────────────────────────────
+// ── File readers (Bun native API) ──────────────────────
 
-function readJSON(name) {
+async function readJSON(name: string): Promise<any> {
   const p = resolve(STATUS_DIR, name)
   if (!existsSync(p)) return null
   try {
-    return JSON.parse(readFileSync(p, 'utf-8'))
+    const file = Bun.file(p)
+    return await file.json()
   } catch {
     return null
   }
@@ -78,27 +86,33 @@ function readJSON(name) {
 
 // ── Summary ────────────────────────────────────────────
 
-function summaryLine(summary) {
+interface Summary {
+  running?: number
+  completed?: number
+  failed?: number
+}
+
+function summaryLine(summary: Summary | null | undefined): string {
   if (!summary) return `${DIM}no data${RESET}`
-  const parts = []
-  if (summary.running > 0) parts.push(`${CYAN}${summary.running}●${RESET}`)
-  if (summary.completed > 0) parts.push(`${GREEN}${summary.completed}✓${RESET}`)
-  if (summary.failed > 0) parts.push(`${RED}${summary.failed}✗${RESET}`)
+  const parts: string[] = []
+  if ((summary.running ?? 0) > 0) parts.push(`${CYAN}${summary.running}●${RESET}`)
+  if ((summary.completed ?? 0) > 0) parts.push(`${GREEN}${summary.completed}✓${RESET}`)
+  if ((summary.failed ?? 0) > 0) parts.push(`${RED}${summary.failed}✗${RESET}`)
   return parts.join(' ') || `${DIM}idle${RESET}`
 }
 
 // ── Render dashboard ───────────────────────────────────
 
-function render() {
-  const agents = readJSON('agents.json')
-  const mcp = readJSON('mcp.json')
-  const lsp = readJSON('lsp.json')
-  const team = readJSON('team.json')
-  const rawSummary = readJSON('summary.json')
+async function render(): Promise<string> {
+  const agents = await readJSON('agents.json')
+  const mcp = await readJSON('mcp.json')
+  const lsp = await readJSON('lsp.json')
+  const team = await readJSON('team.json')
+  const rawSummary = await readJSON('summary.json')
   const summary = rawSummary?.summary ?? rawSummary
-  const cache = readJSON('cache.json')
+  const cache = await readJSON('cache.json')
 
-  const lines = []
+  const lines: string[] = []
 
   lines.push(`${BOLD}┌─ yu-agent monitor ─────────────────────────────${RESET}`)
   lines.push(`│ ${BOLD}Summary:${RESET} ${summaryLine(summary)}`)
@@ -180,7 +194,7 @@ function render() {
 
 // ── Args ───────────────────────────────────────────────
 
-const HELP_TEXT = `Usage: node scripts/monitor.mjs [options]
+const HELP_TEXT = `Usage: bun run scripts/monitor.ts [options]
 
 Options:
   --once             Single snapshot, no polling loop
@@ -205,9 +219,11 @@ if (intervalIdx !== -1 && intervalIdx + 1 < args.length) {
   }
 }
 
+// ── Main ───────────────────────────────────────────────
+
 if (args.includes('--once')) {
   // Single snapshot
-  console.log(render())
+  console.log(await render())
   process.exit(0)
 }
 
@@ -219,13 +235,13 @@ if (!existsSync(STATUS_DIR)) {
 }
 
 let frame = 0
-function tick() {
+async function tick() {
   const ts = new Date().toLocaleTimeString()
   console.log(`${CLEAR}${DIM}polling @ ${ts} · frame ${++frame} · interval ${pollInterval}ms${RESET}`)
-  console.log(render())
+  console.log(await render())
 }
 
-tick()
+await tick()
 const intervalId = setInterval(tick, pollInterval)
 
 // Handle Ctrl+C gracefully

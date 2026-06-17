@@ -842,7 +842,7 @@ async function mainCli(): Promise<void> {
 
   // `yu monitor` — live dashboard
   if (args[0] === 'monitor') {
-    const scriptPath = resolve(PROJECT_ROOT, 'scripts', 'monitor.mjs')
+    const scriptPath = resolve(PROJECT_ROOT, 'scripts', 'monitor.ts')
     await import(scriptPath)
     return
   }

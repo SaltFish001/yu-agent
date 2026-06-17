@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * 迁移旧 JSON session 文件到 SQLite。
  *
@@ -6,16 +5,16 @@
  * 将数据写入 sessions.db。
  *
  * Usage:
- *   node scripts/migrate-json-to-sqlite.mjs [--dir ~/yu-agent/status]
+ *   bun run scripts/migrate-json-to-sqlite.ts [--dir ~/yu-agent/status]
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { resolve } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
+import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
+import { resolve } from 'path'
+import { Database } from 'bun:sqlite'
 
-const STATUS_DIR = resolve(homedir(), 'yu-agent', 'status')
-const _ALT_STATUS_DIR = resolve(homedir(), '.yu-agent', 'status')
+const HOME = process.env.HOME || ''
+const STATUS_DIR = resolve(HOME, 'yu-agent', 'status')
+const _ALT_STATUS_DIR = resolve(HOME, '.yu-agent', 'status')
 const args = process.argv.slice(2)
 const dirIdx = args.indexOf('--dir')
 const targetDir = dirIdx !== -1 && dirIdx + 1 < args.length ? resolve(args[dirIdx + 1]) : STATUS_DIR
@@ -24,9 +23,9 @@ const dbPath = resolve(targetDir, 'sessions.db')
 
 // ── Open/create DB ──────────────────────────────────────
 
-const db = new DatabaseSync(dbPath)
-db.exec('PRAGMA journal_mode=WAL')
-db.exec(`
+const db = new Database(dbPath)
+db.run('PRAGMA journal_mode=WAL')
+db.run(`
   CREATE TABLE IF NOT EXISTS sessions (
     tag TEXT PRIMARY KEY, name TEXT DEFAULT '', cwd TEXT DEFAULT '',
     created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
@@ -79,7 +78,8 @@ for (const f of files) {
     if (!tagMap.has(tag)) tagMap.set(tag, new Map())
     tagMap.get(tag).set(type, { content: parsed, path: fullPath })
   } catch (e) {
-    console.warn(`  [skip] ${f}: ${e.message}`)
+    const msg = e instanceof Error ? e.message : String(e)
+    console.warn(`  [skip] ${f}: ${msg}`)
   }
 }
 
@@ -91,7 +91,7 @@ if (tagMap.size === 0) {
 
 // ── Import into SQLite ──────────────────────────────────
 
-const upsertSessionStmt = db.prepare(`
+const upsertSessionStmt = db.query(`
   INSERT INTO sessions (tag, name, cwd, created_at, updated_at)
   VALUES (?, ?, ?, ?, ?)
   ON CONFLICT(tag) DO UPDATE SET
@@ -100,33 +100,33 @@ const upsertSessionStmt = db.prepare(`
     updated_at = MAX(updated_at, ?)
 `)
 
-const upsertAgentsStmt = db.prepare(`
+const upsertAgentsStmt = db.query(`
   INSERT INTO agents (tag, data, updated_at)
   VALUES (?, ?, ?) ON CONFLICT(tag) DO UPDATE SET data = ?, updated_at = MAX(updated_at, ?)
 `)
-const upsertSummaryStmt = db.prepare(`
+const upsertSummaryStmt = db.query(`
   INSERT INTO summary (tag, running, completed, failed, mcp_connected, lsp_ready, updated_at)
   VALUES (?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(tag) DO UPDATE SET
     running = ?, completed = ?, failed = ?, mcp_connected = ?, lsp_ready = ?,
     updated_at = MAX(updated_at, ?)
 `)
-const upsertCacheStmt = db.prepare(`
+const upsertCacheStmt = db.query(`
   INSERT INTO cache (tag, total_hits, total_misses, total_cost, turn_count, hit_rate, updated_at)
   VALUES (?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(tag) DO UPDATE SET
     total_hits = ?, total_misses = ?, total_cost = ?, turn_count = ?, hit_rate = ?,
     updated_at = MAX(updated_at, ?)
 `)
-const upsertMCPStmt = db.prepare(`
+const upsertMCPStmt = db.query(`
   INSERT INTO mcp (tag, data, updated_at)
   VALUES (?, ?, ?) ON CONFLICT(tag) DO UPDATE SET data = ?, updated_at = MAX(updated_at, ?)
 `)
-const upsertLSPStmt = db.prepare(`
+const upsertLSPStmt = db.query(`
   INSERT INTO lsp (tag, data, updated_at)
   VALUES (?, ?, ?) ON CONFLICT(tag) DO UPDATE SET data = ?, updated_at = MAX(updated_at, ?)
 `)
-const upsertTeamStmt = db.prepare(`
+const upsertTeamStmt = db.query(`
   INSERT INTO team (tag, data, updated_at)
   VALUES (?, ?, ?) ON CONFLICT(tag) DO UPDATE SET data = ?, updated_at = MAX(updated_at, ?)
 `)

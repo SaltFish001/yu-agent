@@ -20,6 +20,6 @@
       "@tintinweb/pi-subagents/dist/index.js": ["./node_modules/@tintinweb/pi-subagents/dist/index.d.ts"]
     }
   },
-  "include": ["extension/**/*.ts", "bin/**/*.ts", "scripts/**/*.mjs"],
+  "include": ["extension/**/*.ts", "bin/**/*.ts", "scripts/**/*.mjs", "scripts/**/*.ts"],
   "exclude": ["node_modules", "dist", "data"]
 }
