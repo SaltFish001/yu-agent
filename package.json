@@ -28,7 +28,7 @@
   "scripts": {
     "build": "bun build ./bin/yu.ts --outdir ./dist --target bun --external @biomejs/js-api --external @biomejs/biome --external '@tintinweb/*' --external '@earendil-works/*'",
     "postbuild": "bun -e \"import { cpSync, existsSync, mkdirSync } from 'fs'; import { resolve } from 'path'; import { homedir } from 'os'; const src = resolve(import.meta.dir, 'prompts'); const dst = resolve(homedir(), '.yu', 'prompts'); if (!existsSync(dst)) mkdirSync(dst, { recursive: true }); cpSync(src, dst, { recursive: true, force: true }); console.log('Prompts synced to ' + dst);\"",
-    "typecheck": "tsc --noEmit --project tsconfig.json",
+    "typecheck": "tsc --noEmit --project tsconfig.typecheck.json",
     "lint": "biome lint .",
     "lint:fix": "biome lint --apply .",
     "format": "biome format .",

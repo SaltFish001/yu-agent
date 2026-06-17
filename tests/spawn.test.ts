@@ -111,7 +111,7 @@ describe('spawn pool management', () => {
 
     const stats = getAllPoolsStats()
     expect(stats[poolKey]).toBeDefined()
-    expect(stats[poolKey].totalSpawned).toBeGreaterThanOrEqual(0)
+    expect((stats[poolKey] as { totalSpawned: number }).totalSpawned).toBeGreaterThanOrEqual(0)
   })
 })
 
