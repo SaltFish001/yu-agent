@@ -6,34 +6,35 @@
  * persists scheduling decisions to disk.
  */
 
-import type { AgentStatus } from './status.js';
-import { writeAgentStatus, writeSnapshot, buildSummary, writeCacheStats } from './status.js';
-import { getAllPoolsStats } from './spawn.js';
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { DATA_DIR, DECISIONS_FILE } from './paths.js';
-import { getSessionTag } from './session-context.js';
-import { insertAgentRun, updateAgentRunStatus } from './db.js';
-import { createLogger } from './logger.js';
-const log = createLogger('tracker');
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { insertAgentRun, updateAgentRunStatus } from './db.js'
+import { createLogger } from './logger.js'
+import { DATA_DIR, DECISIONS_FILE } from './paths.js'
+import { getSessionTag } from './session-context.js'
+import { getAllPoolsStats } from './spawn.js'
+import type { AgentStatus } from './status.js'
+import { buildSummary, writeAgentStatus, writeCacheStats, writeSnapshot } from './status.js'
+
+const log = createLogger('tracker')
 
 // ── Constants ──────────────────────────────────────────
 
-const MAX_DECISIONS = 50;
+const MAX_DECISIONS = 50
 
 // ── In-memory agent tracker ────────────────────────────
 // Tracks all spawned agents in the current invocation.
 // Reset on each handler call.
 
-const _agentTrackers: Map<string, AgentStatus> = new Map();
-let _handlerStartTime = 0;
+const _agentTrackers: Map<string, AgentStatus> = new Map()
+let _handlerStartTime = 0
 
 export function resetTracker(): void {
-  _agentTrackers.clear();
-  _handlerStartTime = Date.now();
+  _agentTrackers.clear()
+  _handlerStartTime = Date.now()
 }
 
 export function trackAgent(id: string, status: AgentStatus['status'], extra?: Record<string, unknown>): void {
-  const existing = _agentTrackers.get(id);
+  const existing = _agentTrackers.get(id)
   const entry: AgentStatus = {
     id,
     type: (extra?.type as string) || existing?.type || 'unknown',
@@ -44,22 +45,22 @@ export function trackAgent(id: string, status: AgentStatus['status'], extra?: Re
     startedAt: existing?.startedAt,
     durationMs: existing?.durationMs,
     error: (extra?.error as string) || existing?.error,
-  };
+  }
   // Apply runtime computed fields
   if (status === 'running' && !entry.startedAt) {
-    entry.startedAt = Date.now();
+    entry.startedAt = Date.now()
   }
   if ((status === 'completed' || status === 'failed' || status === 'interrupted') && entry.startedAt) {
-    entry.durationMs = Date.now() - entry.startedAt;
+    entry.durationMs = Date.now() - entry.startedAt
   }
-  _agentTrackers.set(id, entry);
+  _agentTrackers.set(id, entry)
 
   // Flush to disk
-  writeAgentStatus(Array.from(_agentTrackers.values()));
+  writeAgentStatus(Array.from(_agentTrackers.values()))
 
   // Persist to agent_runs table (async, best-effort)
   try {
-    const sessionTag = getSessionTag();
+    const sessionTag = getSessionTag()
     if (status === 'running' && !existing) {
       // New agent run — insert row
       insertAgentRun({
@@ -71,14 +72,14 @@ export function trackAgent(id: string, status: AgentStatus['status'], extra?: Re
         goal: entry.goal,
         files: entry.files,
         startedAt: entry.startedAt ?? Date.now(),
-      });
+      })
     } else if (status === 'completed' || status === 'failed' || status === 'interrupted') {
       if (existing && existing.status === 'running') {
         // Status change from running → update row
-        updateAgentRunStatus(id, status, entry.durationMs, entry.error);
+        updateAgentRunStatus(id, status, entry.durationMs, entry.error)
       } else if (existing && existing.status !== 'running') {
         // Already terminal — skip (double-complete)
-        log.debug(`Skipping duplicate terminal status ${status} for agent ${id} (was ${existing.status})`);
+        log.debug(`Skipping duplicate terminal status ${status} for agent ${id} (was ${existing.status})`)
       } else {
         // No existing running record — insert with current status
         insertAgentRun({
@@ -92,7 +93,7 @@ export function trackAgent(id: string, status: AgentStatus['status'], extra?: Re
           startedAt: entry.startedAt ?? Date.now(),
           durationMs: entry.durationMs,
           error: entry.error,
-        });
+        })
       }
     }
   } catch {
@@ -101,12 +102,12 @@ export function trackAgent(id: string, status: AgentStatus['status'], extra?: Re
 }
 
 export function getAgentStatusList(): AgentStatus[] {
-  return Array.from(_agentTrackers.values());
+  return Array.from(_agentTrackers.values())
 }
 
 export function flushFinalStatus(): void {
-  const agents = getAgentStatusList();
-  const summary = buildSummary(agents);
+  const agents = getAgentStatusList()
+  const summary = buildSummary(agents)
   writeSnapshot({
     updatedAt: Date.now(),
     agents,
@@ -114,18 +115,18 @@ export function flushFinalStatus(): void {
     lsp: [],
     team: null,
     summary,
-  });
+  })
   // Record cache hit/miss stats for external monitoring
-  const cacheStats = getAllPoolsStats();
+  const cacheStats = getAllPoolsStats() as Record<string, number>
   writeCacheStats({
     updatedAt: Date.now(),
-    totalHits: cacheStats.totalHits,
-    totalMisses: cacheStats.totalMisses,
+    totalHits: cacheStats.totalHits ?? 0,
+    totalMisses: cacheStats.totalMisses ?? 0,
     totalOutput: 0,
-    totalCost: cacheStats.totalCost,
-    turnCount: cacheStats.turnCount,
-    hitRate: cacheStats.hitRate,
-  });
+    totalCost: cacheStats.totalCost ?? 0,
+    turnCount: cacheStats.turnCount ?? 0,
+    hitRate: cacheStats.hitRate ?? 0,
+  })
 }
 
 // ── Decisions ──────────────────────────────────────────
@@ -133,25 +134,25 @@ export function flushFinalStatus(): void {
 export function loadDecisions(): Record<string, unknown> {
   if (existsSync(DECISIONS_FILE)) {
     try {
-      return JSON.parse(readFileSync(DECISIONS_FILE, 'utf-8'));
+      return JSON.parse(readFileSync(DECISIONS_FILE, 'utf-8'))
     } catch (err) {
-      log.warn('Failed to parse decisions file, resetting', err);
-      return {};
+      log.warn('Failed to parse decisions file, resetting', err)
+      return {}
     }
   }
-  return {};
+  return {}
 }
 
 export function saveDecision(key: string, value: unknown): void {
-  const decisions = loadDecisions();
-  decisions[key] = value;
+  const decisions = loadDecisions()
+  decisions[key] = value
 
   // Keep only the most recent MAX_DECISIONS entries
   const entries = Object.entries(decisions)
     .sort(([a], [b]) => b.localeCompare(a)) // timestamp-prefixed keys → newest first
-    .slice(0, MAX_DECISIONS);
+    .slice(0, MAX_DECISIONS)
 
-  const trimmed = Object.fromEntries(entries);
-  if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
-  writeFileSync(DECISIONS_FILE, JSON.stringify(trimmed, null, 2));
+  const trimmed = Object.fromEntries(entries)
+  if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true })
+  writeFileSync(DECISIONS_FILE, JSON.stringify(trimmed, null, 2))
 }

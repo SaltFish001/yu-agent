@@ -12,43 +12,46 @@
  * Directory: ~/.yu/knowledge.db
  */
 
-import { DatabaseSync, type DatabaseSync as Database } from 'node:sqlite';
-import { readFileSync, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
-import { resolve, relative, extname, basename, dirname, join } from 'node:path';
-import { YU_HOME, formatBytes } from '../paths.js';
+import { Database as DatabaseSync } from 'bun:sqlite'
+
+type Database = DatabaseSync
+
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'fs'
+import { basename, dirname, extname, join, relative, resolve } from 'path'
+import { formatBytes, YU_HOME } from '../paths.js'
 
 // ── Constants ──────────────────────────────────────────
 
-const DB_PATH = resolve(YU_HOME, 'knowledge.db');
+const DB_PATH = resolve(YU_HOME, 'knowledge.db')
 
 /** File extensions we index. */
-const INDEXED_EXTENSIONS = new Set(['.md', '.ts', '.tsx']);
+const INDEXED_EXTENSIONS = new Set(['.md', '.ts', '.tsx'])
 
 /** Directories to skip when indexing. */
-const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', '.next', 'build', 'coverage', '.yu']);
+const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', '.next', 'build', 'coverage', '.yu'])
 
 /** Regex to extract JSDoc/TSDoc block comments. */
-const JSDOC_RE = /\/\*\*[\s\S]*?\*\//g;
+const JSDOC_RE = /\/\*\*[\s\S]*?\*\//g
 
 /** Regex to extract single-line comments starting with //. */
-const LINE_COMMENT_RE = /\/\/\/? .*$/gm;
+const LINE_COMMENT_RE = /\/\/\/? .*$/gm
 
 // ── Database ───────────────────────────────────────────
 
-let _db: Database | null = null;
+let _db: Database | null = null
 
 function getDb(): Database {
-  if (_db) return _db;
+  if (_db) return _db
 
   if (!existsSync(dirname(DB_PATH))) {
-    mkdirSync(dirname(DB_PATH), { recursive: true });
+    mkdirSync(dirname(DB_PATH), { recursive: true })
   }
 
-  const db = new DatabaseSync(DB_PATH);
-  _db = db;
+  const db = new DatabaseSync(DB_PATH)
+  _db = db
 
   // Enable WAL mode for better concurrent access
-  db.exec('PRAGMA journal_mode=WAL');
+  db.exec('PRAGMA journal_mode=WAL')
 
   // Create FTS5 virtual table
   db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
@@ -56,7 +59,7 @@ function getDb(): Database {
     type,
     content,
     tokenize='porter unicode61'
-  )`);
+  )`)
 
   // Metadata table for tracking indexed files
   db.exec(`CREATE TABLE IF NOT EXISTS indexed_files (
@@ -64,9 +67,9 @@ function getDb(): Database {
     type TEXT NOT NULL,
     last_indexed INTEGER NOT NULL,
     last_modified INTEGER NOT NULL
-  )`);
+  )`)
 
-  return db;
+  return db
 }
 
 // ── File content extraction ────────────────────────────
@@ -74,44 +77,44 @@ function getDb(): Database {
 /** Extract indexable text from a file. */
 function extractContent(filePath: string, ext: string): { content: string; type: string } | null {
   try {
-    const raw = readFileSync(filePath, 'utf-8');
+    const raw = readFileSync(filePath, 'utf-8')
 
     if (ext === '.md') {
       // Full markdown content; detect ADR
-      const name = basename(filePath);
-      const isAdr = name.startsWith('adr-') || filePath.includes('/adr/');
-      return { content: raw, type: isAdr ? 'adr' : 'md' };
+      const name = basename(filePath)
+      const isAdr = name.startsWith('adr-') || filePath.includes('/adr/')
+      return { content: raw, type: isAdr ? 'adr' : 'md' }
     }
 
     if (ext === '.ts' || ext === '.tsx') {
       // Extract JSDoc/TSDoc block comments
-      const blocks: string[] = [];
-      const jsdocRe = new RegExp(JSDOC_RE.source, 'g');
-      let match: RegExpExecArray | null;
+      const blocks: string[] = []
+      const jsdocRe = new RegExp(JSDOC_RE.source, 'g')
+      let match: RegExpExecArray | null
       while ((match = jsdocRe.exec(raw)) !== null) {
         // Clean up comment markers
         const cleaned = match[0]
           .replace(/^\/\*\*?/, '')
           .replace(/\*\/$/, '')
           .replace(/^\s*\*\s?/gm, '')
-          .trim();
-        if (cleaned) blocks.push(cleaned);
+          .trim()
+        if (cleaned) blocks.push(cleaned)
       }
 
       // Also extract line comments that look like documentation
-      const lineRe = new RegExp(LINE_COMMENT_RE.source, 'gm');
+      const lineRe = new RegExp(LINE_COMMENT_RE.source, 'gm')
       while ((match = lineRe.exec(raw)) !== null) {
-        const cleaned = match[0].replace(/^\/\/\/?\s*/, '').trim();
-        if (cleaned) blocks.push(cleaned);
+        const cleaned = match[0].replace(/^\/\/\/?\s*/, '').trim()
+        if (cleaned) blocks.push(cleaned)
       }
 
-      if (blocks.length === 0) return null;
-      return { content: blocks.join('\n\n'), type: 'ts' };
+      if (blocks.length === 0) return null
+      return { content: blocks.join('\n\n'), type: 'ts' }
     }
 
-    return null;
+    return null
   } catch {
-    return null;
+    return null
   }
 }
 
@@ -122,37 +125,37 @@ function extractContent(filePath: string, ext: string): { content: string; type:
  * that match indexed extensions, skipping SKIP_DIRS.
  */
 function walkDir(dir: string, baseDir: string): string[] {
-  const results: string[] = [];
-  let entries: string[];
+  const results: string[] = []
+  let entries: string[]
   try {
-    entries = readdirSync(dir);
+    entries = readdirSync(dir)
   } catch {
-    return results;
+    return results
   }
 
   for (const entry of entries) {
-    const full = join(dir, entry);
-    let stats: ReturnType<typeof statSync>;
+    const full = join(dir, entry)
+    let stats: ReturnType<typeof statSync>
     try {
-      stats = statSync(full);
+      stats = statSync(full)
     } catch {
-      continue;
+      continue
     }
 
     if (stats.isDirectory()) {
       if (!SKIP_DIRS.has(entry)) {
-        results.push(...walkDir(full, baseDir));
+        results.push(...walkDir(full, baseDir))
       }
     } else if (stats.isFile()) {
-      const ext = extname(entry).toLowerCase();
+      const ext = extname(entry).toLowerCase()
       if (INDEXED_EXTENSIONS.has(ext)) {
-        const relPath = relative(baseDir, full);
-        results.push(relPath);
+        const relPath = relative(baseDir, full)
+        results.push(relPath)
       }
     }
   }
 
-  return results;
+  return results
 }
 
 /**
@@ -162,68 +165,68 @@ function walkDir(dir: string, baseDir: string): string[] {
  * Skips files whose last modified time hasn't changed since last index.
  */
 export function indexProject(projectDir?: string): { indexed: number; skipped: number; failed: number } {
-  const db = getDb();
-  const root = projectDir || process.cwd();
+  const db = getDb()
+  const root = projectDir || process.cwd()
 
   if (!existsSync(root)) {
-    throw new Error(`目录不存在: ${root}`);
+    throw new Error(`目录不存在: ${root}`)
   }
 
-  const files = walkDir(root, root);
-  let indexed = 0;
-  let skipped = 0;
-  let failed = 0;
+  const files = walkDir(root, root)
+  let indexed = 0
+  let skipped = 0
+  let failed = 0
 
   for (const relPath of files) {
-    const fullPath = resolve(root, relPath);
-    const ext = extname(relPath).toLowerCase();
-    const mtime = statSync(fullPath).mtimeMs;
+    const fullPath = resolve(root, relPath)
+    const ext = extname(relPath).toLowerCase()
+    const mtime = statSync(fullPath).mtimeMs
 
     // Check if file is already indexed and unchanged
-    const stmt = db.prepare('SELECT last_modified FROM indexed_files WHERE path = ?');
-    const row = stmt.get(relPath) as { last_modified: number } | undefined;
+    const stmt = db.prepare('SELECT last_modified FROM indexed_files WHERE path = ?')
+    const row = stmt.get(relPath) as { last_modified: number } | undefined
     if (row && row.last_modified >= mtime) {
-      skipped++;
-      continue;
+      skipped++
+      continue
     }
 
-    const extracted = extractContent(fullPath, ext);
+    const extracted = extractContent(fullPath, ext)
     if (!extracted) {
-      skipped++;
-      continue;
+      skipped++
+      continue
     }
 
     try {
       // Remove old entry if exists
-      db.prepare('DELETE FROM knowledge_fts WHERE path = ?').run(relPath);
-      db.prepare('DELETE FROM indexed_files WHERE path = ?').run(relPath);
+      db.prepare('DELETE FROM knowledge_fts WHERE path = ?').run(relPath)
+      db.prepare('DELETE FROM indexed_files WHERE path = ?').run(relPath)
 
       // Insert new entry
       db.prepare('INSERT INTO knowledge_fts (path, type, content) VALUES (?, ?, ?)').run(
         relPath,
         extracted.type,
         extracted.content,
-      );
+      )
       db.prepare(
         'INSERT OR REPLACE INTO indexed_files (path, type, last_indexed, last_modified) VALUES (?, ?, ?, ?)',
-      ).run(relPath, extracted.type, Date.now(), mtime);
+      ).run(relPath, extracted.type, Date.now(), mtime)
 
-      indexed++;
+      indexed++
     } catch {
-      failed++;
+      failed++
     }
   }
 
-  return { indexed, skipped, failed };
+  return { indexed, skipped, failed }
 }
 
 // ── Search ─────────────────────────────────────────────
 
 export interface SearchResult {
-  path: string;
-  type: string;
-  snippet: string;
-  rank: number;
+  path: string
+  type: string
+  snippet: string
+  rank: number
 }
 
 /**
@@ -231,15 +234,15 @@ export interface SearchResult {
  * Returns up to `limit` results with context snippets.
  */
 export function searchKnowledge(query: string, limit = 10): SearchResult[] {
-  const db = getDb();
+  const db = getDb()
 
   // Validate the query contains safe characters for FTS5
-  const safe = sanitizeFtsQuery(query);
+  const safe = sanitizeFtsQuery(query)
   if (!safe) {
-    return [];
+    return []
   }
 
-  type Row = { path: string; type: string; snippet: string; rank: number };
+  type Row = { path: string; type: string; snippet: string; rank: number }
   const rows = db
     .prepare(
       `SELECT path, type, snippet(knowledge_fts, 2, '**', '**', '…', 30) AS snippet, rank
@@ -248,14 +251,14 @@ export function searchKnowledge(query: string, limit = 10): SearchResult[] {
        ORDER BY rank
        LIMIT ?`,
     )
-    .all(safe, limit) as Row[];
+    .all(safe, limit) as Row[]
 
   return rows.map((r) => ({
     path: r.path,
     type: r.type,
     snippet: r.snippet,
     rank: r.rank,
-  }));
+  }))
 }
 
 /**
@@ -268,52 +271,54 @@ function sanitizeFtsQuery(query: string): string {
   const terms = query
     .replace(/[()*"^~:]/g, ' ')
     .split(/\s+/)
-    .filter((t) => t.length > 0);
-  if (terms.length === 0) return '';
-  return terms.map((t) => `"${t.replace(/"/g, '')}"`).join(' AND ');
+    .filter((t) => t.length > 0)
+  if (terms.length === 0) return ''
+  return terms.map((t) => `"${t.replace(/"/g, '')}"`).join(' AND ')
 }
 
 // ── Stats ──────────────────────────────────────────────
 
 export interface KnowledgeStats {
-  totalFiles: number;
-  byType: Record<string, number>;
-  dbSize: number;
-  lastIndexed: number | null;
+  totalFiles: number
+  byType: Record<string, number>
+  dbSize: number
+  lastIndexed: number | null
 }
 
 /**
  * Return statistics about the knowledge base.
  */
 export function knowledgeStats(): KnowledgeStats {
-  const db = getDb();
+  const db = getDb()
 
-  const totalRow = db.prepare('SELECT COUNT(*) as count FROM indexed_files').get() as { count: number };
+  const totalRow = db.prepare('SELECT COUNT(*) as count FROM indexed_files').get() as { count: number }
   const typeRows = db.prepare('SELECT type, COUNT(*) as count FROM indexed_files GROUP BY type').all() as {
-    type: string;
-    count: number;
-  }[];
+    type: string
+    count: number
+  }[]
 
-  const byType: Record<string, number> = {};
+  const byType: Record<string, number> = {}
   for (const r of typeRows) {
-    byType[r.type] = r.count;
+    byType[r.type] = r.count
   }
 
   const lastRow = db.prepare('SELECT MAX(last_indexed) as last FROM indexed_files').get() as {
-    last: number | null;
-  };
+    last: number | null
+  }
 
-  let dbSize = 0;
+  let dbSize = 0
   try {
-    dbSize = statSync(DB_PATH).size;
-  } catch { /* ignore */ }
+    dbSize = statSync(DB_PATH).size
+  } catch {
+    /* ignore */
+  }
 
   return {
     totalFiles: totalRow.count,
     byType,
     dbSize,
     lastIndexed: lastRow.last,
-  };
+  }
 }
 
 // ── Relevant context injection ─────────────────────────
@@ -324,12 +329,12 @@ export function knowledgeStats(): KnowledgeStats {
  */
 export function getRelevantContext(taskDescription: string, maxResults = 5): string[] {
   try {
-    const results = searchKnowledge(taskDescription, maxResults);
-    if (results.length === 0) return [];
+    const results = searchKnowledge(taskDescription, maxResults)
+    if (results.length === 0) return []
 
-    return results.map((r) => `[${r.type}] ${r.path}:\n  ${r.snippet}`);
+    return results.map((r) => `[${r.type}] ${r.path}:\n  ${r.snippet}`)
   } catch {
-    return [];
+    return []
   }
 }
 
@@ -342,40 +347,40 @@ export function getRelevantContext(taskDescription: string, maxResults = 5): str
 export function knowledgeCommand(subcommand: string, args: string[]): string {
   switch (subcommand) {
     case 'search': {
-      const query = args.join(' ');
-      if (!query) return 'Usage: yu knowledge search <query>';
-      const results = searchKnowledge(query);
-      if (results.length === 0) return '未找到匹配结果。';
-      return results
-        .map((r) => `[${r.type}] ${r.path}\n  ${r.snippet}`)
-        .join('\n\n');
+      const query = args.join(' ')
+      if (!query) return 'Usage: yu knowledge search <query>'
+      const results = searchKnowledge(query)
+      if (results.length === 0) return '未找到匹配结果。'
+      return results.map((r) => `[${r.type}] ${r.path}\n  ${r.snippet}`).join('\n\n')
     }
     case 'index': {
-      const targetDir = args[0] || process.cwd();
-      const result = indexProject(targetDir);
-      return `索引完成: ${result.indexed} 个文件已索引, ${result.skipped} 个跳过, ${result.failed} 个失败`;
+      const targetDir = args[0] || process.cwd()
+      const result = indexProject(targetDir)
+      return `索引完成: ${result.indexed} 个文件已索引, ${result.skipped} 个跳过, ${result.failed} 个失败`
     }
     case 'status':
     case 'stats': {
-      const stats = knowledgeStats();
-      const lines: string[] = ['知识库状态:'];
-      lines.push(`  文件总数: ${stats.totalFiles}`);
+      const stats = knowledgeStats()
+      const lines: string[] = ['知识库状态:']
+      lines.push(`  文件总数: ${stats.totalFiles}`)
       lines.push(
         `  类型分布: ${Object.entries(stats.byType)
           .map(([t, c]) => `${t}: ${c}`)
           .join(', ')}`,
-      );
-      lines.push(`  数据库大小: ${formatBytes(stats.dbSize)}`);
+      )
+      lines.push(`  数据库大小: ${formatBytes(stats.dbSize)}`)
       if (stats.lastIndexed) {
-        lines.push(`  上次索引: ${new Date(stats.lastIndexed).toLocaleString()}`);
+        lines.push(`  上次索引: ${new Date(stats.lastIndexed).toLocaleString()}`)
       } else {
-        lines.push('  尚未索引任何文件，请运行 yu knowledge index');
+        lines.push('  尚未索引任何文件，请运行 yu knowledge index')
       }
-      return lines.join('\n');
+      return lines.join('\n')
     }
     default:
-      return 'Usage: yu knowledge search <query>\n' +
-             '       yu knowledge index [project-dir]\n' +
-             '       yu knowledge status';
+      return (
+        'Usage: yu knowledge search <query>\n' +
+        '       yu knowledge index [project-dir]\n' +
+        '       yu knowledge status'
+      )
   }
 }

@@ -7,11 +7,11 @@
  * Phase 1: Minimal IPC layer — ping/pong, task results, status updates.
  */
 
-import type { ChildProcess } from 'node:child_process';
-import type { IpcMessageType, IpcMessage } from './types.js';
+import type { ChildProcess } from 'child_process'
+import type { IpcMessage, IpcMessageType } from './types.js'
 
 // Shared message counter for seq generation
-let msgSeq = 0;
+let msgSeq = 0
 
 /**
  * Build an IpcMessage with auto-populated timestamp and optional seq.
@@ -22,7 +22,7 @@ function buildMessage(type: IpcMessageType, payload?: Record<string, unknown>): 
     payload,
     timestamp: Date.now(),
     seq: ++msgSeq,
-  };
+  }
 }
 
 /**
@@ -30,8 +30,8 @@ function buildMessage(type: IpcMessageType, payload?: Record<string, unknown>): 
  * Returns true if the message was queued, false if the channel is closed.
  */
 export function sendToChild(child: ChildProcess, type: IpcMessageType, payload?: Record<string, unknown>): boolean {
-  if (!child.connected) return false;
-  return child.send(buildMessage(type, payload));
+  if (!child.connected) return false
+  return child.send(buildMessage(type, payload))
 }
 
 /**
@@ -45,28 +45,28 @@ export function waitForMessage(
 ): Promise<IpcMessage> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error(`Timeout waiting for '${expectedType}' after ${timeoutMs}ms`));
-    }, timeoutMs);
+      cleanup()
+      reject(new Error(`Timeout waiting for '${expectedType}' after ${timeoutMs}ms`))
+    }, timeoutMs)
 
     const handler = (msg: IpcMessage) => {
       if (msg.type === expectedType) {
-        cleanup();
-        resolve(msg);
+        cleanup()
+        resolve(msg)
       }
-    };
+    }
 
     const cleanup = () => {
-      clearTimeout(timer);
-      child.removeListener('message', handler);
-    };
+      clearTimeout(timer)
+      child.removeListener('message', handler)
+    }
 
-    child.on('message', handler);
+    child.on('message', handler)
 
     // Also clean up if the child exits
     child.once('exit', (code) => {
-      cleanup();
-      reject(new Error(`Child exited (code=${code}) while waiting for '${expectedType}'`));
-    });
-  });
+      cleanup()
+      reject(new Error(`Child exited (code=${code}) while waiting for '${expectedType}'`))
+    })
+  })
 }

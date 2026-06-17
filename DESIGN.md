@@ -1,97 +1,119 @@
-# yu-agent 设计文档（v7）
+# yu-agent 设计文档（v8）
 
 > DeepSeek 原生编程代理——调度器 + 多子 agent + 团队模式
 >
-> 基于 Pi + pi-subagents 构建
+> **v8 更新 (2026-06-16): Pi SDK 已完全移除**
+
+---
+
+## 重要说明
+
+本文档部分内容来自 v7（Pi SDK 时代）。以下变更已落地：
+
+| 变化 | 旧 | 新 |
+|------|----|----|
+| 运行时依赖 | Pi SDK (`@tintinweb/pi-subagents`) | 零外部依赖 (Bun 原生) |
+| Agent 调度 | `spawnAgent()` → Pi SessionPool | `runAgent()` → AgentLoop (`agent-loop.ts`) |
+| CLI 入口 | Pi `beforeChat` hook | 独立 `bin/yu.ts` + Web UI (`yu ui`) |
+| 上下文管理 | Pi Session 持久化 | 自有 `context-manager.ts` (LLM 压缩 + token 计数) |
+| 测试框架 | vitest | bun:test |
+| 构建工具 | tsc | `bun build` (单二进制, 52 模块 320ms) |
+
+本文档正文尚未逐节更新。上表为 v8 架构变更的权威参考。
 
 ---
 
 ## 一、架构定位
 
-### 1.1 与 Pi 的关系
+### 1.1 与 Pi 的关系（已解除）
 
-yu-agent 是 Pi 的一个 extension（`@tintinweb/pi-subagents` + 自定义配置 + 调度器逻辑）。
+~~yu-agent 是 Pi 的一个 extension~~
 
-子 agent 不直调 API 也不手动管理 session——全走 pi-subagents 的 Agent 工具，自动获得隔离的 AgentSession、工具管理、并发控制。
+**现状:** yu-agent 是完全独立的项目。Pi SDK 位于 `optionalDependencies`，运行时零加载。
+所有原 Pi 能力已被自有实现替代：
 
-| 能力 | 来源 |
-|------|------|
-| Session 持久化 + 分支 | Pi |
-| 斜杠命令、技能系统、提示模板 | Pi |
-| 子 agent 生命周期管理 | pi-subagents |
-| 子 agent 并发执行 | pi-subagents |
-| 自定义 agent 类型（coding/review/plan 等） | pi-subagents |
-| 工具权限控制（只读/读写） | pi-subagents |
-| **意图识别 + 路由** | **yu-agent scheduler** |
-| **子 agent 系统 prompt 定义** | **yu-agent prompts/** |
-| **Team mode 编排** | **yu-agent scheduler** |
-| **代码库搜索** | **yu-agent Search Agent** |
+| 能力 | 当前实现 |
+|------|---------|
+| Session 持久化 + 分支 | `db.ts` (bun:sqlite) |
+| 斜杠命令、技能系统 | CLI 路由 + 命令分发 |
+| 子 agent 生命周期管理 | `agent-loop.ts` + `spawn.ts` (AgentLoop 代理) |
+| 子 agent 并发执行 | `executor.ts` + `Promise.all` + 并发控制 |
+| 自定义 agent 类型 | `bootstrap.ts` 内联注册 |
+| 工具权限控制 | 工具注册时声明 (`tools/registry.ts`) |
+| **意图识别 + 路由** | **`classifier.ts` + `scheduler.ts`** |
+| **子 agent 系统 prompt** | **`prompts/` 目录** |
+| **Team mode 编排** | **`team-orchestrator.ts`** |
+| **代码库搜索** | **`tools/grep.ts` (ripgrep + fallback)** |
 
-### 1.2 整体流程
+### 1.2 整体流程 (v8)
 
 ```
-用户输入
+用户输入（CLI: `yu "fix login bug"` 或 Web UI）
     │
     ▼
-Pi beforeChat hook 拦截
+classifier.ts — 意图分类
+    │  ├── fast path (>200字 / "你是"模式) → pass_through
+    │  └── LLM 调度器 (v4-flash) → 输出 JSON 规划
     │
-    ├── spawn 调度器 agent（v4-flash + max thinking）
-    │      输出 JSON 规划 → hook 代码解析
+    ├── pass_through → deepseek.js (直接 API 调用)
     │
-    ├── 非编程 → 放行给 Pi 原生
-    │
-    └── 编程 → hook 代码根据 JSON 调 SDK spawn 子 agent
-                 按 parallel_groups 分组并发
-                 → 等全部返回 → 汇总 → 回用户
+    └── 编程任务 → scheduler.ts::executePlan()
+           │
+           ▼
+    executor.ts — 按 parallel_groups 分组并发
+           │
+           ├── spawn.ts (AgentLoop 代理)
+           │     └── agent-loop.ts::runAgent()
+           │           └── LLM + tool use 循环
+           │
+           ├── 全部完成 → 收集 files_modified
+           ├── diff review (git diff → 用户确认)
+           ├── LSP 验证 (verifier.ts)
+           ├── 测试运行 (verifier.ts)
+           └── 决策持久化 (tracker.ts)
 ```
 
-> hook 代码通过 pi-subagents 的 SDK 调用 `spawnAgent()`。
-> 调度器 agent 是 LLM，只负责规划和输出 JSON，不直接 spawn。
-> 实际的 spawn 执行由 hook 代码完成，确保并发生命周期可控。
+> 调度器 agent 是 LLM，只负责分类和输出 JSON 规划。
+> 实际的 spawn 执行由 `executor.ts` + `spawn.ts` 完成，通过 `agent-loop.ts` 的 `runAgent()` 实现。
+> 所有子 agent 走同一套 tool registry (`tools/registry.ts`)，无 Pi SDK 依赖。
 
 ### 1.3 自定义 Agent 类型
 
-通过 pi-subagents 的 `AgentConfig` 定义 7 种类型（默认模型 spawn 时可覆写）：
+通过 `bootstrap.ts` 内联注册 7 种类型（默认模型 spawn 时可覆写）：
 
-| Type | 工具 | 默认模型 | 思考等级 | 权限 |
-|------|------|---------|---------|------|
-| `coding` | terminal, read_file, write_file, patch, search_files | v4-flash | max | 读写 |
-| `review` | read_file, search_files | v4-flash | max | 只读 |
-| `plan` | read_file, search_files, search | v4-flash | max | 只读 |
-| `lsp` | terminal | v4-flash | flash | 读写（仅 LSP） |
-| `commit` | terminal(git) | v4-flash | flash | 读写（仅 git） |
-| `doc` | read_file, write_file | v4-flash | flash | 读写 |
-| `search` | terminal（调 CLI） | v4-flash | flash | 只读 |
+| Type | 工具 | 默认模型 | 用途 |
+|------|------|---------|------|
+| `coding` | terminal, read_file, write_file, patch, search_files, glob, grep | v4-flash | 编码 |
+| `review` | read_file, search_files, glob, grep | v4-flash | 审查 |
+| `plan` | read_file, search_files, search, glob, grep | v4-flash | 规划 |
+| `lsp` | terminal (LSP) | v4-flash | LSP 诊断 |
+| `commit` | terminal (git) | v4-flash | 提交 |
+| `doc` | read_file, write_file | v4-flash | 文档 |
+| `search` | terminal (CLI) | v4-flash | 搜索 |
 
-配置方式（pi-subagents 的自定义 agent 注册）：
+配置方式（`bootstrap.ts` 启动时注册）：
 
 ```typescript
-// extension/config.ts
-import { registerAgentType } from '@tintinweb/pi-subagents';
-import { readFileSync } from 'fs';
+// extension/bootstrap.ts
+import { registerTool } from './tools/registry.js';
+import { readFileSync, existsSync } from 'fs';
 import { resolve } from 'path';
-import { homedir } from 'os';
-
-const PROMPTS_DIR = resolve(homedir(), 'yu-agent', 'prompts');
 
 function loadPrompt(name: string): string {
-  return readFileSync(resolve(PROMPTS_DIR, `${name}.md`), 'utf-8');
+  const path = resolve(PROMPTS_DIR, `${name}.md`);
+  return readFileSync(path, 'utf-8');
 }
 
-registerAgentType('coding', {
-  displayName: 'Coding Agent',
-  description: '编写和修改代码',
-  model: 'v4-flash',              // 默认值，spawn 时可覆写
-  thinking: 'max',
-  maxTurns: 50,
-  builtinToolNames: ['Bash', 'Read', 'Edit', 'Glob', 'Grep'],
-  systemPrompt: loadPrompt('coding')
-});
+// Agent 类型注册为 data-driven 配置对象
+const AGENT_TYPES = {
+  coding: { model: 'v4-flash', tools: ['Bash', 'Read', 'Edit', 'Glob', 'Grep'], prompt: 'coding' },
+  review: { model: 'v4-flash', tools: ['Read', 'Glob', 'Grep'], prompt: 'review' },
+  // ...
+};
 ```
 
-> pi-subagents 的 `AgentConfig` 接受内联 `systemPrompt: string`，不支持文件路径。
-> 调度器在 `config.ts` 启动时统一从 prompt 文件读入字符串后注册。
-> spawn 时通过 `model` 字段覆写默认值，通过 `systemPrompt` 覆写 prompt。
+> Agent 类型不通过外部 SDK 注册。`bootstrap.ts` 在启动时加载 prompt 文件后，类型配置由 `spawn.ts` → `agent-loop.ts` 在 `runAgent()` 时按需使用。
+> spawn 时通过 `config.type` 选择 system prompt，通过 `config.model` 覆写默认模型。
 
 ### 1.4 Prompt 组织（9 个文件）
 
@@ -112,34 +134,29 @@ registerAgentType('coding', {
 
 ## 二、调度器设计
 
-### 2.1 入口
+### 2.1 入口 (v8)
 
-调度器是一个独立的 Pi sub-agent，通过 `beforeChat` hook 拦截所有用户输入。
+入口是 `bin/yu.ts` CLI（或 Web UI 服务器 `yu ui`），不再经过任何外部 hook。
 
 ```
-用户输入
+用户输入 (CLI / Web UI)
     │
     ▼
-beforeChat hook
-    │
-    ├── spawn 调度器 agent（v4-flash + max thinking, prompt: scheduler.md）
-    │      调度器输出 JSON 规划
-    │
-    ├── 非编程（pass_through: true）→ 放行给 Pi 原生 agent
-    │
-    └── 编程任务
+bin/yu.ts 路由
+    ├── doctor, team, topic, search, graph, context, chat, ui → 直接处理
+    └── 默认 → classifier.ts
            │
-           ▼
-           hook 代码解析 JSON
-              ├── 按 parallel_groups 分组
-              ├── 每组内用 Promise.all 并行 spawn
-              ├── 全部完成后收集结果
-              └── 汇总返回用户
+           ├── 非编程 (pass_through) → deepseek.js 直接 API
+           │
+           └── 编程 → scheduler.ts::executePlan()
+                  │
+                  ▼
+              executor.ts → spawn.ts → agent-loop.ts::runAgent() → tool use
 ```
 
 > 调度器 agent 不做编码、不改文件。它只做分类和输出 JSON 规划。
-> hook 代码负责实际的 spawn 调用和生命周期管理。
-> 这样做的好处：调度器（LLM）不需要处理复杂的工具调用，专注判断。
+> `spawn.ts` 是 AgentLoop 的薄代理层，接收 `SpawnConfig` 后调 `agent-loop.ts::runAgent()`。
+> 这样做的好处：无外部依赖，所有逻辑在进程内完成。
 
 ### 2.2 意图判断
 
@@ -357,44 +374,51 @@ hook 代码执行：
 
 ### 3.1 AgentConfig 注册
 
+在 `bootstrap.ts` 中以 data-driven 对象注册：
+
 ```typescript
-registerAgentType('coding',  { /* 见 1.3 */ });
-registerAgentType('review',  { /* 只读工具，max thinking */ });
-registerAgentType('plan',    { /* 只读工具，max thinking */ });
-registerAgentType('lsp',     { /* terminal + flash */ });
-registerAgentType('commit',  { /* terminal + flash */ });
-registerAgentType('doc',     { /* 读写工具 + flash */ });
-registerAgentType('search',  { /* terminal + flash */ });
+// extension/bootstrap.ts
+const AGENT_TYPE_CONFIGS: Record<string, AgentTypeConfig> = {
+  coding: { model: 'v4-flash', tools: ['Bash', 'Read', 'Edit', 'Glob', 'Grep'], prompt: 'coding' },
+  review: { model: 'v4-flash', tools: ['Read', 'Glob', 'Grep'], prompt: 'review' },
+  plan:   { model: 'v4-flash', tools: ['Read', 'Glob', 'Grep', 'Web'], prompt: 'plan' },
+  lsp:    { model: 'v4-flash', tools: ['Bash'], prompt: 'lsp' },
+  commit: { model: 'v4-flash', tools: ['Bash'], prompt: 'commit' },
+  doc:    { model: 'v4-flash', tools: ['Read', 'Edit'], prompt: 'doc' },
+  search: { model: 'v4-flash', tools: ['Bash'], prompt: 'search' },
+};
 ```
 
-每种 type 的 systemPrompt 从 `~/yu-agent/prompts/` 对应文件加载。
+每种 type 的 systemPrompt 从 `prompts/` 对应文件加载。
 
-### 3.2 spawn 接口（hook 代码用）
+### 3.2 spawn 接口
+
+通过 `spawn.ts` 调 `agent-loop.ts::runAgent()`：
 
 ```typescript
-// hook 代码内调用（非 LLM tool）
-import { spawnAgent } from '@tintinweb/pi-subagents';
+// spawn.ts
+import { runAgent } from './agent-loop.js';
 
-const results = await Promise.all(
-  agents.map(agent => spawnAgent({
-    type: agent.type,
-    model: agent.model,             // 可覆写 register 时的默认 model
-    thinking: agent.model === 'v4-pro' ? 'max' : 'max',
-    task: agent.task,
-    files: agent.files,
-    context: { decisions, planMd, ... },  // 注入上下文
-    maxTurns: 50,
-    timeout: 120_000,               // 单 agent 超时
-  }))
-);
+const result = await runAgent(config.task, {
+  systemPrompt: loadPrompt(config.type),
+  maxIterations: Math.min(config.maxTurns ?? 30, 50),
+  maxTokens: 8192,
+});
+
+// 返回 SpawnResult
+return {
+  response: result.output,
+  totalTokens: result.totalTokens,
+  cacheHitTokens: result.cacheStats?.cacheHitTokens,
+  durationMs: Date.now() - startTime,
+};
 ```
 
 **关键约定：**
-- `spawnAgent()` 返回 Promise，resolve 时子 agent 已完成
-- `model` 不传则使用 register 时的默认值
-- pro 模式覆写 `model: 'v4-pro'` + `thinking: 'max'`
-- 每个 spawn 创建独立 AgentSession，结束时自动释放
-- 超时后 Promise reject，由 hook 代码处理
+- 不走外部 SDK，没有 SessionPool
+- 每次 spawn 新建 `runAgent()` 调用，用完即释放
+- 上下文管理由 `context-manager.ts` 负责（LLM 压缩 + token 计数）
+- 超时在 `spawn.ts` 外层控制，超时后 Promise reject
 
 ### 3.3 工具权限
 

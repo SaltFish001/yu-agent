@@ -4,18 +4,18 @@
  * Defines the 7 custom sub-agent types.
  * Each type has a default model, thinking level, tool set, and system prompt.
  *
- * In standalone mode, agent types are registered with the Pi runtime
- * through pi-subagents' API. This config provides the type definitions.
+ * Phase 3: Pi SDK removed. Agent types are now registered in-memory
+ * via bootstrap.ts instead of through pi-subagents.
  */
 
-import { createLogger } from './logger.js';
-const log = createLogger('config');
+import { createLogger } from './logger.js'
 
-import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { registerAgents as registerPiSubagents } from '@tintinweb/pi-subagents/dist/agent-types.js';
-import { z } from 'zod';
-import { MCP_CONFIG_PATH, PROMPTS_DIR, YU_HOME } from './paths.js';
+const log = createLogger('config')
+
+import { existsSync, readFileSync } from 'fs'
+import { resolve } from 'path'
+import { z } from 'zod'
+import { MCP_CONFIG_PATH, PROMPTS_DIR, YU_HOME } from './paths.js'
 
 // ── MCP config schema ─────────────────────────────────
 
@@ -23,13 +23,13 @@ const McpServerConfigSchema = z.object({
   command: z.string().min(1, 'command is required'),
   args: z.array(z.string()).optional(),
   env: z.record(z.string()).optional(),
-});
+})
 
 const McpConfigSchema = z.object({
   servers: z.record(McpServerConfigSchema),
-});
+})
 
-export type McpConfig = z.infer<typeof McpConfigSchema>;
+export type McpConfig = z.infer<typeof McpConfigSchema>
 
 /**
  * Validate ~/.yu/mcp.config.json at startup.
@@ -37,32 +37,32 @@ export type McpConfig = z.infer<typeof McpConfigSchema>;
  */
 export function validateMcpConfig(): void {
   if (!existsSync(MCP_CONFIG_PATH)) {
-    return; // no config is fine
+    return // no config is fine
   }
 
-  let raw: string;
+  let raw: string
   try {
-    raw = readFileSync(MCP_CONFIG_PATH, 'utf-8');
+    raw = readFileSync(MCP_CONFIG_PATH, 'utf-8')
   } catch (err) {
-    log.error(`Failed to read ${MCP_CONFIG_PATH}`, err);
-    process.exit(1);
+    log.error(`Failed to read ${MCP_CONFIG_PATH}`, err)
+    process.exit(1)
   }
 
-  let parsed: unknown;
+  let parsed: unknown
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(raw)
   } catch (err) {
-    log.error(`${MCP_CONFIG_PATH} is not valid JSON`, err);
-    process.exit(1);
+    log.error(`${MCP_CONFIG_PATH} is not valid JSON`, err)
+    process.exit(1)
   }
 
-  const result = McpConfigSchema.safeParse(parsed);
+  const result = McpConfigSchema.safeParse(parsed)
   if (!result.success) {
-    log.error(`${MCP_CONFIG_PATH} failed validation:`);
+    log.error(`${MCP_CONFIG_PATH} failed validation:`)
     for (const issue of result.error.issues) {
-      log.error(`  - ${issue.path.join('.')}: ${issue.message}`);
+      log.error(`  - ${issue.path.join('.')}: ${issue.message}`)
     }
-    process.exit(1);
+    process.exit(1)
   }
 }
 
@@ -74,20 +74,21 @@ export function validateMcpConfig(): void {
  *
  * Returns errors (missing required vars) and warnings (missing optional vars).
  */
-export function validateEnvVars(
-  mcpConfig?: { servers?: Record<string, { env?: Record<string, string> }> }
-): { errors: string[]; warnings: string[] } {
-  const needed = new Set<string>();
-  const errors: string[] = [];
-  const warnings: string[] = [];
+export function validateEnvVars(mcpConfig?: { servers?: Record<string, { env?: Record<string, string> }> }): {
+  errors: string[]
+  warnings: string[]
+} {
+  const needed = new Set<string>()
+  const errors: string[] = []
+  const warnings: string[] = []
 
   if (mcpConfig?.servers) {
-    for (const [name, cfg] of Object.entries(mcpConfig.servers)) {
+    for (const [_name, cfg] of Object.entries(mcpConfig.servers)) {
       if (cfg.env) {
         for (const [key, val] of Object.entries(cfg.env)) {
           // If value is empty or a template reference like "${VAR}", mark the key as needed
-          if (!val || val.startsWith("${")) {
-            needed.add(key);
+          if (!val || val.startsWith('${')) {
+            needed.add(key)
           }
         }
       }
@@ -96,34 +97,34 @@ export function validateEnvVars(
 
   for (const key of needed) {
     if (!process.env[key]) {
-      errors.push(`Required env var ${key} is not set (used by MCP server config)`);
+      errors.push(`Required env var ${key} is not set (used by MCP server config)`)
     }
   }
 
   if (!process.env.PI_PROVIDER) {
-    warnings.push("PI_PROVIDER not set — yu-agent will use Pi default provider");
+    warnings.push('PI_PROVIDER not set — yu-agent will use Pi default provider')
   }
 
   // Check common API key conventions (keys containing KEY, TOKEN, SECRET, PASSWORD)
   for (const key of Object.keys(process.env)) {
-    const upper = key.toUpperCase();
+    const upper = key.toUpperCase()
     if (/KEY|TOKEN|SECRET|PASSWORD/.test(upper)) {
-      const val = process.env[key];
+      const val = process.env[key]
       if (!val || val.trim() === '' || val === 'your-key-here' || val === 'sk-placeholder') {
-        warnings.push(`${key} appears to be an API key but is empty or placeholder`);
+        warnings.push(`${key} appears to be an API key but is empty or placeholder`)
       }
     }
   }
 
-  return { errors, warnings };
+  return { errors, warnings }
 }
 
 // ── Resource limits ───────────────────────────────────
 
 export interface ResourceLimits {
-  maxConcurrentAgents?: number;  // default: 8
-  maxPerPool?: number;           // default: 4
-  defaultAgentTimeout?: number;  // default: 120000 (120s)
+  maxConcurrentAgents?: number // default: 8
+  maxPerPool?: number // default: 4
+  defaultAgentTimeout?: number // default: 120000 (120s)
 }
 
 // ── General application config ─────────────────────────
@@ -134,59 +135,59 @@ export interface ResourceLimits {
 export interface AppConfig {
   identity?: {
     /** @deprecated Personality is removed — yu-agent is a professional assistant. */
-    personalityPath?: string;
-  };
+    personalityPath?: string
+  }
   /**
    * Resource limits for agent execution.
    */
-  resourceLimits?: ResourceLimits;
+  resourceLimits?: ResourceLimits
 }
 
-const APP_CONFIG_PATH = resolve(YU_HOME, 'config.json');
+const APP_CONFIG_PATH = resolve(YU_HOME, 'config.json')
 
-let _appConfig: AppConfig | null = null;
+let _appConfig: AppConfig | null = null
 
 /**
  * Load ~/.yu/config.json (cached after first call).
  * Returns an empty object if the file doesn't exist or is invalid.
  */
 export function loadAppConfig(): AppConfig {
-  if (_appConfig) return _appConfig;
+  if (_appConfig) return _appConfig
   try {
     if (existsSync(APP_CONFIG_PATH)) {
-      const raw = readFileSync(APP_CONFIG_PATH, 'utf-8');
-      _appConfig = JSON.parse(raw) as AppConfig;
-      return _appConfig;
+      const raw = readFileSync(APP_CONFIG_PATH, 'utf-8')
+      _appConfig = JSON.parse(raw) as AppConfig
+      return _appConfig
     }
   } catch (err) {
-    log.warn('Failed to load app config, using defaults', err);
+    log.warn('Failed to load app config, using defaults', err)
   }
-  _appConfig = {};
-  return _appConfig;
+  _appConfig = {}
+  return _appConfig
 }
 
 // ── Agent type definition ─────────────────────────────
 
 export interface AgentTypeConfig {
-  displayName: string;
-  description: string;
-  model: string;
-  thinking: 'max' | 'high' | 'medium' | 'low';
-  maxTurns: number;
-  builtinToolNames: string[];
-  systemPrompt: string;
+  displayName: string
+  description: string
+  model: string
+  thinking: 'max' | 'high' | 'medium' | 'low'
+  maxTurns: number
+  builtinToolNames: string[]
+  systemPrompt: string
 }
 
 // ── Prompt loader ──────────────────────────────────────
 
 function loadPrompt(name: string): string {
   try {
-    const path = resolve(PROMPTS_DIR, `${name}.md`);
-    const content = readFileSync(path, 'utf-8');
-    return content;
+    const path = resolve(PROMPTS_DIR, `${name}.md`)
+    const content = readFileSync(path, 'utf-8')
+    return content
   } catch (err) {
-    log.warn(`Prompt file not found for agent type "${name}", using fallback`, err);
-    return `You are a ${name} agent. Complete the assigned task.`;
+    log.warn(`Prompt file not found for agent type "${name}", using fallback`, err)
+    return `You are a ${name} agent. Complete the assigned task.`
   }
 }
 
@@ -287,54 +288,27 @@ export const AGENT_TYPES: Record<string, AgentTypeConfig> = {
     builtinToolNames: [],
     systemPrompt: loadPrompt('scheduler'),
   },
-};
+}
 
 /** Get all registered agent type names. */
 export function getAgentTypeNames(): string[] {
-  return Object.keys(AGENT_TYPES);
+  return Object.keys(AGENT_TYPES)
 }
 
 /** Get agent type config by name (case-insensitive displayName also supported). */
 export function getAgentTypeConfig(name: string): AgentTypeConfig | undefined {
   // Try internal name first (case-insensitive)
-  const key = Object.keys(AGENT_TYPES).find(
-    (k) => k.toLowerCase() === name.toLowerCase(),
-  );
-  if (key) return AGENT_TYPES[key];
+  const key = Object.keys(AGENT_TYPES).find((k) => k.toLowerCase() === name.toLowerCase())
+  if (key) return AGENT_TYPES[key]
   // Fall back to displayName search (first match)
-  return Object.values(AGENT_TYPES).find(
-    (cfg) => cfg.displayName.toLowerCase() === name.toLowerCase(),
-  );
+  return Object.values(AGENT_TYPES).find((cfg) => cfg.displayName.toLowerCase() === name.toLowerCase())
 }
 
 /**
- * Register all agent types with pi-subagents.
- * Called during Pi extension initialization.
+ * Register all agent types (in-memory, no Pi dependency).
+ * Phase 3: Pi SDK removed — this is now a no-op placeholder.
+ * Agent types are available via AGENT_TYPES export and bootstrap.registerTypes().
  */
 export function registerAgents(): void {
-  try {
-    const agentConfigs = new Map(
-      Object.entries(AGENT_TYPES).map(([name, cfg]) => [
-        name,
-        {
-          name,
-          displayName: cfg.displayName,
-          description: cfg.description,
-          model: cfg.model,
-          thinking: cfg.thinking === 'max' ? ('xhigh' as const) : ('high' as const),
-          maxTurns: cfg.maxTurns,
-          builtinToolNames: cfg.builtinToolNames,
-          systemPrompt: cfg.systemPrompt,
-          promptMode: 'replace' as const,
-          extensions: true as const,
-          skills: true as const,
-        },
-      ]),
-    );
-
-    registerPiSubagents(agentConfigs);
-    log.info(`Registered ${agentConfigs.size} agent types with pi-subagents`);
-  } catch (err) {
-    log.warn('Failed to register agent types with pi-subagents', err);
-  }
+  log.info(`Agent types available: ${Object.keys(AGENT_TYPES).join(', ')} (Pi-free)`)
 }

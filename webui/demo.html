@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="zh-CN" x-data="yuApp()">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>yu-agent · web ui</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <script src="https://unpkg.com/htmx.org@2.0.4/dist/ext/sse.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:opsz@14..32&display=swap');
+    * { font-family: 'Inter', system-ui, sans-serif; }
+    body { background: #0f0f11; color: #e1e1e3; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #2a2a2e; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #3a3a3e; }
+
+    .msg-enter {
+      animation: msgIn 0.2s ease-out;
+    }
+    @keyframes msgIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .typing-dot {
+      animation: dotPulse 1.4s infinite;
+    }
+    .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+    .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes dotPulse {
+      0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+      30% { opacity: 1; transform: translateY(-3px); }
+    }
+    .monitor-panel {
+      transition: width 0.25s ease, opacity 0.2s ease;
+    }
+    .tool-call {
+      border-left: 2px solid #3b82f6;
+      padding-left: 12px;
+      margin: 6px 0;
+      font-size: 0.8rem;
+      opacity: 0.85;
+    }
+    .tool-call-enter {
+      animation: slideIn 0.2s ease-out;
+    }
+    @keyframes slideIn {
+      from { opacity: 0; max-height: 0; }
+      to { opacity: 0.85; max-height: 60px; }
+    }
+  </style>
+</head>
+<body class="flex h-screen overflow-hidden">
+
+  <!-- ============ SIDEBAR ============ -->
+  <aside class="w-60 flex-shrink-0 border-r border-[#1e1e22] flex flex-col bg-[#0a0a0c]">
+    <!-- logo -->
+    <div class="h-12 flex items-center gap-2 px-4 border-b border-[#1e1e22]">
+      <span class="text-lg font-semibold tracking-tight text-white">yu</span>
+      <span class="text-[#6b6b70] text-xs font-mono">v0.1.0</span>
+    </div>
+
+    <!-- new chat -->
+    <button type="button" class="mx-3 mt-3 mb-2 h-9 rounded-lg bg-[#1a1a1e] hover:bg-[#25252a] border border-[#2a2a2e] text-sm text-[#b0b0b8] flex items-center justify-center gap-1.5 transition-colors"
+            @click="newChat()">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" role="img" aria-label="新对话"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+      新对话
+    </button>
+
+    <!-- conversation list -->
+    <nav class="flex-1 overflow-y-auto px-2 space-y-0.5">
+      <template x-for="(c, i) in conversations" :key="c.id">
+        <div class="flex items-center group rounded-lg px-3 py-2 cursor-pointer text-sm transition-colors"
+             :class="currentChat === i ? 'bg-[#1e1e24] text-white' : 'text-[#6b6b70] hover:text-[#b0b0b8] hover:bg-[#151518]'"
+             @click="switchChat(i)">
+          <span class="flex-1 truncate" x-text="c.title"></span>
+          <span class="text-xs text-[#4a4a50] opacity-0 group-hover:opacity-100" x-text="c.time"></span>
+        </div>
+      </template>
+    </nav>
+
+    <!-- status footer -->
+    <div class="px-4 py-3 border-t border-[#1e1e22] flex items-center gap-2">
+      <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+      <span class="text-xs text-[#6b6b70]">agent 运行中</span>
+    </div>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <main class="flex-1 flex flex-col min-w-0">
+
+    <!-- header -->
+    <header class="h-12 flex items-center justify-between px-5 border-b border-[#1e1e22] bg-[#0a0a0c] flex-shrink-0">
+      <div class="flex items-center gap-3">
+        <h1 class="text-sm font-medium text-white">当前对话</h1>
+        <span class="text-xs text-[#4a4a50] font-mono" x-text="currentModel"></span>
+      </div>
+      <div class="flex items-center gap-3">
+        <!-- model selector -->
+        <select class="bg-[#1a1a1e] text-xs text-[#b0b0b8] border border-[#2a2a2e] rounded-lg px-2.5 py-1.5 outline-none"
+                x-model="currentModel">
+          <option>deepseek-v4-flash</option>
+          <option>gpt-4o</option>
+          <option>claude-sonnet-4</option>
+        </select>
+        <!-- monitor toggle -->
+        <button type="button" class="text-xs text-[#6b6b70] hover:text-[#b0b0b8] flex items-center gap-1 transition-colors" @click="showMonitor = !showMonitor">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" role="img" aria-label="切换监控"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+          <span x-text="showMonitor ? '隐藏监控' : '监控'"></span>
+        </button>
+      </div>
+    </header>
+
+    <div class="flex flex-1 min-h-0">
+      <!-- ============ CHAT AREA ============ -->
+      <div class="flex-1 flex flex-col min-w-0">
+        <!-- messages -->
+        <div class="flex-1 overflow-y-auto px-4 py-4 space-y-4" id="chat-messages" x-ref="chatBox">
+          <template x-for="msg in messages" :key="msg.id">
+            <div class="flex" :class="msg.role === 'user' ? 'justify-end' : 'justify-start'">
+              <div class="max-w-[75%] msg-enter"
+                   :class="msg.role === 'user'
+                     ? 'bg-[#1a3a5c] text-[#d0e0f0] rounded-2xl rounded-br-md px-4 py-2.5'
+                     : 'bg-[#1a1a1e] text-[#d0d0d4] rounded-2xl rounded-bl-md px-4 py-2.5'">
+                <!-- tool calls if any -->
+                <template x-if="msg.tools && msg.tools.length">
+                  <div class="mb-2 space-y-1">
+                    <template x-for="t in msg.tools" :key="t.name">
+                      <div class="tool-call tool-call-enter text-[#6b9fd0]">
+                        <span class="font-mono">⚡</span>
+                        <span class="font-mono" x-text="t.name"></span>
+                        <span class="text-[#4a6a80]" x-text="'(' + t.duration + 'ms)'"></span>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+                <div class="text-sm leading-relaxed whitespace-pre-wrap" x-text="msg.text"></div>
+              </div>
+            </div>
+          </template>
+
+          <!-- typing indicator -->
+          <div x-show="isTyping" class="flex justify-start">
+            <div class="bg-[#1a1a1e] rounded-2xl rounded-bl-md px-4 py-3 flex gap-1.5">
+              <span class="w-2 h-2 rounded-full bg-[#4a4a50] typing-dot"></span>
+              <span class="w-2 h-2 rounded-full bg-[#4a4a50] typing-dot"></span>
+              <span class="w-2 h-2 rounded-full bg-[#4a4a50] typing-dot"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- input -->
+        <div class="flex-shrink-0 px-4 py-3 border-t border-[#1e1e22] bg-[#0a0a0c]">
+          <div class="flex items-end gap-2 bg-[#1a1a1e] rounded-xl border border-[#2a2a2e] px-4 py-2 focus-within:border-[#3a5a7a] transition-colors">
+            <textarea class="flex-1 bg-transparent text-sm text-[#e1e1e3] placeholder-[#4a4a50] outline-none resize-none max-h-32 py-1"
+                      placeholder="给 yu 发消息…"
+                      x-model="inputText"
+                      @keydown.enter.prevent="sendMessage()"
+                      rows="1"></textarea>
+            <button type="button" class="flex-shrink-0 w-8 h-8 rounded-lg bg-[#2563eb] hover:bg-[#3b82f6] disabled:bg-[#1a1a1e] disabled:text-[#3a3a3e] flex items-center justify-center transition-colors"
+                    :disabled="!inputText.trim() || isTyping"
+                    @click="sendMessage()">
+              <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" role="img" aria-label="发送"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ MONITOR PANEL ============ -->
+      <div class="monitor-panel border-l border-[#1e1e22] bg-[#0a0a0c] overflow-y-auto flex-shrink-0"
+           :style="showMonitor ? 'width: 300px; opacity: 1;' : 'width: 0; opacity: 0; overflow: hidden;'">
+
+        <div class="p-4 space-y-4" x-show="showMonitor">
+          <!-- session info -->
+          <div>
+            <div class="text-xs font-medium text-[#6b6b70] uppercase tracking-wider mb-2">会话</div>
+            <div class="space-y-2">
+              <div class="flex justify-between text-xs">
+                <span class="text-[#6b6b70]">ID</span>
+                <span class="text-[#b0b0b8] font-mono" x-text="sessionId"></span>
+              </div>
+              <div class="flex justify-between text-xs">
+                <span class="text-[#6b6b70]">轮次</span>
+                <span class="text-[#b0b0b8]" x-text="messageCount + ' 条'"></span>
+              </div>
+              <div class="flex justify-between text-xs">
+                <span class="text-[#6b6b70]">用时</span>
+                <span class="text-[#b0b0b8]" x-text="sessionDuration"></span>
+              </div>
+              <div class="flex justify-between text-xs">
+                <span class="text-[#6b6b70]">模型</span>
+                <span class="text-[#b0b0b8] font-mono" x-text="currentModel"></span>
+              </div>
+            </div>
+          </div>
+
+          <div class="border-t border-[#1e1e22]"></div>
+
+          <!-- resource usage -->
+          <div>
+            <div class="text-xs font-medium text-[#6b6b70] uppercase tracking-wider mb-2">资源</div>
+            <div class="space-y-2">
+              <div>
+                <div class="flex justify-between text-xs mb-1">
+                  <span class="text-[#6b6b70]">内存</span>
+                  <span class="text-[#b0b0b8]" x-text="memoryUsed + ' / ' + memoryTotal + ' MB'"></span>
+                </div>
+                <div class="h-1.5 bg-[#1a1a1e] rounded-full overflow-hidden">
+                  <div class="h-full rounded-full transition-all duration-500"
+                       :style="'width: ' + (memoryUsed/memoryTotal*100) + '%'"
+                       :class="memoryUsed/memoryTotal > 0.8 ? 'bg-rose-500' : memoryUsed/memoryTotal > 0.5 ? 'bg-amber-500' : 'bg-emerald-500'"></div>
+                </div>
+              </div>
+              <div>
+                <div class="flex justify-between text-xs mb-1">
+                  <span class="text-[#6b6b70]">token 窗口</span>
+                  <span class="text-[#b0b0b8]" x-text="tokensUsed + ' / ' + tokensTotal + 'k'"></span>
+                </div>
+                <div class="h-1.5 bg-[#1a1a1e] rounded-full overflow-hidden">
+                  <div class="h-full rounded-full transition-all duration-500"
+                       :style="'width: ' + (tokensUsed/tokensTotal*100) + '%'"
+                       :class="tokensUsed/tokensTotal > 0.8 ? 'bg-rose-500' : tokensUsed/tokensTotal > 0.5 ? 'bg-amber-500' : 'bg-cyan-500'"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="border-t border-[#1e1e22]"></div>
+
+          <!-- tool calls log -->
+          <div>
+            <div class="text-xs font-medium text-[#6b6b70] uppercase tracking-wider mb-2">工具调用</div>
+            <div class="max-h-48 overflow-y-auto space-y-1" x-ref="toolLog">
+              <template x-for="t in toolCalls" :key="t.id">
+                <div class="tool-call tool-call-enter">
+                  <div class="font-mono text-xs">
+                    <span class="text-[#6b9fd0]">→</span>
+                    <span class="text-[#b0b0b8]" x-text="t.name"></span>
+                  </div>
+                  <div class="text-[10px] text-[#4a4a50] mt-0.5" x-text="t.timestamp"></div>
+                </div>
+              </template>
+              <div x-show="!toolCalls.length" class="text-xs text-[#3a3a3e] italic">暂无调用</div>
+            </div>
+          </div>
+
+          <div class="border-t border-[#1e1e22]"></div>
+
+          <!-- memory stats -->
+          <div>
+            <div class="text-xs font-medium text-[#6b6b70] uppercase tracking-wider mb-2">记忆</div>
+            <div class="space-y-1 text-xs">
+              <div class="flex justify-between">
+                <span class="text-[#6b6b70]">ring buffer</span>
+                <span class="text-[#b0b0b8]" x-text="ringMemCount + ' 条'"></span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-[#6b6b70]">向量库</span>
+                <span class="text-[#b0b0b8]" x-text="vectorMemCount + ' 条'"></span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-[#6b6b70]">facts</span>
+                <span class="text-[#b0b0b8]" x-text="factsCount + ' 条'"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    function _yuApp() {
+      return {
+        // --- state ---
+        conversations: [
+          { id: 1, title: 'Phase 1a 实施计划', time: '14:20' },
+          { id: 2, title: '测试覆盖策略讨论', time: '13:45' },
+          { id: 3, title: 'Pi SDK 移除方案', time: '昨天' },
+          { id: 4, title: '团队自检流程设计', time: '昨天' },
+          { id: 5, title: 'Web UI 设计方案', time: '前天' },
+        ],
+        currentChat: 0,
+        messages: [
+          { id: 1, role: 'user', text: 'yu 自检结果怎么样？' },
+          { id: 2, role: 'assistant', text: '三轮自检完成。编译零错误，103/103 测试全绿，13 个文件改动，累计 +41/-2801 行。\n\n剩下的问题是：\n1. MCP callTool 零实现（需 ~250 LOC）\n2. bun:sqlite 兼容性待验证', tools: [
+            { name: 'yu doctor', duration: 320 },
+            { name: 'yu test', duration: 1840 },
+          ]},
+          { id: 3, role: 'user', text: '那 Phase 1a 可以开了？' },
+          { id: 4, role: 'assistant', text: '可以。Phase 1a 拆成 5 个 task：\n\n1. 自建 MCP callTool ~250 LOC\n2. 嵌入式 HTTP server + SSE 端点\n3. HTML 模板 + HTMX 路由\n4. 监控面板数据推送\n5. bun:sqlite 兼容性验证\n\n预计 ~1200 LOC。需要我拆 task 卡吗？' },
+        ],
+        isTyping: false,
+        inputText: '',
+        showMonitor: true,
+
+        // --- session info ---
+        sessionId: 'ses_7f3a2b',
+        messageCount: 12,
+        sessionDuration: '00:23:45',
+        currentModel: 'deepseek-v4-flash',
+
+        // --- resource ---
+        memoryUsed: 187,
+        memoryTotal: 256,
+        tokensUsed: 64,
+        tokensTotal: 128,
+
+        // --- memory ---
+        ringMemCount: 847,
+        vectorMemCount: 31,
+        factsCount: 22,
+
+        // --- tool calls log ---
+        toolCalls: [
+          { id: 1, name: 'yu doctor', timestamp: '14:20:13' },
+          { id: 2, name: 'read_file(scheduler.ts)', timestamp: '14:20:15' },
+          { id: 3, name: 'yu test', timestamp: '14:21:02' },
+          { id: 4, name: 'git diff', timestamp: '14:21:08' },
+          { id: 5, name: 'git commit', timestamp: '14:22:31' },
+        ],
+
+        // --- methods ---
+        newChat() {
+          this.conversations.unshift({ id: Date.now(), title: '新对话', time: '现在' });
+          this.currentChat = 0;
+          this.messages = [];
+          this.messageCount = 0;
+        },
+
+        switchChat(i) {
+          this.currentChat = i;
+        },
+
+        sendMessage() {
+          if (!this.inputText.trim() || this.isTyping) return;
+          const text = this.inputText;
+          this.messages.push({ id: Date.now(), role: 'user', text });
+          this.inputText = '';
+          this.messageCount++;
+
+          // simulate response
+          this.isTyping = true;
+          setTimeout(() => {
+            this.isTyping = false;
+            const id = Date.now();
+            this.messages.push({
+              id,
+              role: 'assistant',
+              text: '收到。让我看看……\n\n这个方案可行，但需要确认一下依赖关系。我跑一下自检。',
+              tools: [
+                { name: 'search_files("config")', duration: 45 },
+                { name: 'read_file(tsconfig.json)', duration: 12 },
+              ],
+            });
+            this.messageCount++;
+            this.toolCalls.unshift({ id, name: 'web_search("latest bun version")', timestamp: '刚刚' });
+            // update resource metrics
+            this.memoryUsed = Math.min(256, this.memoryUsed + Math.floor(Math.random() * 20));
+            this.tokensUsed = Math.min(128, this.tokensUsed + Math.floor(Math.random() * 8));
+            // scroll to bottom
+            this.$nextTick(() => {
+              const el = this.$refs.chatBox;
+              if (el) el.scrollTop = el.scrollHeight;
+            });
+          }, 800 + Math.random() * 1200);
+        },
+      };
+    }
+  </script>
+</body>
+</html>

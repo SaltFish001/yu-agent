@@ -5,26 +5,26 @@
  * Provides parallel execution helpers with timeout and concurrency control.
  */
 
-import { createLogger } from './logger.js';
-const log = createLogger('executor');
+import { createLogger } from './logger.js'
 
-import { spawnAgent, type SpawnConfig } from './spawn.js';
-import type { SpawnResult } from './spawn.js';
-import { trackAgent } from './tracker.js';
-import { checkpointGuard } from './checkpoint.js';
-import { execSync } from 'node:child_process';
-import { createInterface } from 'node:readline';
-import type { ResourceLimits } from './config.js';
+const log = createLogger('executor')
+
+import { createInterface } from 'readline'
+import { checkpointGuard } from './checkpoint.js'
+import type { ResourceLimits } from './config.js'
+import type { SpawnResult } from './spawn.js'
+import { type SpawnConfig, spawnAgent } from './spawn.js'
+import { trackAgent } from './tracker.js'
 
 // ── Constants ──────────────────────────────────────────
 
-const MAX_CONCURRENCY = 4;
-export const AGENT_TIMEOUT_MS = 120_000;
+const MAX_CONCURRENCY = 4
+export const AGENT_TIMEOUT_MS = 120_000
 
 // ── Concurrency limiter ───────────────────────────────
 
-const activeAgents = new Set<string>();
-const activeByType = new Map<string, number>();
+const activeAgents = new Set<string>()
+const activeByType = new Map<string, number>()
 
 /**
  * Acquire a concurrency slot for agent execution.
@@ -33,32 +33,32 @@ const activeByType = new Map<string, number>();
 export async function acquireConcurrencySlot(
   type: string,
   sessionTag: string,
-  limits: ResourceLimits = {}
+  limits: ResourceLimits = {},
 ): Promise<void> {
-  const maxGlobal = limits.maxConcurrentAgents ?? 8;
-  const maxPerType = limits.maxPerPool ?? 4;
+  const maxGlobal = limits.maxConcurrentAgents ?? 8
+  const maxPerType = limits.maxPerPool ?? 4
 
   while (activeAgents.size >= maxGlobal || (activeByType.get(type) ?? 0) >= maxPerType) {
-    await new Promise<void>((r) => setTimeout(r, 50));
+    await new Promise<void>((r) => setTimeout(r, 50))
   }
 
-  const id = `${type}-${sessionTag}-${Date.now()}`;
-  activeAgents.add(id);
-  activeByType.set(type, (activeByType.get(type) ?? 0) + 1);
+  const id = `${type}-${sessionTag}-${Date.now()}`
+  activeAgents.add(id)
+  activeByType.set(type, (activeByType.get(type) ?? 0) + 1)
 }
 
 /**
  * Release a concurrency slot after agent execution completes.
  */
 export function releaseConcurrencySlot(type: string): void {
-  const count = activeByType.get(type) ?? 1;
-  if (count <= 1) activeByType.delete(type);
-  else activeByType.set(type, count - 1);
+  const count = activeByType.get(type) ?? 1
+  if (count <= 1) activeByType.delete(type)
+  else activeByType.set(type, count - 1)
   // Remove first matching entry from activeAgents
   for (const id of activeAgents) {
     if (id.startsWith(type)) {
-      activeAgents.delete(id);
-      break;
+      activeAgents.delete(id)
+      break
     }
   }
 }
@@ -66,11 +66,11 @@ export function releaseConcurrencySlot(type: string): void {
 // ── Types ──────────────────────────────────────────────
 
 export interface AgentTask {
-  type: string;
-  model: string;
-  id: string;
-  files?: string[];
-  task: string;
+  type: string
+  model: string
+  id: string
+  files?: string[]
+  task: string
 }
 
 // ── Sub-agent spawn helpers ────────────────────────────
@@ -84,14 +84,14 @@ export async function spawnAgentWithTimeout(
     agentType: task.type,
     agentModel: task.model,
     taskGoal: task.task?.slice(0, 200),
-  });
+  })
   try {
     trackAgent(task.id, 'running', {
       type: task.type,
       model: task.model,
       goal: task.task?.slice(0, 120) ?? '',
       files: task.files,
-    });
+    })
 
     try {
       const config: SpawnConfig = {
@@ -99,23 +99,23 @@ export async function spawnAgentWithTimeout(
         model: task.model,
         thinking: 'max',
         maxTurns: 50,
-        task: task.task || (task.files?.join(', ') || ''),
+        task: task.task || task.files?.join(', ') || '',
         files: task.files,
         context: extraContext,
         timeout: AGENT_TIMEOUT_MS,
         teamRunId: extraContext.teamRunId as string | undefined,
         memberName: extraContext.memberName as string | undefined,
-      };
-      const result = await spawnAgent(config);
-      trackAgent(task.id, 'completed');
-      return result;
+      }
+      const result = await spawnAgent(config)
+      trackAgent(task.id, 'completed')
+      return result
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      trackAgent(task.id, 'failed', { error: msg });
-      throw err;
+      const msg = err instanceof Error ? err.message : String(err)
+      trackAgent(task.id, 'failed', { error: msg })
+      throw err
     }
   } finally {
-    done(); // 无论成功或失败都清理 checkpoint
+    done() // 无论成功或失败都清理 checkpoint
   }
 }
 
@@ -128,25 +128,25 @@ export async function runWithConcurrencyLimit<T>(
   tasks: (() => Promise<T>)[],
   limit: number,
 ): Promise<PromiseSettledResult<T>[]> {
-  const results: PromiseSettledResult<T>[] = new Array(tasks.length);
-  let index = 0;
+  const results: PromiseSettledResult<T>[] = new Array(tasks.length)
+  let index = 0
 
   async function worker(): Promise<void> {
     while (index < tasks.length) {
-      const i = index++;
+      const i = index++
       try {
-        const value = await tasks[i]();
-        results[i] = { status: 'fulfilled' as const, value };
+        const value = await tasks[i]()
+        results[i] = { status: 'fulfilled' as const, value }
       } catch (reason) {
-        results[i] = { status: 'rejected' as const, reason };
+        results[i] = { status: 'rejected' as const, reason }
       }
     }
   }
 
-  const workerCount = Math.min(limit, tasks.length);
-  const workers = Array.from({ length: workerCount }, () => worker());
-  await Promise.all(workers);
-  return results;
+  const workerCount = Math.min(limit, tasks.length)
+  const workers = Array.from({ length: workerCount }, () => worker())
+  await Promise.all(workers)
+  return results
 }
 
 // ── Diff review ────────────────────────────────────────
@@ -168,89 +168,77 @@ export async function runWithConcurrencyLimit<T>(
  *
  * @returns true 用户确认（y） | false 用户拒绝或超时（N）
  */
-export async function confirmDiff(diffResult: {
-  diff: string;
-  hasChanges: boolean;
-  stats: string;
-}): Promise<boolean> {
+export async function confirmDiff(diffResult: { diff: string; hasChanges: boolean; stats: string }): Promise<boolean> {
   if (!diffResult.hasChanges) {
-    return true; // 无变更，无需确认
+    return true // 无变更，无需确认
   }
 
-  console.log('');
-  console.log('═ 人类审批 ═══════════════════════════════════════════════');
-  console.log('  以上是 agent 的变更。请确认是否继续：');
-  console.log('');
+  console.log('')
+  console.log('═ 人类审批 ═══════════════════════════════════════════════')
+  console.log('  以上是 agent 的变更。请确认是否继续：')
+  console.log('')
 
   return new Promise<boolean>((resolve) => {
     const rl = createInterface({
       input: process.stdin,
       output: process.stdout,
       terminal: true,
-    });
+    })
 
-    let settled = false;
+    let settled = false
     const timer = setTimeout(() => {
       if (!settled) {
-        settled = true;
-        rl.close();
-        console.log('  ⏱ 超时未响应，自动放弃变更。');
-        console.log('════════════════════════════════════════════════════════════════');
-        console.log('');
-        resolve(false);
+        settled = true
+        rl.close()
+        console.log('  ⏱ 超时未响应，自动放弃变更。')
+        console.log('════════════════════════════════════════════════════════════════')
+        console.log('')
+        resolve(false)
       }
-    }, 60_000);
+    }, 60_000)
 
     rl.question('  Apply these changes? (y/N) ', (answer) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      rl.close();
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      rl.close()
 
-      const trimmed = answer.trim().toLowerCase();
+      const trimmed = answer.trim().toLowerCase()
       if (trimmed === 'y' || trimmed === 'yes') {
-        console.log('  ✓ 已确认，继续执行。');
-        console.log('════════════════════════════════════════════════════════════════');
-        console.log('');
-        resolve(true);
+        console.log('  ✓ 已确认，继续执行。')
+        console.log('════════════════════════════════════════════════════════════════')
+        console.log('')
+        resolve(true)
       } else {
-        console.log('  ✗ 已放弃变更。');
-        console.log('════════════════════════════════════════════════════════════════');
-        console.log('');
-        resolve(false);
+        console.log('  ✗ 已放弃变更。')
+        console.log('════════════════════════════════════════════════════════════════')
+        console.log('')
+        resolve(false)
       }
-    });
-  });
+    })
+  })
 }
 
 export function reviewDiff(): { diff: string; hasChanges: boolean; stats: string } {
   try {
-    const stats = execSync('git diff --stat', {
-      encoding: 'utf-8',
-      timeout: 5000,
-      cwd: process.cwd(),
-    }).trim();
+    const cwd = process.cwd()
+    const statsProc = Bun.spawnSync(['git', 'diff', '--stat'], { timeout: 5000, cwd })
+    const stats = statsProc.stdout.toString().trim()
 
-    const diff = execSync('git diff', {
-      encoding: 'utf-8',
-      timeout: 5000,
-      cwd: process.cwd(),
-    });
+    const diffProc = Bun.spawnSync(['git', 'diff'], { timeout: 5000, cwd })
+    const diff = diffProc.stdout.toString()
 
     // Also check for staged changes (in case of partial commits)
-    const stagedDiff = execSync('git diff --cached --stat', {
-      encoding: 'utf-8',
-      timeout: 5000,
-      cwd: process.cwd(),
-    }).trim();
+    const stagedProc = Bun.spawnSync(['git', 'diff', '--cached', '--stat'], { timeout: 5000, cwd })
+    const stagedDiff = stagedProc.stdout.toString().trim()
 
-    const hasChanges = diff.length > 0 || stagedDiff.length > 0;
+    const hasChanges = diff.length > 0 || stagedDiff.length > 0
 
-    return { diff, hasChanges, stats };
+    return { diff, hasChanges, stats }
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log.warn('git diff failed', msg);
-    return { diff: '', hasChanges: false, stats: '' };
+    const msg = err instanceof Error ? err.message : String(err)
+    log.warn('git diff failed', msg)
+    return { diff: '', hasChanges: false, stats: '' }
   }
 }
 
@@ -261,23 +249,23 @@ export function reviewDiff(): { diff: string; hasChanges: boolean; stats: string
  */
 export function printDiffSummary(diffResult: { diff: string; hasChanges: boolean; stats: string }): void {
   if (!diffResult.hasChanges) {
-    log.info('No changes detected after agent execution.');
-    return;
+    log.info('No changes detected after agent execution.')
+    return
   }
 
-  console.log('');
-  console.log('═ y u - a g e n t   D i f f   R e v i e w ═══════════════════════');
-  console.log('');
+  console.log('')
+  console.log('═ y u - a g e n t   D i f f   R e v i e w ═══════════════════════')
+  console.log('')
 
   if (diffResult.stats) {
-    console.log(`  ${diffResult.stats}`);
-    console.log('');
+    console.log(`  ${diffResult.stats}`)
+    console.log('')
   }
 
   // Show the full diff
-  console.log(diffResult.diff);
-  console.log('════════════════════════════════════════════════════════════════');
-  console.log('');
+  console.log(diffResult.diff)
+  console.log('════════════════════════════════════════════════════════════════')
+  console.log('')
 }
 
 export async function runParallelGroup(
@@ -286,21 +274,21 @@ export async function runParallelGroup(
   context: Record<string, unknown>,
 ): Promise<Map<string, SpawnResult>> {
   const taskFactories = group.map((id) => {
-    const task = agentMap.get(id);
-    if (!task) throw new Error(`Unknown agent id: ${id}`);
-    return () => spawnAgentWithTimeout(task, context).then((r) => [id, r] as const);
-  });
+    const task = agentMap.get(id)
+    if (!task) throw new Error(`Unknown agent id: ${id}`)
+    return () => spawnAgentWithTimeout(task, context).then((r) => [id, r] as const)
+  })
 
-  const results = await runWithConcurrencyLimit(taskFactories, MAX_CONCURRENCY);
-  const resultMap = new Map<string, SpawnResult>();
+  const results = await runWithConcurrencyLimit(taskFactories, MAX_CONCURRENCY)
+  const resultMap = new Map<string, SpawnResult>()
 
   for (const result of results) {
     if (result.status === 'fulfilled') {
-      resultMap.set(result.value[0], result.value[1]);
+      resultMap.set(result.value[0], result.value[1])
     } else {
-      log.error('Agent failed', result.reason);
+      log.error('Agent failed', result.reason)
     }
   }
 
-  return resultMap;
+  return resultMap
 }

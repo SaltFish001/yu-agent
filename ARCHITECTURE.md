@@ -1,6 +1,48 @@
 # yu-agent Architecture
 
-> **Version 0.1.0** — DeepSeek-native sub-agent dispatcher for Pi
+> **Version 0.1.0** — DeepSeek-native sub-agent dispatcher
+>
+> **Pi SDK 已移除 (2026-06):** 以下架构图部分节点（SessionPool、Pi Extension、Pi beforeChat hook）已不再存在，保留作为历史参考。实际运行时路径：`bin/yu.ts` → `classifier.ts` → `scheduler.ts` → `spawn.ts` → `agent-loop.ts` → LLM API。
+
+---
+
+## 当前运行时路径 (v8)
+
+```
+用户输入 (CLI / Web UI)
+    │
+    ▼
+classifier.ts — 意图分类 (fast path + LLM fallback)
+    │
+    ▼
+scheduler.ts — 执行计划 (executePlan)
+    │
+    ├── pass_through → deepseek.js (直接 API)
+    │
+    └── 编程任务
+         │
+         ▼
+    executor.ts — 并行组执行 (runParallelGroup)
+         │
+         ▼
+    spawn.ts → agent-loop.ts (AgentLoop 代理)
+         │
+         ▼
+    runAgent() — LLM 调用 (带 tool use 的 agent 循环)
+         │
+         ▼
+    verifier.ts — LSP 验证 + 测试运行
+         │
+         ▼
+    tracker.ts — 决策持久化
+```
+
+**核心差异：**
+- 无 Pi SessionPool → 每次 spawn 新建 `runAgent()` 调用
+- 工具全部 Bun 原生实现 (`tools/*.ts`)
+- 上下文管理自有 (`context-manager.ts`)
+- 构建: `bun build` → 单文件 `dist/yu.js` (52 模块, 320ms)
+- 测试: `bun test` → 137 测试, 0 失败
 
 ---
 
@@ -478,7 +520,7 @@ globalPools = Map<string, SessionPool>
 
 ### 3. SQLite IPC for Cross-Process Communication
 
-Instead of JSON files, yu-agent uses **SQLite** (`node:sqlite` DatabaseSync) as the IPC mechanism between the scheduler process and external monitoring/CLI processes.
+Instead of JSON files, yu-agent uses **SQLite** (`bun:sqlite` Database) as the IPC mechanism between the scheduler process and external monitoring/CLI processes.
 
 **Tables:**
 | Table | Purpose | Written By | Read By |
@@ -600,7 +642,7 @@ Current behavior: processes exit immediately on signal, potentially losing in-fl
 | **Session Cmd** | `session-cmd.ts` | `/session` Pi slash command handler. Dispatches to `session-cli.ts`. |
 | **Session CLI** | `session-cli.ts` | Full session management CLI: `list`, `show`, `resume`, `archive`, `unarchive`, `fork`, `todo`, `info`, `backup`, `restore`, `clean`. |
 | **Session Context** | `session-context.ts` | Per-process session identity. `getSessionTag()` / `setSessionTag()`, project directory detection, status directory resolution. |
-| **DB** | `db.ts` | SQLite database abstraction (800+ lines). 10 tables, all operations synchronous (DatabaseSync API). |
+| **DB** | `db.ts` | SQLite database abstraction (800+ lines). 10 tables, all operations synchronous (`bun:sqlite` Database API). |
 | **Memory Plugin** | `memory-plugin.ts` | Memory subsystem lifecycle hooks. `before_agent_start` → inject ring buffer, `turn_end` → auto-save, `before_agent_start` → inject facts/scene. |
 | **Memory CLI** | `memory-cli.ts` | `yu memory` CLI commands: `stats`, `recent`, `facts`, `scene`, `health`. |
 

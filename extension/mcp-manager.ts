@@ -19,22 +19,19 @@
  *   }
  */
 
-import { createLogger } from './logger.js';
-const log = createLogger('mcp-manager');
+import { createLogger } from './logger.js'
 
-import { spawn, type ChildProcess } from 'node:child_process';
-import { readFileSync, existsSync } from 'node:fs';
-import {
-  type MCPServerStatus,
-  writeMCPStatus,
-} from './status.js';
-import { MCP_CONFIG_PATH } from './paths.js';
+const log = createLogger('mcp-manager')
+
+import { existsSync, readFileSync } from 'fs'
+import { MCP_CONFIG_PATH } from './paths.js'
+import { type MCPServerStatus, writeMCPStatus } from './status.js'
 
 // ── 常量 ──────────────────────────────────────────────
 
-const STATUS_WRITE_INTERVAL_MS = 5_000;
-const PING_INTERVAL_MS = 10_000;
-const RESPONSE_TIMEOUT_MS = 5_000;
+const STATUS_WRITE_INTERVAL_MS = 5_000
+const PING_INTERVAL_MS = 10_000
+const RESPONSE_TIMEOUT_MS = 5_000
 
 // ── 安全校验 ──────────────────────────────────────────
 
@@ -42,7 +39,7 @@ const RESPONSE_TIMEOUT_MS = 5_000;
  * 白名单正则：只允许字母、数字、_ - . : / = @ % + ~ , # ! 以及空格。
  * 禁止 shell 敏感字符：; | $ ( ) ` { } [ ] & > < \n \r \0
  */
-const SAFE_VALUE_RE = /^[a-zA-Z0-9_\-.:/=@%+~,#! ]+$/;
+const SAFE_VALUE_RE = /^[a-zA-Z0-9_\-.:/=@%+~,#! ]+$/
 
 /**
  * 禁止覆盖的危险环境变量（校验时转大写比较）。
@@ -67,41 +64,35 @@ const BLOCKED_ENV_KEYS = new Set([
   'IFS',
   'SHELLOPTS',
   'BASHOPTS',
-]);
+])
 
 /**
  * 校验 env 配置：禁止覆盖危险变量，禁止 value 含 shell 敏感字符，禁止非法 key。
  * @throws 校验不通过时抛出 Error
  */
-function sanitizeEnv(
-  userEnv: Record<string, string> | undefined,
-): Record<string, string> {
-  if (!userEnv) return {};
+function sanitizeEnv(userEnv: Record<string, string> | undefined): Record<string, string> {
+  if (!userEnv) return {}
 
-  const result: Record<string, string> = {};
+  const result: Record<string, string> = {}
   for (const [key, value] of Object.entries(userEnv)) {
     // 校验 key 格式（POSIX 环境变量名）
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) {
-      throw new Error(`Invalid environment variable name: ${key}`);
+      throw new Error(`Invalid environment variable name: ${key}`)
     }
 
     // 检查是否在禁止列表中（大小写不敏感）
     if (BLOCKED_ENV_KEYS.has(key.toUpperCase())) {
-      throw new Error(
-        `Environment variable "${key}" is blocked and cannot be overridden`,
-      );
+      throw new Error(`Environment variable "${key}" is blocked and cannot be overridden`)
     }
 
     // 校验 value 白名单
     if (!SAFE_VALUE_RE.test(value)) {
-      throw new Error(
-        `Environment variable "${key}" contains unsafe characters`,
-      );
+      throw new Error(`Environment variable "${key}" contains unsafe characters`)
     }
 
-    result[key] = value;
+    result[key] = value
   }
-  return result;
+  return result
 }
 
 /**
@@ -109,13 +100,13 @@ function sanitizeEnv(
  * @throws 校验不通过时抛出 Error
  */
 function sanitizeArgs(args: string[] | undefined): string[] {
-  if (!args) return [];
+  if (!args) return []
   for (const arg of args) {
     if (!SAFE_VALUE_RE.test(arg)) {
-      throw new Error(`Argument contains unsafe characters: ${arg}`);
+      throw new Error(`Argument contains unsafe characters: ${arg}`)
     }
   }
-  return args;
+  return args
 }
 
 /**
@@ -124,111 +115,113 @@ function sanitizeArgs(args: string[] | undefined): string[] {
  */
 function sanitizeCommand(command: string): void {
   if (!SAFE_VALUE_RE.test(command)) {
-    throw new Error(`Command contains unsafe characters: ${command}`);
+    throw new Error(`Command contains unsafe characters: ${command}`)
   }
 }
 
 // ── 类型 ──────────────────────────────────────────────
 
 type McpConfig = {
-  servers: Record<string, {
-    command: string;
-    args?: string[];
-    env?: Record<string, string>;
-  }>;
-};
+  servers: Record<
+    string,
+    {
+      command: string
+      args?: string[]
+      env?: Record<string, string>
+    }
+  >
+}
 
 type McpServerState = {
-  configName: string;
-  process: ChildProcess | null;
-  status: MCPServerStatus;
-  lastPingAt: number;
-};
+  configName: string
+  process: Bun.Subprocess | null
+  status: MCPServerStatus
+  lastPingAt: number
+}
 
 // ── 状态 ──────────────────────────────────────────────
 
-const _servers: Map<string, McpServerState> = new Map();
-let _pollTimer: ReturnType<typeof setInterval> | null = null;
-let _statusTimer: ReturnType<typeof setInterval> | null = null;
+const _servers: Map<string, McpServerState> = new Map()
+let _pollTimer: ReturnType<typeof setInterval> | null = null
+let _statusTimer: ReturnType<typeof setInterval> | null = null
 
-// ── JSON-RPC ──────────────────────────────────────────
-
-let _rpcId = 0;
+let _idCounter = 0
 function nextId(): number {
-  return ++_rpcId;
+  return ++_idCounter
+}
+export function _getServers(): Map<string, { proc: Bun.Subprocess; status: string }> {
+  const result = new Map<string, { proc: Bun.Subprocess; status: string }>()
+  for (const [name, state] of _servers) {
+    if (state.process) {
+      result.set(name, { proc: state.process as Bun.Subprocess, status: state.status.status })
+    }
+  }
+  return result
 }
 
-/**
- * 向 MCP server 的 stdin 发送 JSON-RPC 请求。
- * 返回第一个匹配 id 的响应（超时则 reject）。
- */
-function jsonRpcCall(
-  proc: ChildProcess,
+export async function jsonRpcCall(
+  proc: Bun.Subprocess,
   method: string,
   params: unknown = {},
   timeoutMs: number = RESPONSE_TIMEOUT_MS,
 ): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    if (!proc.stdin || !proc.stdout) {
-      return reject(new Error('stdin/stdout not available'));
-    }
+  if (!proc.stdin || !proc.stdout) {
+    throw new Error('stdin/stdout not available')
+  }
 
-    const id = nextId();
-    const request = `${JSON.stringify({
-      jsonrpc: '2.0',
-      id,
-      method,
-      params,
-    })}\n`;
+  const id = nextId()
+  const request = `${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`
 
-    // 收集响应行
-    let buffer = '';
-    const onData = (chunk: Buffer) => {
-      buffer += chunk.toString();
-      // MCP 响应是 JSON Lines，每行一个完整 JSON
-      const lines = buffer.split('\n');
-      for (let i = 0; i < lines.length - 1; i++) {
-        const line = lines[i].trim();
-        if (!line) continue;
-        try {
-          const resp = JSON.parse(line);
-          if (resp.id === id) {
-            cleanup();
-            if (resp.error) {
-              reject(new Error(resp.error.message || 'JSON-RPC error'));
-            } else {
-              resolve(resp.result);
+  // Write request via WritableStream
+  const writer = (proc.stdin as unknown as WritableStream).getWriter()
+  await writer.write(new TextEncoder().encode(request))
+  writer.releaseLock()
+
+  // Read response line by line via ReadableStream
+  const reader = (proc.stdout as unknown as ReadableStream).getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  try {
+    const result = await Promise.race([
+      (async (): Promise<unknown> => {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) throw new Error('Process exited before response')
+
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+
+          for (let i = 0; i < lines.length - 1; i++) {
+            const line = lines[i].trim()
+            if (!line) continue
+            try {
+              const resp = JSON.parse(line)
+              if (resp.id === id) {
+                reader.cancel()
+                if (resp.error) {
+                  throw new Error(resp.error.message || 'JSON-RPC error')
+                }
+                return resp.result
+              }
+            } catch (e) {
+              if (e instanceof Error && e.message.includes('JSON-RPC')) throw e
             }
-            return;
           }
-        } catch {
-          // 非 JSON 行忽略（可能是 stderr 混入？MCP 不走 stderr）
+          buffer = lines[lines.length - 1] || ''
         }
-      }
-      // 保留未完整行
-      buffer = lines[lines.length - 1] || '';
-    };
-
-    const onError = (err: Error) => {
-      cleanup();
-      reject(err);
-    };
-
-    const timeout = setTimeout(() => {
-      cleanup();
-      reject(new Error(`JSON-RPC timeout: ${method}`));
-    }, timeoutMs);
-
-    function cleanup() {
-      clearTimeout(timeout);
-      if (proc.stdout) proc.stdout.removeListener('data', onData);
-      proc.removeListener('error', onError);
+      })(),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`JSON-RPC timeout: ${method}`)), timeoutMs)),
+    ])
+    return result
+  } catch (err) {
+    try {
+      reader.cancel()
+    } catch {
+      /* best-effort */
     }
-
-    proc.stdout.on('data', onData);
-    proc.on('error', onError);
-    proc.stdin.write(request);
-  });
+    throw err
+  }
 }
 
 // ── 进程管理 ──────────────────────────────────────────
@@ -236,159 +229,158 @@ function jsonRpcCall(
 function spawnServer(
   name: string,
   config: { command: string; args?: string[]; env?: Record<string, string> },
-): ChildProcess | null {
+): Bun.Subprocess | null {
   try {
     // ── 安全校验（白名单） ────────────────────────────
-    sanitizeCommand(config.command);
-    const safeArgs = sanitizeArgs(config.args);
-    const safeEnv = sanitizeEnv(config.env);
+    sanitizeCommand(config.command)
+    const safeArgs = sanitizeArgs(config.args)
+    const safeEnv = sanitizeEnv(config.env)
 
-    const env = { ...process.env, ...safeEnv };
-    const proc = spawn(config.command, safeArgs, {
+    const env = { ...process.env, ...safeEnv }
+    const proc = Bun.spawn([config.command, ...safeArgs], {
       stdio: ['pipe', 'pipe', 'pipe'],
       env,
-      // 不给 shell，直接用 execve
-      shell: false,
-    });
+    })
 
-    proc.on('exit', (code, signal) => {
-      const state = _servers.get(name);
-      if (state) {
-        state.process = null;
-        state.status = {
-          name,
-          status: 'disconnected',
-          error: `exited (code=${code}, signal=${signal})`,
-        };
-        writeAllStatus();
+    // Handle exit via promise
+    proc.exited
+      .then((exitCode) => {
+        const state = _servers.get(name)
+        if (state) {
+          state.process = null
+          state.status = {
+            name,
+            status: 'disconnected',
+            error: `exited (code=${exitCode})`,
+          }
+          writeAllStatus()
+        }
+      })
+      .catch(() => {
+        // process spawn error
+      })
+
+    // Discard stderr (MCP may log to stderr)
+    ;(async () => {
+      try {
+        const reader = proc.stderr.getReader()
+        while (true) {
+          const { done } = await reader.read()
+          if (done) break
+        }
+      } catch {
+        /* discard */
       }
-    });
+    })()
 
-    proc.on('error', (err) => {
-      const state = _servers.get(name);
-      if (state) {
-        state.process = null;
-        state.status = {
-          name,
-          status: 'error',
-          error: err.message,
-        };
-        writeAllStatus();
-        log.error(`MCP server "${name}" process error`, err);
-      }
-    });
-
-    // 把 stderr 吞掉避免未处理（MCP 可能往 stderr 写日志）
-    proc.stderr?.on('data', () => {
-      // discard
-    });
-
-    return proc;
+    return proc
   } catch (err) {
     log.error(`Failed to spawn MCP server "${name}"`, err, {
       command: config.command,
-    });
-    const state = _servers.get(name);
+    })
+    const state = _servers.get(name)
     if (state) {
       state.status = {
         name,
         status: 'error',
         error: String(err),
-      };
+      }
     }
-    return null;
+    return null
   }
 }
 
 async function initServer(name: string): Promise<MCPServerStatus> {
-  const state = _servers.get(name);
+  const state = _servers.get(name)
   if (!state) {
-    return { name, status: 'error', error: 'not found' };
+    return { name, status: 'error', error: 'not found' }
   }
 
-  state.status = { name, status: 'connecting' };
-  writeAllStatus();
+  state.status = { name, status: 'connecting' }
+  writeAllStatus()
 
   // 初始化
   try {
-    const _result = await jsonRpcCall(state.process!, 'initialize', {
+    const _result = (await jsonRpcCall(state.process!, 'initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
       clientInfo: {
         name: 'yu-agent',
         version: '0.1.0',
       },
-    }) as Record<string, unknown>;
+    })) as Record<string, unknown>
 
     // 获取 tool list
-    const toolsResult = await jsonRpcCall(state.process!, 'tools/list') as { tools?: Array<{ name: string }> };
-    const toolNames = (toolsResult?.tools || []).map((t: { name: string }) => t.name);
+    const toolsResult = (await jsonRpcCall(state.process!, 'tools/list')) as { tools?: Array<{ name: string }> }
+    const toolNames = (toolsResult?.tools || []).map((t: { name: string }) => t.name)
 
     state.status = {
       name,
       status: 'connected',
       tools: toolNames,
       lastSeen: Date.now(),
-    };
+    }
   } catch (err) {
     state.status = {
       name,
       status: 'error',
       error: String(err),
-    };
-    log.error(`MCP server "${name}" init failed`, err);
+    }
+    log.error(`MCP server "${name}" init failed`, err)
     // 关掉失败的进程
-    try { state.process?.kill(); } catch {}
-    state.process = null;
+    try {
+      state.process?.kill()
+    } catch {}
+    state.process = null
   }
 
-  writeAllStatus();
-  return state.status;
+  writeAllStatus()
+  return state.status
 }
 
 // ── 写入状态 ──────────────────────────────────────────
 
 function writeAllStatus(): void {
-  const servers: MCPServerStatus[] = [];
+  const servers: MCPServerStatus[] = []
   for (const state of _servers.values()) {
-    servers.push({ ...state.status });
+    servers.push({ ...state.status })
   }
-  writeMCPStatus(servers);
+  writeMCPStatus(servers)
 }
 
 // ── 心跳 ──────────────────────────────────────────────
 
 function pingAll(): void {
   for (const [name, state] of _servers) {
-    const proc = state.process;
+    const proc = state.process
     if (!proc?.pid || proc.exitCode !== null) {
       // 进程死了，标记断开
       if (state.status.status !== 'error') {
-        state.status = { name, status: 'disconnected' };
+        state.status = { name, status: 'disconnected' }
       }
-      continue;
+      continue
     }
 
     // 进程还在，尝试发一个 ping（tools/list 是最轻量的调用）
     jsonRpcCall(proc, 'tools/list', {}, 3_000)
       .then((result) => {
-        const toolsResult = result as { tools?: Array<{ name: string }> };
+        const toolsResult = result as { tools?: Array<{ name: string }> }
         state.status = {
           name,
           status: 'connected',
           tools: (toolsResult?.tools || []).map((t: { name: string }) => t.name),
           lastSeen: Date.now(),
-        };
+        }
       })
       .catch(() => {
         // ping 失败但进程还在——可能是半死状态
         if (state.status.status === 'connected') {
-          state.status = { name, status: 'error', error: 'ping timeout' };
+          state.status = { name, status: 'error', error: 'ping timeout' }
         }
       })
       .finally(() => {
-        writeAllStatus();
-      });
+        writeAllStatus()
+      })
   }
 }
 
@@ -396,14 +388,14 @@ function pingAll(): void {
 
 function loadConfig(): McpConfig {
   if (!existsSync(MCP_CONFIG_PATH)) {
-    return { servers: {} };
+    return { servers: {} }
   }
   try {
-    const raw = readFileSync(MCP_CONFIG_PATH, 'utf-8');
-    return JSON.parse(raw) as McpConfig;
+    const raw = readFileSync(MCP_CONFIG_PATH, 'utf-8')
+    return JSON.parse(raw) as McpConfig
   } catch (err) {
-    log.warn(`Failed to parse ${MCP_CONFIG_PATH}`, err);
-    return { servers: {} };
+    log.warn(`Failed to parse ${MCP_CONFIG_PATH}`, err)
+    return { servers: {} }
   }
 }
 
@@ -414,14 +406,14 @@ function loadConfig(): McpConfig {
  * 读取配置 → spawn 所有 server → 初始化 → 开始心跳。
  */
 export async function startMCPManager(): Promise<void> {
-  const config = loadConfig();
+  const config = loadConfig()
 
-  const entries = Object.entries(config.servers);
+  const entries = Object.entries(config.servers)
   if (entries.length === 0) {
-    return;
+    return
   }
 
-  log.info(`Starting ${entries.length} MCP server(s)...`);
+  log.info(`Starting ${entries.length} MCP server(s)...`)
 
   // 1. 创建状态记录
   for (const [name, cfg] of entries) {
@@ -430,28 +422,28 @@ export async function startMCPManager(): Promise<void> {
       process: null,
       status: { name, status: 'disconnected' },
       lastPingAt: 0,
-    });
+    })
 
     // 2. spawn
-    const proc = spawnServer(name, cfg);
+    const proc = spawnServer(name, cfg)
     if (!proc) {
-      continue;
+      continue
     }
 
-    const state = _servers.get(name)!;
-    state.process = proc;
+    const state = _servers.get(name)!
+    state.process = proc
 
     // 3. init（异步，不阻塞整体启动）
     initServer(name).catch((err) => {
-      log.warn(`${name} init failed`, err);
-    });
+      log.warn(`${name} init failed`, err)
+    })
   }
 
   // 4. 定时心跳
-  _pollTimer = setInterval(pingAll, PING_INTERVAL_MS);
+  _pollTimer = setInterval(pingAll, PING_INTERVAL_MS)
 
   // 5. 定时写状态（保障 monitor 能刷到）
-  _statusTimer = setInterval(writeAllStatus, STATUS_WRITE_INTERVAL_MS);
+  _statusTimer = setInterval(writeAllStatus, STATUS_WRITE_INTERVAL_MS)
 }
 
 /**
@@ -459,22 +451,22 @@ export async function startMCPManager(): Promise<void> {
  */
 export async function stopMCPManager(): Promise<void> {
   if (_pollTimer) {
-    clearInterval(_pollTimer);
-    _pollTimer = null;
+    clearInterval(_pollTimer)
+    _pollTimer = null
   }
 
   if (_statusTimer) {
-    clearInterval(_statusTimer);
-    _statusTimer = null;
+    clearInterval(_statusTimer)
+    _statusTimer = null
   }
 
   for (const [_name, state] of _servers) {
     try {
-      state.process?.kill();
+      state.process?.kill()
     } catch {
       // ignore
     }
   }
-  _servers.clear();
-  writeAllStatus();
+  _servers.clear()
+  writeAllStatus()
 }

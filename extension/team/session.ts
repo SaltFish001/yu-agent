@@ -11,24 +11,26 @@
  *   const result = await teamSession.call(task, spawnCfg);
  */
 
-import type { SpawnResult } from '../spawn.js';
-import { pollAndInject, ackMessages, resolveBaseDir, getStatePath } from './mailbox.js';
-import { readFile } from 'node:fs/promises';
-import { RuntimeStateSchema } from './types.js';
+import type { SpawnResult } from '../spawn.js'
+import { ackMessages, getStatePath, pollAndInject, resolveBaseDir } from './mailbox.js'
+
+const readFile = async (filePath: string): Promise<string> => await Bun.file(filePath).text()
+
+import { RuntimeStateSchema } from './types.js'
 
 // ── Team-aware session wrapper ─────────────────────────
 
 export class TeamSession {
-  private turnMarker = 0;
-  private lastInjectedTurnMarker: string | undefined;
-  private pendingInjectedMessageIds: string[] = [];
-  private baseDir: string;
+  private turnMarker = 0
+  private lastInjectedTurnMarker: string | undefined
+  private pendingInjectedMessageIds: string[] = []
+  private baseDir: string
 
   constructor(
     private teamRunId: string,
     private memberName: string,
   ) {
-    this.baseDir = resolveBaseDir();
+    this.baseDir = resolveBaseDir()
   }
 
   /**
@@ -36,8 +38,8 @@ export class TeamSession {
    * Returns the original SpawnResult with injected content metadata.
    */
   async call(originalCall: () => Promise<SpawnResult>): Promise<SpawnResult & { injectedMessages?: string[] }> {
-    this.turnMarker++;
-    const turnKey = `${this.memberName}-${this.turnMarker}`;
+    this.turnMarker++
+    const turnKey = `${this.memberName}-${this.turnMarker}`
 
     // Step 1: Poll mailbox for new messages
     const inject = await pollAndInject(
@@ -46,44 +48,42 @@ export class TeamSession {
       turnKey,
       this.lastInjectedTurnMarker,
       this.pendingInjectedMessageIds,
-    );
+    )
 
-    let injectedMessageIds: string[] = [];
+    let injectedMessageIds: string[] = []
 
     if (inject.injected && inject.content) {
-      injectedMessageIds = inject.messageIds;
+      injectedMessageIds = inject.messageIds
 
       // Step 2: Mark as pending in runtime state
       try {
-        const stateContent = await readFile(getStatePath(this.baseDir, this.teamRunId), 'utf-8');
-        const state = RuntimeStateSchema.parse(JSON.parse(stateContent));
-        const member = state.members.find((m) => m.name === this.memberName);
+        const stateContent = await readFile(getStatePath(this.baseDir, this.teamRunId))
+        const state = RuntimeStateSchema.parse(JSON.parse(stateContent))
+        const member = state.members.find((m) => m.name === this.memberName)
         if (member) {
-          this.pendingInjectedMessageIds = [
-            ...new Set([...this.pendingInjectedMessageIds, ...inject.messageIds]),
-          ];
+          this.pendingInjectedMessageIds = [...new Set([...this.pendingInjectedMessageIds, ...inject.messageIds])]
         }
-      } catch { /* runtime state transiently unavailable, proceed without it */ }
+      } catch {
+        /* runtime state transiently unavailable, proceed without it */
+      }
 
       // Step 3: Store last injected marker
-      this.lastInjectedTurnMarker = turnKey;
+      this.lastInjectedTurnMarker = turnKey
     }
 
     // Step 4: Call the original agent
-    const result = await originalCall();
+    const result = await originalCall()
 
     // Step 5: Ack messages that were injected this turn
     if (injectedMessageIds.length > 0) {
-      await ackMessages(this.teamRunId, this.memberName, injectedMessageIds);
-      this.pendingInjectedMessageIds = this.pendingInjectedMessageIds.filter(
-        (id) => !injectedMessageIds.includes(id),
-      );
+      await ackMessages(this.teamRunId, this.memberName, injectedMessageIds)
+      this.pendingInjectedMessageIds = this.pendingInjectedMessageIds.filter((id) => !injectedMessageIds.includes(id))
     }
 
     return {
       ...result,
       injectedMessages: injectedMessageIds,
-    };
+    }
   }
 
   /** Get the mailbox content to prepend to agent prompts */
@@ -94,21 +94,20 @@ export class TeamSession {
       `pre-${Date.now()}`,
       this.lastInjectedTurnMarker,
       this.pendingInjectedMessageIds,
-    );
+    )
 
     if (inject.injected && inject.content) {
-      return inject.content;
+      return inject.content
     }
-    return null;
+    return null
   }
 
   /** Inject mailbox content into a prompt string */
   async buildPrompt(task: string): Promise<string> {
-    const mailboxContent = await this.getInjectedContent();
+    const mailboxContent = await this.getInjectedContent()
     if (mailboxContent) {
-      return `${mailboxContent}\n\n${task}`;
+      return `${mailboxContent}\n\n${task}`
     }
-    return task;
+    return task
   }
 }
-

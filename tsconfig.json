@@ -3,6 +3,7 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "types": ["bun"],
     "lib": ["ES2022"],
     "outDir": "dist",
     "rootDir": ".",
@@ -19,10 +20,6 @@
       "@tintinweb/pi-subagents/dist/index.js": ["./node_modules/@tintinweb/pi-subagents/dist/index.d.ts"]
     }
   },
-  "include": [
-    "extension/**/*.ts",
-    "bin/**/*.ts",
-    "scripts/**/*.mjs"
-  ],
+  "include": ["extension/**/*.ts", "bin/**/*.ts", "scripts/**/*.mjs"],
   "exclude": ["node_modules", "dist", "data"]
 }

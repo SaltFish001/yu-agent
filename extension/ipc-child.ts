@@ -7,15 +7,15 @@
  * Phase 1: Minimal IPC layer — respond to pings, report results.
  */
 
-import { createLogger } from './logger.js';
-import type { IpcMessageType, IpcMessage } from './types.js';
+import { createLogger } from './logger.js'
+import type { IpcMessage, IpcMessageType } from './types.js'
 
-const log = createLogger('ipc-child');
+const log = createLogger('ipc-child')
 
 // Shared message counter for seq generation
-let msgSeq = 0;
+let msgSeq = 0
 
-type MessageHandler = (payload: unknown) => void | Promise<void>;
+type MessageHandler = (payload: unknown) => void | Promise<void>
 
 /**
  * Build an IpcMessage with auto-populated timestamp and optional seq.
@@ -26,7 +26,7 @@ function buildMessage(type: IpcMessageType, payload?: Record<string, unknown>): 
     payload,
     timestamp: Date.now(),
     seq: ++msgSeq,
-  };
+  }
 }
 
 /**
@@ -35,10 +35,10 @@ function buildMessage(type: IpcMessageType, payload?: Record<string, unknown>): 
  */
 export function send(type: IpcMessageType, payload?: Record<string, unknown>): boolean {
   if (!process.send) {
-    log.warn('IPC channel not available (process.send is undefined)');
-    return false;
+    log.warn('IPC channel not available (process.send is undefined)')
+    return false
   }
-  return process.send(buildMessage(type, payload));
+  return process.send(buildMessage(type, payload))
 }
 
 /**
@@ -63,55 +63,52 @@ export function setupChildIPC(
   process.on('message', (msg: IpcMessage) => {
     // Log malformed messages (P2-11)
     if (!msg || typeof msg !== 'object' || !msg.type) {
-      log.warn('Malformed IPC message received', msg);
-      return;
+      log.warn('Malformed IPC message received', msg)
+      return
     }
 
-    const handler = handlers[msg.type];
+    const handler = handlers[msg.type]
     if (handler) {
       try {
-        const result = handler(msg.payload);
+        const result = handler(msg.payload)
         if (result instanceof Promise) {
           result.catch((err: unknown) => {
-            log.error(`IPC handler for '${msg.type}' threw async error`, err);
-          });
+            log.error(`IPC handler for '${msg.type}' threw async error`, err)
+          })
         }
       } catch (err: unknown) {
-        log.error(`IPC handler for '${msg.type}' threw error`, err);
+        log.error(`IPC handler for '${msg.type}' threw error`, err)
       }
     } else {
-      log.debug(`Unhandled IPC message type: ${msg.type}`);
+      log.debug(`Unhandled IPC message type: ${msg.type}`)
     }
-  });
+  })
 
   // If parent disconnects (crashes), exit gracefully
   // P2-08: Check for mid-task execution before exit(0)
   process.on('disconnect', () => {
-    log.warn('Parent process disconnected, exiting');
+    log.warn('Parent process disconnected, exiting')
 
     // If a task is currently running, give it a brief moment to finish
     if (currentTaskRef?.current) {
-      log.info('Task still running on disconnect, waiting up to 2s before exit');
-      const taskPromise = currentTaskRef.current;
-      Promise.race([
-        taskPromise,
-        new Promise(resolve => setTimeout(resolve, 2000)),
-      ]).finally(() => {
-        process.exit(0);
-      });
+      log.info('Task still running on disconnect, waiting up to 2s before exit')
+      const taskPromise = currentTaskRef.current
+      Promise.race([taskPromise, new Promise((resolve) => setTimeout(resolve, 2000))]).finally(() => {
+        process.exit(0)
+      })
     } else {
-      process.exit(0);
+      process.exit(0)
     }
-  });
+  })
 
   // ── OS signal handlers (P1-05) ──
   // These ensure the child exits cleanly when the parent sends SIGTERM/SIGINT
   // or when the terminal sends SIGHUP, preventing orphan children.
   function handleSignal(signal: string): void {
-    log.info(`Received ${signal}, exiting gracefully`);
-    process.exit(0);
+    log.info(`Received ${signal}, exiting gracefully`)
+    process.exit(0)
   }
-  process.on('SIGTERM', () => handleSignal('SIGTERM'));
-  process.on('SIGINT', () => handleSignal('SIGINT'));
-  process.on('SIGHUP', () => handleSignal('SIGHUP'));
+  process.on('SIGTERM', () => handleSignal('SIGTERM'))
+  process.on('SIGINT', () => handleSignal('SIGINT'))
+  process.on('SIGHUP', () => handleSignal('SIGHUP'))
 }

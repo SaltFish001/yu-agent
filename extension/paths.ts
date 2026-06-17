@@ -18,38 +18,37 @@
  *   ~/.yu/sessions.db         — SQLite session database
  */
 
-import { homedir } from 'node:os';
-import { resolve } from 'node:path';
+import { resolve } from 'path'
 
 /** ~/.yu — base directory for all yu-agent data, config, and state */
-export const YU_HOME = resolve(homedir(), '.yu');
+export const YU_HOME = resolve(process.env.HOME || '/home/saltfish', '.yu')
 
 /** ~/.yu/agent — Pi coding-agent directory (used internally by Pi runtime) */
-export const PI_AGENT_DIR = resolve(YU_HOME, 'agent');
+export const PI_AGENT_DIR = resolve(YU_HOME, 'agent')
 
 /** ~/.yu/prompts — markdown prompt files for each agent type */
-export const PROMPTS_DIR = resolve(YU_HOME, 'prompts');
+export const PROMPTS_DIR = resolve(YU_HOME, 'prompts')
 
 /** ~/.yu/data — persistent scheduler decisions and other runtime data */
-export const DATA_DIR = resolve(YU_HOME, 'data');
+export const DATA_DIR = resolve(YU_HOME, 'data')
 
 /** ~/.yu/data/temp — temporary working directories (team-mode, etc.) */
-export const TEMP_DIR = resolve(DATA_DIR, 'temp');
+export const TEMP_DIR = resolve(DATA_DIR, 'temp')
 
 /** ~/.yu/data/decisions.json — scheduler decision history */
-export const DECISIONS_FILE = resolve(DATA_DIR, 'decisions.json');
+export const DECISIONS_FILE = resolve(DATA_DIR, 'decisions.json')
 
 /** ~/.yu/mcp.config.json — MCP server definitions */
-export const MCP_CONFIG_PATH = resolve(YU_HOME, 'mcp.config.json');
+export const MCP_CONFIG_PATH = resolve(YU_HOME, 'mcp.config.json')
 
 /** ~/.yu/pool-sessions — disk-persisted agent session pools (cache-first) */
-export const POOL_SESSIONS_DIR = resolve(YU_HOME, 'pool-sessions');
+export const POOL_SESSIONS_DIR = resolve(YU_HOME, 'pool-sessions')
 
 /** Format bytes to human-readable string. */
 export function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  const val = bytes / 1024 ** i;
-  return `${val.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+  if (bytes === 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(1024))
+  const val = bytes / 1024 ** i
+  return `${val.toFixed(i === 0 ? 0 : 1)} ${units[i]}`
 }

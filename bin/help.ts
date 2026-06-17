@@ -5,25 +5,25 @@
  * Extracted from bin/yu.ts to reduce file size and improve maintainability.
  */
 
-import { readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'fs'
+import { dirname, resolve } from 'path'
+import { fileURLToPath } from 'url'
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const __dirname = dirname(fileURLToPath(import.meta.url))
 // Project root: dist/bin/ -> dist/ -> project root
-const PROJECT_ROOT = resolve(__dirname, '..', '..');
+const PROJECT_ROOT = resolve(__dirname, '..', '..')
 
-let _version: string | null = null;
+let _version: string | null = null
 
 export function getVersion(): string {
   if (!_version) {
     try {
-      _version = JSON.parse(readFileSync(resolve(PROJECT_ROOT, 'package.json'), 'utf-8')).version || '0.1.0';
+      _version = JSON.parse(readFileSync(resolve(PROJECT_ROOT, 'package.json'), 'utf-8')).version || '0.1.0'
     } catch {
-      _version = '0.1.0';
+      _version = '0.1.0'
     }
   }
-  return _version as string;
+  return _version as string
 }
 
 export const HELP_TEXT = `yu-agent — AI-powered programming agent  (v${getVersion()})
@@ -144,12 +144,12 @@ Team Examples:
   yu team create squad lead:plan coder:coding reviewer:review
   yu team task <runId> create "Fix login bug"
   yu team send <runId> coder "Check task #abc123"
-`;
+`
 
 export function showHelpForCommand(command: string): string {
   switch (command) {
     case 'help':
-      return 'yu help [command]  —  Show this help, or help for a specific command.';
+      return 'yu help [command]  —  Show this help, or help for a specific command.'
 
     case 'doctor':
       return `yu doctor — One-click health diagnosis
@@ -166,7 +166,7 @@ Checks all yu-agent subsystems:
 Options:
   --json    Output results as structured JSON
 
-Reports any issues found. No arguments needed.`;
+Reports any issues found. No arguments needed.`
 
     case 'team':
       return `yu team — Multi-agent team mode
@@ -188,7 +188,7 @@ Actions for "yu team task":
   update <taskId> <status>          Update task status
   delete <taskId>                   Delete a task
 
-Team data stored in ~/.yu/runtime/{runId}/`;
+Team data stored in ~/.yu/runtime/{runId}/`
 
     case 'monitor':
       return `yu monitor [--once] — Live status dashboard
@@ -199,10 +199,14 @@ and team mode activity.
 Options:
   --once    Print a single snapshot and exit (no live refresh)
 
-Reads from SQLite databases in ~/.yu/.`;
+Reads from SQLite databases in ~/.yu/.`
 
-    case 'coding':    case 'review':    case 'plan':
-    case 'commit':    case 'doc':       case 'search':
+    case 'coding':
+    case 'review':
+    case 'plan':
+    case 'commit':
+    case 'doc':
+    case 'search':
     case 'lsp':
       return `yu ${command} <prompt> — Agent command
 
@@ -211,18 +215,18 @@ Examples:
   yu ${command} <your task description>
   yu ${command} <path or query>
 
-The scheduler automatically routes to the ${command} agent type.`;
+The scheduler automatically routes to the ${command} agent type.`
 
     case 'run':
       return `yu run <prompt> — Direct scheduler invocation
 
 Bypasses Pi's command routing and calls the yu-agent scheduler directly.
-Useful for testing or when Pi's dispatch doesn't match your intent.`;
+Useful for testing or when Pi's dispatch doesn't match your intent.`
 
     case 'install':
       return `yu install <package> — Install an MCP server package
 
-Installs a new MCP server and adds it to ~/.yu/mcp.config.json.`;
+Installs a new MCP server and adds it to ~/.yu/mcp.config.json.`
 
     case 'supervisor':
       return `yu supervisor — Supervisor management
@@ -236,7 +240,7 @@ Usage:
   yu supervisor restart <topic>       Restart a child process
   yu supervisor logs <topic> [n]      Show last n lines of child log (default: 10)
 
-Data read from ~/.yu/topics.db (child_processes table).`;
+Data read from ~/.yu/topics.db (child_processes table).`
 
     case 'topic':
       return `yu topic — Topic management
@@ -258,15 +262,15 @@ Background limits:
   Config key: topic.maxBackground in ~/.yu/config.json
   Default: 3 concurrent background tasks
 
-Data stored in ~/.yu/topics.db (SQLite).`;
+Data stored in ~/.yu/topics.db (SQLite).`
 
     case 'update':
-      return 'yu update — Self-update yu-agent to the latest version.';
+      return 'yu update — Self-update yu-agent to the latest version.'
 
     case 'uninstall':
-      return 'yu uninstall — Remove yu-agent from the system.';
+      return 'yu uninstall — Remove yu-agent from the system.'
 
     default:
-      return `Unknown command: ${command}\nRun "yu help" to see all available commands.`;
+      return `Unknown command: ${command}\nRun "yu help" to see all available commands.`
   }
 }

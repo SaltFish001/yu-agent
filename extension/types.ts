@@ -20,46 +20,53 @@ export type IpcMessageType =
   | 'shutdown'
   | 'parent:shutdown'
   | 'parent:new_task'
-  | 'parent:die';
+  | 'parent:die'
 
 /** A message exchanged between parent and child processes over IPC. */
 export interface IpcMessage {
-  type: IpcMessageType;
+  type: IpcMessageType
   /** Event payload — must be a serialisable object or primitive. */
-  payload?: Record<string, unknown>;
+  payload?: Record<string, unknown>
   /** Monotonic timestamp (ms since epoch) the message was created. */
-  timestamp: number;
+  timestamp: number
   /** Optional sequence number for deduplication at the receiver (P2-03). */
-  seq?: number;
+  seq?: number
 }
 
 // ── Legacy hook context types ──────────────────────────
 
 /** Context passed to the beforeChat hook. */
 export interface BeforeChatHookContext {
-  message: string;
-  session: unknown;
-  teamRunId?: string;
-  memberName?: string;
+  message: string
+  session: unknown
+  teamRunId?: string
+  memberName?: string
 }
 
 /** Context passed to the scheduler handler. */
 export interface SchedulerContext {
-  session?: unknown;
-  teamRunId?: string;
-  memberName?: string;
+  session?: unknown
+  teamRunId?: string
+  memberName?: string
 }
 
 /** Structured result from scheduler handler. */
 export interface HookActionResult {
-  action: 'respond' | 'pass_through';
-  content?: string;
+  action: 'respond' | 'pass_through'
+  content?: string
 }
 
 // ── Supervisor / Daemon types (Phase 0) ────────────────
 
 /** Extended topic status with supervisor lifecycle states (P2-19). */
-export type ExtendedTopicStatus = 'idle' | 'active' | 'background' | 'spawning' | 'spawn_failed' | 'restarting' | 'degraded';
+export type ExtendedTopicStatus =
+  | 'idle'
+  | 'active'
+  | 'background'
+  | 'spawning'
+  | 'spawn_failed'
+  | 'restarting'
+  | 'degraded'
 
 /** Status of a child process managed by the supervisor. */
 export type ChildStatus =
@@ -70,43 +77,43 @@ export type ChildStatus =
   | 'dead'
   | 'spawn_failed'
   | 'restarting'
-  | 'stopped';
+  | 'stopped'
 
 /** Information about a managed child process. */
 export interface ChildProcessInfo {
-  pid: number;
-  topicName: string;
-  status: ChildStatus;
-  startedAt: number;
-  lastHeartbeat: number;
-  restartCount: number;
-  resident?: boolean;
-  memoryEstimate?: number;
+  pid: number
+  topicName: string
+  status: ChildStatus
+  startedAt: number
+  lastHeartbeat: number
+  restartCount: number
+  resident?: boolean
+  memoryEstimate?: number
 }
 
 /** Configuration for spawning a child process. */
 export interface ChildSpawnConfig {
   /** Timeout in ms before spawning is considered failed (default: 15000). */
-  timeout: number;
+  timeout: number
   /** Extra environment variables to pass to the child. */
-  env: Record<string, string>;
+  env: Record<string, string>
   /**
    * Maximum time in ms to wait for the child to send its first
    * ready/pong signal before marking as spawn_failed (default: 30000).
    */
-  spawning_timeout?: number;
+  spawning_timeout?: number
   /** If true, child stays alive after task completion (default: true). */
-  resident?: boolean;
+  resident?: boolean
   /** Automatically restart on unexpected exit (default: true). */
-  autoRetry?: boolean;
+  autoRetry?: boolean
   /** Maximum restart attempts before giving up (default: 3). */
-  maxRetries?: number;
+  maxRetries?: number
 }
 
 /** Status report from the supervisor daemon. */
 export interface SupervisorStatus {
-  pid: number;
-  uptime: number;
-  children: ChildProcessInfo[];
-  daemonVersion: string;
+  pid: number
+  uptime: number
+  children: ChildProcessInfo[]
+  daemonVersion: string
 }

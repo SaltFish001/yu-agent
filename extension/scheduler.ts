@@ -14,28 +14,21 @@
  *          The scheduler agent itself also uses AGENT_TIMEOUT_MS (classifier.ts).
  */
 
-import { createLogger } from './logger.js';
-const log = createLogger('scheduler');
+import { createLogger } from './logger.js'
 
-import type { SpawnResult } from './spawn.js';
-import { classifyIntent, } from './classifier.js';
-import {
-  runParallelGroup,
-  spawnAgentWithTimeout,
-  reviewDiff,
-  printDiffSummary,
-  confirmDiff,
-} from './executor.js';
+const log = createLogger('scheduler')
 
-import type { SchedulerContext } from './types.js';
-import { parseAgentOutput } from './template.js';
-import type { CodingOutput } from './template.js';
-
-import { resetTracker, trackAgent, flushFinalStatus, loadDecisions, saveDecision } from './tracker.js';
-import { checkpointGuard } from './checkpoint.js';
-import { getRelevantContext } from './knowledge/index.js';
-import { verifyWithLsp, runTests } from './verifier.js';
-import { runTeamMode } from './team-orchestrator.js';
+import { checkpointGuard } from './checkpoint.js'
+import { classifyIntent } from './classifier.js'
+import { confirmDiff, printDiffSummary, reviewDiff, runParallelGroup, spawnAgentWithTimeout } from './executor.js'
+import { getRelevantContext } from './knowledge/index.js'
+import type { SpawnResult } from './spawn.js'
+import { runTeamMode } from './team-orchestrator.js'
+import type { CodingOutput } from './template.js'
+import { parseAgentOutput } from './template.js'
+import { flushFinalStatus, loadDecisions, resetTracker, saveDecision } from './tracker.js'
+import type { SchedulerContext } from './types.js'
+import { runTests, verifyWithLsp } from './verifier.js'
 
 // ── executePlan: shared logic for handler() and beforeChat hook ──
 
@@ -56,29 +49,32 @@ export async function executePlan(
         // Try Pi SDK spawn first (has tool access). Add hard timeout to
         // prevent hanging when provider is misconfigured.
         const chatResult = await Promise.race([
-          spawnAgentWithTimeout({
-            type: 'chat',
-            model: 'v4-flash',
-            id: 'chat-1',
-            task: userInput,
-          }, {}),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('Pi spawn timeout')), 30_000)
+          spawnAgentWithTimeout(
+            {
+              type: 'chat',
+              model: 'v4-flash',
+              id: 'chat-1',
+              task: userInput,
+            },
+            {},
           ),
-        ]);
-        return chatResult?.response || '';
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Pi spawn timeout')), 30_000)),
+        ])
+        return chatResult?.response || ''
       } catch (err) {
-        log.warn('Chat agent via Pi failed, falling back to direct API', err);
+        log.warn('Chat agent via Pi failed, falling back to direct API', err)
         // Fallback: direct DeepSeek API (no Pi dependency)
         try {
-          const { chatCompletion } = await import('./deepseek.js');
-          const { readFileSync, existsSync } = await import('node:fs');
-          const { resolve } = await import('node:path');
-          const { homedir } = await import('node:os');
-          const chatPromptPath = resolve(homedir(), '.yu', 'prompts', 'chat.md');
-          const systemPrompt = existsSync(chatPromptPath)
-            ? readFileSync(chatPromptPath, 'utf-8')
-            : 'You are a helpful assistant.';
+          const { chatCompletion } = await import('./deepseek.js')
+          const { resolve } = await import('path')
+          const homeDir = process.env.HOME || process.env.USERPROFILE || '/home/saltfish'
+          const chatPromptPath = resolve(homeDir, '.yu', 'prompts', 'chat.md')
+          let systemPrompt = 'You are a helpful assistant.'
+          try {
+            systemPrompt = await Bun.file(chatPromptPath).text()
+          } catch {
+            /* use default */
+          }
           const result = await chatCompletion({
             model: 'deepseek-chat',
             messages: [
@@ -87,20 +83,22 @@ export async function executePlan(
             ],
             max_tokens: 4096,
             temperature: 0.7,
-          });
+          })
           if (result?.choices?.[0]?.message?.content) {
-            return result.choices[0].message.content;
+            return result.choices[0].message.content
           }
-        } catch { /* fallback failed too */ }
-        log.warn('All chat paths failed, returning null');
-        return null;
+        } catch {
+          /* fallback failed too */
+        }
+        log.warn('All chat paths failed, returning null')
+        return null
       }
     }
 
     // ── Team mode: multi-agent orchestration ──
     if (plan.intent === 'team') {
-      const result = await runTeamMode(plan, sessionContext);
-      return result;
+      const result = await runTeamMode(plan, sessionContext)
+      return result
     }
 
     // ── Multi-agent execution ──
@@ -111,123 +109,129 @@ export async function executePlan(
       id: a.id,
       files: a.files,
       task: userInput,
-    }));
-    const agentMap = new Map(agentTasks.map((t) => [t.id, t]));
+    }))
+    const agentMap = new Map(agentTasks.map((t) => [t.id, t]))
 
     // Step 3: Execute parallel groups in order
-    const allResults = new Map<string, SpawnResult>();
-    const groups = plan.parallel_groups || agentTasks.map((t) => [t.id]);
+    const allResults = new Map<string, SpawnResult>()
+    const groups = plan.parallel_groups || agentTasks.map((t) => [t.id])
 
-    const context: Record<string, unknown> = { decisions: loadDecisions() };
+    const context: Record<string, unknown> = { decisions: loadDecisions() }
 
     // 注入知识库上下文（RAG）
     try {
-      const knowledgeContext = getRelevantContext(userInput, 5);
+      const knowledgeContext = getRelevantContext(userInput, 5)
       if (knowledgeContext.length > 0) {
-        context.knowledge = knowledgeContext;
+        context.knowledge = knowledgeContext
       }
     } catch {
       // 非阻塞，知识库不可用不影响执行
     }
 
     for (const group of groups) {
-      const groupResults = await runParallelGroup(group, agentMap, context);
+      const groupResults = await runParallelGroup(group, agentMap, context)
       for (const [id, result] of groupResults) {
-        allResults.set(id, result);
+        allResults.set(id, result)
       }
     }
 
     // Step 4: Collect modified files
-    const modifiedFiles: string[] = [];
+    const modifiedFiles: string[] = []
     for (const [, result] of allResults) {
-      const output = parseAgentOutput(result?.response || '');
+      const output = parseAgentOutput(result?.response || '')
       if (output && 'files_modified' in output && Array.isArray((output as CodingOutput).files_modified)) {
-        modifiedFiles.push(...(output as CodingOutput).files_modified);
+        modifiedFiles.push(...(output as CodingOutput).files_modified)
       }
     }
 
     // Step 4b: Diff review — show the agent what changed
-    let diffInfo: ReturnType<typeof reviewDiff> | undefined;
+    let diffInfo: ReturnType<typeof reviewDiff> | undefined
     if (modifiedFiles.length > 0) {
-      diffInfo = reviewDiff();
-      printDiffSummary(diffInfo);
+      diffInfo = reviewDiff()
+      printDiffSummary(diffInfo)
     }
 
     // Step 4c: 交互审批 — 用户确认后才继续 LSP 验证
-    if (diffInfo && diffInfo.hasChanges) {
-      const approved = await confirmDiff(diffInfo);
+    if (diffInfo?.hasChanges) {
+      const approved = await confirmDiff(diffInfo)
       if (!approved) {
         // 用户放弃变更：还原工作区
         try {
-          const { execSync } = await import('node:child_process');
-          execSync('git checkout -- .', { encoding: 'utf-8', timeout: 10_000 });
-          log.info('已还原所有未暂存变更。');
+          const result = Bun.spawnSync(['git', 'checkout', '--', '.'], { timeout: 10000 })
+          if (result.exitCode === 0) {
+            log.info('已还原所有未暂存变更。')
+          } else {
+            throw new Error(`git checkout exit code ${result.exitCode}`)
+          }
         } catch {
-          log.warn('git checkout 失败，请手动还原。');
+          log.warn('git checkout 失败，请手动还原。')
         }
-        return '用户已放弃本次变更。';
+        return '用户已放弃本次变更。'
       }
     }
 
     // Step 5: LSP verification
-    let lspOk = true;
+    let lspOk = true
     if (modifiedFiles.length > 0) {
       const lspDone = checkpointGuard('lsp_verify', modifiedFiles, {
         intent: plan.intent,
         agents: plan.agents?.map((a) => a.type),
-      });
+      })
       try {
-        const lspResult = await verifyWithLsp(modifiedFiles, []);
+        const lspResult = await verifyWithLsp(modifiedFiles, [])
         if (!lspResult.ok) {
-          lspOk = false;
+          lspOk = false
           const errorSummary = lspResult.errors
             .slice(0, 10)
-            .map((e) => `${(e as Record<string, unknown>).file || '?'}:${(e as Record<string, unknown>).line || '?'} — ${(e as Record<string, unknown>).error || '?'}`)
-            .join('\n      ');
-          log.warn(`LSP verification failed with ${lspResult.errors.length} remaining errors`, { errors: errorSummary });
+            .map(
+              (e) =>
+                `${(e as Record<string, unknown>).file || '?'}:${(e as Record<string, unknown>).line || '?'} — ${(e as Record<string, unknown>).error || '?'}`,
+            )
+            .join('\n      ')
+          log.warn(`LSP verification failed with ${lspResult.errors.length} remaining errors`, { errors: errorSummary })
         }
       } finally {
-        lspDone();
+        lspDone()
       }
     }
 
     // Step 6: Run tests (skip if LSP has errors — tests will likely fail anyway)
     if (modifiedFiles.length > 0 && lspOk) {
-      await runTests(modifiedFiles);
+      await runTests(modifiedFiles)
     } else if (modifiedFiles.length > 0 && !lspOk) {
-      log.info('Skipping tests due to unresolved LSP errors');
+      log.info('Skipping tests due to unresolved LSP errors')
     }
 
     // Step 7: Save decision
     const commitDone = checkpointGuard('commit', modifiedFiles, {
       intent: plan.intent,
       lspOk,
-    });
+    })
     try {
       if (plan.intent) {
         saveDecision(`${Date.now()}-${plan.intent}`, {
           intent: plan.intent,
           agents: plan.agents,
           files: modifiedFiles,
-        });
+        })
       }
-      commitDone();
+      commitDone()
     } catch {
-      commitDone();
+      commitDone()
     }
 
     // Step 8: Aggregate and return
-    const summaries: string[] = [];
+    const summaries: string[] = []
     for (const [, result] of allResults) {
-      const output = parseAgentOutput(result?.response || '');
+      const output = parseAgentOutput(result?.response || '')
       if (output && 'summary' in output) {
-        summaries.push((output as CodingOutput).summary);
+        summaries.push((output as CodingOutput).summary)
       }
     }
 
-    return summaries.join('\n') || JSON.stringify(Object.fromEntries(allResults));
+    return summaries.join('\n') || JSON.stringify(Object.fromEntries(allResults))
   } finally {
-    flushFinalStatus();
+    flushFinalStatus()
   }
 }
 
@@ -239,18 +243,18 @@ export async function handler(
 ): Promise<string | null> {
   try {
     // Initialize tracker for this invocation
-    resetTracker();
+    resetTracker()
 
     // Step 1: Classify intent via scheduler agent
-    const plan = await classifyIntent(userInput, sessionContext as Record<string, unknown>);
+    const plan = await classifyIntent(userInput, sessionContext as Record<string, unknown>)
 
     // Step 2: Execute the plan
-    return await executePlan(plan, userInput, sessionContext as Record<string, unknown>);
+    return await executePlan(plan, userInput, sessionContext as Record<string, unknown>)
   } catch (err) {
     log.error('Scheduler handler failed', err, {
       userInput: userInput.slice(0, 200),
-    });
-    flushFinalStatus();
-    return `调度器处理失败: ${err instanceof Error ? err.message : String(err)}。请重试或使用更简单的描述。`;
+    })
+    flushFinalStatus()
+    return `调度器处理失败: ${err instanceof Error ? err.message : String(err)}。请重试或使用更简单的描述。`
   }
 }
