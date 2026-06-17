@@ -30,6 +30,9 @@ import { existsSync, mkdirSync, readFileSync } from 'fs'
 import { resolve } from 'path'
 import vm from 'vm'
 import { ensureDaemonRunning, getMaxBackground, writeEvent } from './topic.js'
+import { createLogger } from './logger.js'
+
+const log = createLogger('orchestrator')
 
 // ── Types ─────────────────────────────────────────────────
 
@@ -93,7 +96,7 @@ function loadRules(): OrchestratorRule[] {
   } catch (err: unknown) {
     // P2-15: Log parse failures with context
     const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[orchestrator] Failed to load rules from ${ORCHESTRATOR_PATH}: ${msg}`)
+    log.warn(`Failed to load rules from ${ORCHESTRATOR_PATH}: ${msg}`)
     return []
   }
 }
@@ -149,7 +152,7 @@ function evaluateCondition(condition: string | undefined, payload: Record<string
   } catch (err: unknown) {
     // P2-16: Explicit error logging for eval failures
     const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[orchestrator] Condition evaluation failed: condition="${condition}" error="${msg}"`)
+    log.warn(`Condition evaluation failed: condition="${condition}" error="${msg}"`)
     return false
   }
 }
@@ -215,8 +218,8 @@ function actionSpawnChild(topicName: string, promptTemplate: string, eventPayloa
 
     if (currentBg >= maxBg) {
       db.exec('ROLLBACK')
-      console.warn(
-        `[orchestrator] Cannot spawn child for "${topicName}": background limit reached (${currentBg}/${maxBg})`,
+      log.warn(
+        `Cannot spawn child for "${topicName}": background limit reached (${currentBg}/${maxBg})`,
       )
       writeEvent(topicName, 'child_spawn_failed', { reason: 'background_limit', maxBg, currentBg })
       return
@@ -231,8 +234,8 @@ function actionSpawnChild(topicName: string, promptTemplate: string, eventPayloa
       // Already exists — check it's idle before proceeding
       if (topicRow.status !== 'idle') {
         db.exec('ROLLBACK')
-        console.warn(
-          `[orchestrator] Cannot spawn child for "${topicName}": topic status is "${topicRow.status}", expected "idle"`,
+        log.warn(
+          `Cannot spawn child for "${topicName}": topic status is "${topicRow.status}", expected "idle"`,
         )
         writeEvent(topicName, 'child_spawn_failed', { reason: 'topic_not_idle', status: topicRow.status })
         return
@@ -263,7 +266,7 @@ function actionSpawnChild(topicName: string, promptTemplate: string, eventPayloa
   } catch (err: unknown) {
     db.exec('ROLLBACK')
     const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[orchestrator] Transaction failed for spawn_child on "${topicName}": ${msg}`)
+    log.warn(`Transaction failed for spawn_child on "${topicName}": ${msg}`)
     return
   }
 
@@ -302,8 +305,8 @@ export function checkAndTriggerOrchestrator(
   // P2-22: Circuit breaker — check depth before processing
   const depth = getOrchDepth()
   if (depth >= MAX_ORCH_DEPTH) {
-    console.warn(
-      `[orchestrator] Circuit breaker triggered: max orchestration depth (${MAX_ORCH_DEPTH}) reached. Breaking chain.`,
+    log.warn(
+      `Circuit breaker triggered: max orchestration depth (${MAX_ORCH_DEPTH}) reached. Breaking chain.`,
     )
     resetOrchDepth()
     return
@@ -321,14 +324,14 @@ export function checkAndTriggerOrchestrator(
 
     // P2-17: Validate action type before evaluating condition
     if (!rule.then?.action) {
-      console.warn(`[orchestrator] Rule "${rule.name}" has no action defined, skipping`)
+      log.warn(`Rule "${rule.name}" has no action defined, skipping`)
       continue
     }
 
     // Check if action type is known
     const knownActions = ['spawn_child']
     if (!knownActions.includes(rule.then.action)) {
-      console.warn(`[orchestrator] Unknown action "${rule.then.action}" in rule "${rule.name}", skipping`)
+      log.warn(`Unknown action "${rule.then.action}" in rule "${rule.name}", skipping`)
       continue
     }
 
@@ -336,14 +339,14 @@ export function checkAndTriggerOrchestrator(
     if (!evaluateCondition(rule.when.condition, eventPayload)) continue
 
     // Execute action
-    console.log(`[orchestrator] Rule "${rule.name}" triggered: ${rule.then.action} on topic "${rule.then.topic}"`)
+    log.info(`Rule "${rule.name}" triggered: ${rule.then.action} on topic "${rule.then.topic}"`)
 
     switch (rule.then.action) {
       case 'spawn_child':
         actionSpawnChild(rule.then.topic, rule.then.prompt, eventPayload)
         break
       default:
-        console.warn(`[orchestrator] Unknown action "${rule.then.action}" in rule "${rule.name}"`)
+        log.warn(`Unknown action "${rule.then.action}" in rule "${rule.name}"`)
     }
   }
 }

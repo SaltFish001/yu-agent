@@ -9,7 +9,6 @@
  */
 
 import { Database as DatabaseSync } from 'bun:sqlite'
-import { type ChildProcess, fork } from 'child_process'
 import { existsSync, readFileSync } from 'fs'
 import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
@@ -66,8 +65,8 @@ function getDaemonVersion(): string {
 export class Supervisor {
   /** TopicName → ChildProcessInfo (metadata / status). */
   readonly children = new Map<string, ChildProcessInfo>()
-  /** TopicName → ChildProcess (OS handle). */
-  private processes = new Map<string, ChildProcess>()
+  /** TopicName → Subprocess (OS handle). */
+  private processes = new Map<string, any>()
   private startTime = Date.now()
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
   /** Track last heartbeat timestamp per child. */
@@ -97,18 +96,17 @@ export class Supervisor {
   }
 
   /**
-   * Fork a child process for the given topic.
-   * The child process runs bg-worker.ts which imports and calls schedulerHandler.
-   * After forking, sends a 'ping' and waits for 'pong' to confirm the child is alive.
+   * Spawn a child process for the given topic (Bun stdio IPC).
+   * The child process runs bg-worker.ts (via bun) to execute scheduler logic.
+   * After spawning, sends a 'ping' and waits for 'pong' to confirm the child is alive.
+   * Communication is via JSON-line protocol over stdin/stdout.
    */
-  spawnChild(topicName: string, config?: Partial<ChildSpawnConfig>): ChildProcess | undefined {
+  spawnChild(topicName: string, config?: Partial<ChildSpawnConfig>): any | undefined {
     const cfg: ChildSpawnConfig = {
       timeout: config?.timeout ?? DEFAULT_SPAWN_TIMEOUT,
       env: config?.env ?? {},
       spawning_timeout: config?.spawning_timeout ?? 30_000,
-      // P2-21: Add resident to cfg assignment so it's accessible via cfg
       resident: config?.resident ?? true,
-      // P2-22: Wire autoRetry/maxRetries from config
       autoRetry: config?.autoRetry ?? true,
       maxRetries: config?.maxRetries ?? DEFAULT_MAX_RESTARTS,
     }
@@ -118,15 +116,13 @@ export class Supervisor {
       return undefined
     }
 
-    const child = fork(CHILD_ENTRY, [`--topic-name=${topicName}`], {
-      execArgv: ['--max-old-space-size=4096'],
-      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+    const child = Bun.spawn({
+      cmd: ['bun', CHILD_ENTRY, `--topic-name=${topicName}`],
+      stdio: ['pipe', 'pipe', 'pipe'],
       env: {
         ...process.env,
-        // Explicitly pass critical env vars (N5 adversarial fix)
         DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY ?? '',
         DEEPSEEK_BASE_URL: process.env.DEEPSEEK_BASE_URL ?? '',
-        // P1-17: Filter sensitive keys from cfg.env to prevent trust boundary violations
         ...Object.fromEntries(
           Object.entries(cfg.env).filter(([key]) => {
             const sensitivePatterns = [
@@ -162,118 +158,93 @@ export class Supervisor {
     this.children.set(topicName, info)
     this.processes.set(topicName, child)
 
-    log.info(`Child forked for topic "${topicName}" (PID ${child.pid})`)
+    log.info(`Child spawned for topic "${topicName}" (PID ${child.pid})`)
 
     // ── Phase 3: Write spawn event and check orchestrator (P2-11) ──
-    // Moved from topic.ts setStatus to here — event is now written at actual spawn time.
     this.safeWriteEvent(topicName, 'child_spawned', { pid: child.pid, status: 'spawning' })
     this.safeTriggerOrchestrator(topicName, 'child_spawned', { pid: child.pid, status: 'spawning' })
 
-    // ── IPC message handler ──
-    child.on('message', (msg: unknown) => {
-      const typed = msg as { type?: string; payload?: unknown }
-      if (!typed?.type) return
-
-      // Update child status based on IPC messages
-      const existing = this.children.get(topicName)
-      if (!existing) return
-
-      switch (typed.type) {
-        case 'pong': {
-          if (existing.status === 'spawning') {
-            existing.status = 'running'
-            this.lastHeartbeat.set(topicName, Date.now())
-            log.info(`Child "${topicName}" is alive (pong received)`)
+    // ── IPC message handler via stdout JSON-line reader ──
+    const stdoutReader = child.stdout?.getReader()
+    if (stdoutReader) {
+      const decoder = new TextDecoder()
+      let buf = ''
+      ;(async () => {
+        try {
+          while (true) {
+            const { done, value } = await stdoutReader.read()
+            if (done) break
+            buf += decoder.decode(value, { stream: true })
+            const lines = buf.split('\n')
+            buf = lines.pop() ?? ''
+            for (const line of lines) {
+              if (!line.trim()) continue
+              try {
+                const msg = JSON.parse(line) as { type?: string; payload?: unknown }
+                if (!msg?.type) continue
+                const existing = this.children.get(topicName)
+                if (!existing) continue
+                switch (msg.type) {
+                  case 'pong': {
+                    if (existing.status === 'spawning') {
+                      existing.status = 'running'
+                      this.lastHeartbeat.set(topicName, Date.now())
+                      log.info(`Child "${topicName}" is alive (pong received)`)
+                    }
+                    const timer = this.spawningTimers.get(topicName)
+                    if (timer) { clearTimeout(timer); this.spawningTimers.delete(topicName) }
+                    this.restartCount.set(topicName, 0)
+                    existing.restartCount = 0
+                    break
+                  }
+                  case 'heartbeat':
+                    this.lastHeartbeat.set(topicName, Date.now())
+                    existing.lastHeartbeat = Date.now()
+                    if (existing.status === 'spawning' || existing.status === 'degraded') existing.status = 'running'
+                    break
+                  case 'task_result':
+                    if (!existing.resident) existing.status = 'stopped'
+                    log.info(`Child "${topicName}" completed task`)
+                    break
+                  case 'error':
+                    existing.status = 'degraded'
+                    log.error(`Child "${topicName}" reported error:`, msg.payload as Record<string, unknown> | undefined)
+                    this.safeWriteEvent(topicName, 'child_degraded', { reason: 'child_error', error: msg.payload, pid: existing.pid })
+                    this.safeTriggerOrchestrator(topicName, 'child_degraded', { reason: 'child_error', error: msg.payload, pid: existing.pid })
+                    break
+                  case 'status_update':
+                    log.debug(`Child "${topicName}" status:`, msg.payload as Record<string, unknown> | undefined)
+                    break
+                }
+              } catch { /* malformed json line, skip */ }
+            }
           }
-          // P1-01: Clear the spawning timeout now that we got a pong
-          const timer = this.spawningTimers.get(topicName)
-          if (timer) {
-            clearTimeout(timer)
-            this.spawningTimers.delete(topicName)
-          }
-          // P1-02: Reset restart count on successful spawn (sync both tracking locations)
-          this.restartCount.set(topicName, 0)
-          existing.restartCount = 0
-          break
-        }
-        case 'heartbeat':
-          this.lastHeartbeat.set(topicName, Date.now())
-          existing.lastHeartbeat = Date.now()
-          if (existing.status === 'spawning' || existing.status === 'degraded') {
-            existing.status = 'running'
-          }
-          break
-        case 'task_result':
-          // Resident children stay alive — don't set 'stopped'
-          if (!existing.resident) {
-            existing.status = 'stopped'
-          }
-          log.info(`Child "${topicName}" completed task`)
-          break
-        case 'error':
-          // P1-06: Transition child to 'degraded' and log full error payload
-          existing.status = 'degraded'
-          log.error(`Child "${topicName}" reported error:`, typed.payload as Record<string, unknown> | undefined)
-          // P2-13: Wrap event writes in try/catch
-          this.safeWriteEvent(topicName, 'child_degraded', {
-            reason: 'child_error',
-            error: typed.payload as Record<string, unknown> | undefined,
-            pid: existing.pid,
-          })
-          this.safeTriggerOrchestrator(topicName, 'child_degraded', {
-            reason: 'child_error',
-            error: typed.payload as Record<string, unknown> | undefined,
-            pid: existing.pid,
-          })
-          break
-        case 'status_update':
-          log.debug(`Child "${topicName}" status:`, typed.payload as Record<string, unknown> | undefined)
-          break
-      }
-    })
+        } catch { /* stream error */ }
+        log.warn(`Child "${topicName}" stdout closed`)
+      })()
+    }
 
     // ── Exit handler with auto-restart + event bus (Phase 3) ──
-    child.on('exit', (code, signal) => {
+    child.exited.then((exitCode: number) => {
       const existing = this.children.get(topicName)
       if (existing) {
-        if (signal) {
+        if (exitCode !== 0) {
           existing.status = 'dead'
-          log.warn(`Child "${topicName}" killed by signal ${signal}`)
-          // Phase 3: Write crash event
-          this.safeWriteEvent(topicName, 'child_crashed', { signal, pid: existing.pid })
-          this.safeTriggerOrchestrator(topicName, 'child_crashed', { signal, pid: existing.pid, reason: 'killed' })
-        } else if (code !== null && code !== 0) {
-          existing.status = 'dead'
-          log.warn(`Child "${topicName}" exited with code ${code}`)
-          // Phase 3: Write crash event
-          this.safeWriteEvent(topicName, 'child_crashed', { exitCode: code, pid: existing.pid })
-          this.safeTriggerOrchestrator(topicName, 'child_crashed', {
-            exitCode: code,
-            pid: existing.pid,
-            reason: 'non_zero_exit',
-          })
+          log.warn(`Child "${topicName}" exited with code ${exitCode}`)
+          this.safeWriteEvent(topicName, 'child_crashed', { exitCode, pid: existing.pid })
+          this.safeTriggerOrchestrator(topicName, 'child_crashed', { exitCode, pid: existing.pid, reason: 'non_zero_exit' })
         } else {
-          // P1-03: Check if kill was requested BEFORE setting 'stopped'
-          // This prevents the exit handler from overriding killChild's expected 'stopped' status
           if (this.killRequested.has(topicName)) {
             log.info(`Child "${topicName}" exited (code=0) after kill was requested, marking 'stopped'`)
             this.killRequested.delete(topicName)
           }
           existing.status = 'stopped'
           log.info(`Child "${topicName}" exited cleanly (code=0)`)
-          // Phase 3: Write task done event
-          this.safeWriteEvent(topicName, 'child_task_done', { exitCode: code ?? 0, pid: existing.pid })
-          this.safeTriggerOrchestrator(topicName, 'child_task_done', {
-            exitCode: code ?? 0,
-            pid: existing.pid,
-            status: 'completed',
-          })
+          this.safeWriteEvent(topicName, 'child_task_done', { exitCode, pid: existing.pid })
+          this.safeTriggerOrchestrator(topicName, 'child_task_done', { exitCode, pid: existing.pid, status: 'completed' })
         }
       }
       this.processes.delete(topicName)
-
-      // Auto-restart on unexpected exit (not requested shutdown)
-      // P1-03: Also skip restart if kill was explicitly requested
       if (existing && !this.shuttingDown && !this.killRequested.has(topicName) && existing.status !== 'stopped') {
         this.scheduleRestart(topicName)
       }

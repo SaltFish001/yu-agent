@@ -13,6 +13,9 @@ import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSyn
 import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import type { ExtendedTopicStatus } from './types.js'
+import { createLogger } from './logger.js'
+
+const log = createLogger('topic')
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -609,7 +612,7 @@ export function ensureDaemonRunning(): void {
     // Check that the compiled daemon script exists
     if (!existsSync(DAEMON_SCRIPT)) {
       // In dev mode, try the source file via tsx
-      console.warn(`Daemon script not found at ${DAEMON_SCRIPT}. Build the project first (npx tsc).`)
+      log.warn(`Daemon script not found at ${DAEMON_SCRIPT}. Build the project first (npx tsc).`)
       return
     }
 
@@ -652,11 +655,11 @@ export function ensureDaemonRunning(): void {
         const identityLine = `${process.argv[1]}:${Date.now()}`
         writeFileSync(DAEMON_PID_PATH, `${child.pid}\n${identityLine}\n`)
       } else {
-        console.warn('Daemon spawned but PID is null')
+        log.warn('Daemon spawned but PID is null')
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
-      console.warn(`Failed to spawn daemon: ${msg}`)
+      log.warn(`Failed to spawn daemon: ${msg}`)
     }
   } finally {
     // Release the file lock
@@ -752,7 +755,7 @@ function cmdSwitch(args: string[]): string {
       if (Number(countRow?.cnt ?? 0) > 1000) {
         const removed = cleanOldEvents(7)
         if (removed > 0) {
-          console.log(`[topic] Cleaned up ${removed} old event(s).`)
+          log.info(`Cleaned up ${removed} old event(s).`)
         }
       }
     } catch {
@@ -765,7 +768,7 @@ function cmdSwitch(args: string[]): string {
       const summaries = events
         .map((e) => `[${e.created_at}] ${e.event_type}: ${JSON.stringify(e.payload)}`)
         .join('\n      ')
-      console.log(`[topic] Pending events for "${name}":\n      ${summaries}`)
+      log.info(`Pending events for "${name}":\n      ${summaries}`)
 
       // Auto-acknowledge events after delivery
       for (const ev of events) {
