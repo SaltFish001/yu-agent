@@ -117,3 +117,64 @@ export interface SupervisorStatus {
   children: ChildProcessInfo[]
   daemonVersion: string
 }
+
+// ── Tools — 增强 ─────────────────────────────────────────
+
+export interface ToolAuditHook {
+  before?: (params: { name: string; args: Record<string, unknown>; role?: string }) => void
+  after?: (params: { name: string; args: Record<string, unknown>; result: unknown; durationMs: number; role?: string }) => void
+  error?: (params: { name: string; args: Record<string, unknown>; error: Error; role?: string }) => void
+}
+
+export interface ToolEnhancement {
+  schema?: import('zod').ZodType<unknown>
+  auth?: { requiredRoles?: string[]; denyRoles?: string[] }
+  audit?: ToolAuditHook
+  timeout?: number
+  sandbox?: boolean
+}
+
+// ── MCP 传输 ─────────────────────────────────────────────
+
+export type McpTransportType = 'stdio' | 'sse'
+
+export interface McpTransportConfig {
+  type: McpTransportType
+  target: string
+  args?: string[]
+  env?: Record<string, string>
+}
+
+// ── Roles ────────────────────────────────────────────────
+
+export interface RoleCapability {
+  allowTools?: string[]
+  denyTools?: string[]
+  maxToolCalls?: number
+  allowMcpServers?: string[]
+  maxTokens?: number
+}
+
+export interface RoleDef {
+  name: string
+  description?: string
+  extend?: string[]
+  systemPrompt?: string
+  model?: string
+  thinking?: 'none' | 'low' | 'high' | 'max'
+  maxTurns?: number
+  capabilities?: RoleCapability
+}
+
+// ── Skills ───────────────────────────────────────────────
+
+export interface SkillDef {
+  name: string
+  version: string
+  description: string
+  systemPrompt: string
+  requiresTools?: string[]
+  providesTools?: string[]
+  source?: 'builtin' | 'file' | 'remote'
+  filePath?: string
+}

@@ -49,6 +49,10 @@ describe('GET /', () => {
 // ── GET /api/status ──────────────────────────────────────
 
 describe('GET /api/status', () => {
+  async function getStatus(): Promise<Record<string, unknown>> {
+    return (await fetch(BASE + '/api/status')).json() as Promise<Record<string, unknown>>
+  }
+
   test('返回 200 + JSON', async () => {
     const res = await fetch(BASE + '/api/status')
     expect(res.status).toBe(200)
@@ -56,7 +60,7 @@ describe('GET /api/status', () => {
   })
 
   test('返回对象包含 version 字段', async () => {
-    const data = await (await fetch(BASE + '/api/status')).json()
+    const data = await getStatus()
     expect(data).toHaveProperty('version')
     expect(data).toHaveProperty('uptime')
     expect(data).toHaveProperty('memory')
@@ -64,21 +68,22 @@ describe('GET /api/status', () => {
   })
 
   test('version 为非空字符串', async () => {
-    const data = await (await fetch(BASE + '/api/status')).json()
+    const data = await getStatus()
     expect(typeof data.version).toBe('string')
-    expect(data.version.length).toBeGreaterThan(0)
+    expect((data.version as string).length).toBeGreaterThan(0)
   })
 
   test('uptime 为正数', async () => {
-    const data = await (await fetch(BASE + '/api/status')).json()
-    expect(data.uptime).toBeGreaterThan(0)
+    const data = await getStatus()
+    expect(data.uptime as number).toBeGreaterThan(0)
   })
 
   test('memory 包含 rss/heapTotal/heapUsed', async () => {
-    const data = await (await fetch(BASE + '/api/status')).json()
-    expect(data.memory).toHaveProperty('rss')
-    expect(data.memory).toHaveProperty('heapTotal')
-    expect(data.memory).toHaveProperty('heapUsed')
+    const data = await getStatus()
+    const mem = data.memory as Record<string, unknown>
+    expect(mem).toHaveProperty('rss')
+    expect(mem).toHaveProperty('heapTotal')
+    expect(mem).toHaveProperty('heapUsed')
   })
 })
 
@@ -116,7 +121,7 @@ describe('POST /api/chat', () => {
         body: JSON.stringify({ message: 'hello yu' }),
       })
     ).json()
-    expect(data.output).toContain('hello yu')
+    expect((data as Record<string, unknown>).output).toContain('hello yu')
   })
 
   test('空消息返回 400', async () => {
