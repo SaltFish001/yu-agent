@@ -20,7 +20,7 @@ import { fileURLToPath } from 'url'
 
 // ── Config ──────────────────────────────────────────────
 
-const PORT = parseInt(process.env.YU_WEBUI_PORT || '9876', 10)
+const DEFAULT_PORT = parseInt(process.env.YU_WEBUI_PORT || '9876', 10)
 const HOST = process.env.YU_WEBUI_HOST || '0.0.0.0'
 
 const __dirname = resolve(fileURLToPath(import.meta.url), '..')
@@ -71,12 +71,13 @@ function getStatus(): Record<string, unknown> {
 
 // ── Server ──────────────────────────────────────────────
 
-export function createServer(): ReturnType<typeof Bun.serve> {
-  log.info(`Starting Web UI server on ${HOST}:${PORT}`)
+export function createServer(port?: number): ReturnType<typeof Bun.serve> {
+  const activePort = port ?? DEFAULT_PORT
+  log.info(`Starting Web UI server on ${HOST}:${activePort}`)
 
   const server = Bun.serve({
     hostname: HOST,
-    port: PORT,
+    port: activePort,
 
     // HTTP handler
     async fetch(req: Request): Promise<Response> {
@@ -172,7 +173,7 @@ export function createServer(): ReturnType<typeof Bun.serve> {
     },
   })
 
-  log.info(`Web UI ready at http://${HOST}:${PORT}`)
+  log.info(`Web UI ready at http://${HOST}:${activePort}`)
   return server
 }
 
@@ -182,5 +183,5 @@ if (process.argv[1]?.includes('server')) {
   createServer()
   console.log(`\n  🎣 yu-agent Web UI`)
   console.log(`  ─────────────────────`)
-  console.log(`  → http://localhost:${PORT}\n`)
+  console.log(`  → http://localhost:${DEFAULT_PORT}\n`)
 }
