@@ -562,7 +562,6 @@ export default tools;
     createUserToolFile(
       'enhanced-tool.ts',
       `
-import { z } from 'zod';
 const tool = {
   name: 'enhanced',
   description: 'Tool with all enhancements',
@@ -570,7 +569,7 @@ const tool = {
   enhancement: {
     auth: { requiredRoles: ['admin'] },
     timeout: 5000,
-    schema: z.object({ key: z.string().min(1) }),
+    schema: { safeParse: (p) => ({ success: true, data: p }) },
     audit: {
       before: (p) => { console.log('before:', p.name); },
       after: (p) => { console.log('after:', p.name, p.durationMs); },
