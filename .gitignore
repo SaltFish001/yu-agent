@@ -22,3 +22,4 @@ Thumbs.db
 fibonacci.ts
 dedup.ts
 *.tgz
+package-lock.json
