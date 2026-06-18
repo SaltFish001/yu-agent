@@ -706,6 +706,76 @@ async function mainCli(): Promise<void> {
     process.exit(1)
   }
 
+  // `yu tool list | inspect <name>` — tool registry inspection
+  if (args[0] === 'tool') {
+    const sub = args[1] || 'help'
+    const { listTools, getTool } = await import('../extension/tools/registry.js')
+
+    if (sub === 'list') {
+      const tools = listTools()
+      if (tools.length === 0) {
+        console.log('No tools registered.')
+      } else {
+        console.log(`Registered tools (${tools.length}):`)
+        for (const t of tools) {
+          const hasSchema = t.parameters?.properties ? Object.keys(t.parameters.properties).length > 0 : false
+          console.log(`  ${t.name}`)
+          console.log(`    Description: ${t.description}`)
+          console.log(`    Parameters: ${hasSchema ? Object.keys(t.parameters.properties || {}).join(', ') : 'none'}`)
+          if (t.enhancement?.auth) {
+            const auth = t.enhancement.auth
+            const parts: string[] = []
+            if (auth.requiredRoles?.length) parts.push(`require: ${auth.requiredRoles.join(', ')}`)
+            if (auth.denyRoles?.length) parts.push(`deny: ${auth.denyRoles.join(', ')}`)
+            if (parts.length) console.log(`    Auth: ${parts.join('; ')}`)
+          }
+          if (t.enhancement?.timeout) {
+            console.log(`    Timeout: ${t.enhancement.timeout}ms`)
+          }
+          console.log('')
+        }
+      }
+      process.exit(0)
+    }
+
+    if (sub === 'inspect') {
+      const name = args[2]
+      if (!name) {
+        console.error('Usage: yu tool inspect <name>')
+        process.exit(1)
+      }
+      const tool = getTool(name)
+      if (!tool) {
+        console.error(`Tool not found: ${name}`)
+        process.exit(1)
+      }
+      console.log(`Tool: ${tool.name}`)
+      console.log(`  Description: ${tool.description}`)
+      console.log(`  Parameters: ${JSON.stringify(tool.parameters, null, 4)}`)
+      if (tool.enhancement) {
+        console.log(`  Enhancement:`)
+        if (tool.enhancement.auth) {
+          console.log(`    Auth: ${JSON.stringify(tool.enhancement.auth, null, 4)}`)
+        }
+        if (tool.enhancement.timeout) {
+          console.log(`    Timeout: ${tool.enhancement.timeout}ms`)
+        }
+        if (tool.enhancement.schema) {
+          console.log(`    Schema: <zod validator>`)
+        }
+        if (tool.enhancement.audit) {
+          console.log(`    Audit hooks: before=${!!tool.enhancement.audit.before}, after=${!!tool.enhancement.audit.after}, error=${!!tool.enhancement.audit.error}`)
+        }
+      }
+      process.exit(0)
+    }
+
+    console.error('Usage:')
+    console.error('  yu tool list              — list all registered tools')
+    console.error('  yu tool inspect <name>    — inspect a specific tool')
+    process.exit(1)
+  }
+
   // `yu run <prompt>` — scheduler dispatch (Plan B).
   // Classifies intent → pass_through to chat agent, or dispatch to
   // coding/search/review/etc. Replaces the old hardcoded coding-agent spawn.
@@ -731,6 +801,26 @@ async function mainCli(): Promise<void> {
     const out = supervisorCommand(sub, supervisorArgs)
     console.log(out)
     process.stdout.write('\n')
+    process.exit(0)
+  }
+
+  // `yu role <subcommand>` — role management
+  if (args[0] === 'role') {
+    const sub = args[1] || 'help'
+    const roleArgs = args.slice(2)
+    const { roleCommand } = await import('../extension/roles/index.js')
+    const out = await roleCommand(sub, roleArgs)
+    console.log(out)
+    process.exit(0)
+  }
+
+  // `yu skill <subcommand>` — skill management
+  if (args[0] === 'skill') {
+    const sub = args[1] || 'help'
+    const skillArgs = args.slice(2)
+    const { skillCommand } = await import('../extension/skills/index.js')
+    const out = await skillCommand(sub, skillArgs)
+    console.log(out)
     process.exit(0)
   }
 

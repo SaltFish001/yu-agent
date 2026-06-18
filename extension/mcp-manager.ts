@@ -26,6 +26,8 @@ const log = createLogger('mcp-manager')
 import { existsSync, readFileSync } from 'fs'
 import { MCP_CONFIG_PATH } from './paths.js'
 import { type MCPServerStatus, writeMCPStatus } from './status.js'
+import { McpTransport } from './mcp/transport.js'
+import { StdioTransport } from './mcp/transport-stdio.js'
 
 // ── 常量 ──────────────────────────────────────────────
 
@@ -135,6 +137,7 @@ type McpConfig = {
 type McpServerState = {
   configName: string
   process: Bun.Subprocess | null
+  transport: McpTransport | null
   status: MCPServerStatus
   lastPingAt: number
 }
@@ -242,6 +245,14 @@ function spawnServer(
       env,
     })
 
+    // 创建 Transport 实例
+    const transport = new StdioTransport({
+      type: 'stdio',
+      target: config.command,
+      args: safeArgs,
+      env: safeEnv,
+    })
+
     // Handle exit via promise
     proc.exited
       .then((exitCode) => {
@@ -263,7 +274,7 @@ function spawnServer(
     // Discard stderr (MCP may log to stderr)
     ;(async () => {
       try {
-        const reader = proc.stderr.getReader()
+        const reader = (proc.stderr as unknown as ReadableStream<Uint8Array>).getReader()
         while (true) {
           const { done } = await reader.read()
           if (done) break
@@ -272,6 +283,17 @@ function spawnServer(
         /* discard */
       }
     })()
+
+    // 连接 Transport 并存储到 state
+    const state = _servers.get(name)
+    if (state) {
+      state.process = proc
+      state.transport = transport
+      // connect transport asynchronously (don't block)
+      transport.connect().catch((err) => {
+        log.warn(`Transport connect failed for ${name}`, err)
+      })
+    }
 
     return proc
   } catch (err) {
@@ -309,6 +331,18 @@ async function initServer(name: string): Promise<MCPServerStatus> {
         version: '0.1.0',
       },
     })) as Record<string, unknown>
+
+    // 发送 notifications/initialized 握手（MCP 规范要求）
+    try {
+      // 优先使用 transport 发送
+      if (state.transport?.isConnected()) {
+        await state.transport.sendNotification('notifications/initialized')
+      } else {
+        await jsonRpcCall(state.process!, 'notifications/initialized', {}, 3_000)
+      }
+    } catch {
+      // notifications/initialized 是 fire-and-forget，失败不影响后续
+    }
 
     // 获取 tool list
     const toolsResult = (await jsonRpcCall(state.process!, 'tools/list')) as { tools?: Array<{ name: string }> }
@@ -420,6 +454,7 @@ export async function startMCPManager(): Promise<void> {
     _servers.set(name, {
       configName: name,
       process: null,
+      transport: null,
       status: { name, status: 'disconnected' },
       lastPingAt: 0,
     })
@@ -431,7 +466,6 @@ export async function startMCPManager(): Promise<void> {
     }
 
     const state = _servers.get(name)!
-    state.process = proc
 
     // 3. init（异步，不阻塞整体启动）
     initServer(name).catch((err) => {
@@ -466,7 +500,28 @@ export async function stopMCPManager(): Promise<void> {
     } catch {
       // ignore
     }
+    // 关闭 transport
+    try {
+      state.transport?.close()
+    } catch {
+      // ignore
+    }
   }
   _servers.clear()
   writeAllStatus()
+}
+
+/**
+ * 获取已连接的 Transport 实例。
+ * @returns Transport 实例，或 undefined 如果未连接
+ */
+export function getTransport(name: string): McpTransport | undefined {
+  return _servers.get(name)?.transport ?? undefined
+}
+
+/**
+ * 获取所有 MCP server 名称列表。
+ */
+export function getServerNames(): string[] {
+  return Array.from(_servers.keys())
 }

@@ -13,7 +13,7 @@ import { createLogger } from '../logger.js'
 
 const log = createLogger('mcp-tools')
 
-import { _getServers, jsonRpcCall } from '../mcp-manager.js'
+import { _getServers, getTransport, jsonRpcCall } from '../mcp-manager.js'
 import { registerTool, type ToolDefinition, type ToolResult } from './registry.js'
 
 // ── 常量 ────────────────────────────────────────────────
@@ -37,7 +37,7 @@ interface McpToolInfo {
  * 向 MCP server 发送初始化握手。
  * 必须先完成握手才能发送任何请求。
  */
-async function initializeServer(proc: any): Promise<boolean> {
+async function initializeServer(name: string, proc: any): Promise<boolean> {
   try {
     const result = (await jsonRpcCall(
       proc,
@@ -52,8 +52,18 @@ async function initializeServer(proc: any): Promise<boolean> {
 
     if (!result) return false
 
-    // 等待 initialized 通知（部分 server 会发）
-    // 实际我们直接 proceed，规范允许
+    // 发送 notifications/initialized 握手（MCP 规范要求）
+    try {
+      const transport = getTransport(name)
+      if (transport?.isConnected()) {
+        await transport.sendNotification('notifications/initialized')
+      } else {
+        await jsonRpcCall(proc, 'notifications/initialized', {}, 3_000)
+      }
+    } catch {
+      // fire-and-forget，失败不影响后续
+    }
+
     return true
   } catch (err) {
     log.warn('MCP initialize failed', err)
@@ -135,7 +145,7 @@ export async function refreshMcpTools(): Promise<void> {
 
     // 需要初始化？
     if (!_lastRefresh.has(name)) {
-      const ok = await initializeServer(server.proc)
+      const ok = await initializeServer(name, server.proc)
       if (!ok) {
         log.warn(`MCP server '${name}' initialization failed, skipping`)
         continue

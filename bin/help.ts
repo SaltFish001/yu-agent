@@ -77,6 +77,23 @@ Code Search (CodeGraph):
   yu graph <symbol>            Show callers/callees for a symbol
   yu context <task>            Build context for a task
 
+Tool Registry:
+  yu tool list                 List all registered tools
+  yu tool inspect <name>       Inspect a specific tool's schema, auth, and hooks
+
+Role Management:
+  yu role list                 List all loaded roles
+  yu role get <name>           Show role details
+  yu role resolve <name>       Show resolved (inherited) role
+  yu role compose <n1> [n2..]  Compose multiple roles
+
+Skill Management:
+  yu skill list                List all loaded skills
+  yu skill get <name>          Show skill details
+  yu skill activate <name>     Activate a skill for the session
+  yu skill deactivate <name>   Deactivate a skill
+  yu skill active              Show currently active skills
+
 Team Mode:
   yu team create <name> ...    Create a team for multi-agent work
   yu team list                 List active teams
@@ -269,6 +286,42 @@ Data stored in ~/.yu/topics.db (SQLite).`
 
     case 'uninstall':
       return 'yu uninstall — Remove yu-agent from the system.'
+
+    case 'role':
+      return `yu role — Role management
+
+Controls role-based access and capability filtering for tools.
+
+Usage:
+  yu role list                    List all loaded roles
+  yu role get <name>              Show role details
+  yu role resolve <name>          Show resolved (inherited) role
+  yu role compose <n1> [<n2>...]  Compose multiple roles
+  yu role refresh                 Re-scan roles directory
+
+Role files: ~/.yu/roles/*.{yaml,yml,ts,json}`
+
+    case 'skill':
+      return `yu skill — Skill management
+
+Manages skills (extensible agent capabilities with lifecycle hooks).
+
+Usage:
+  yu skill list                    List all loaded skills
+  yu skill get <name>              Show skill details
+  yu skill activate <name>         Activate a skill (for current session)
+  yu skill deactivate <name>       Deactivate a skill
+  yu skill active                  Show currently active skills
+  yu skill refresh                 Re-scan skills directory
+
+Skill files: ~/.yu/skills/*.ts`
+
+    case 'tool':
+      return `yu tool — Tool registry inspection
+
+Usage:
+  yu tool list              List all registered tools with their descriptions
+  yu tool inspect <name>    Show detailed info for a specific tool (schema, auth, hooks, timeout)`
 
     default:
       return `Unknown command: ${command}\nRun "yu help" to see all available commands.`
