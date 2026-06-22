@@ -1181,7 +1181,11 @@ async function mainCli(): Promise<void> {
                 `\n── (${result.iterations} iters, ${result.totalTokens} tokens, cache ${pct}%, ${result.compressCount ?? 0} compressions) ──`,
               )
             }
-            await printCacheStats(result)
+            await printCacheStats({
+              cacheHitTokens: result.cacheStats?.cacheHitTokens,
+              cacheMissTokens: result.cacheStats?.cacheMissTokens,
+              outputTokens: result.totalTokens,
+            })
           }
           process.stdout.write('\n  > ')
         }

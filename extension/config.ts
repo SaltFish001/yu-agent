@@ -180,10 +180,20 @@ export interface AgentTypeConfig {
 
 // ── Prompt loader ──────────────────────────────────────
 
-function loadPrompt(name: string): string {
+export function loadPrompt(name: string): string {
   try {
     const path = resolve(PROMPTS_DIR, `${name}.md`)
     const content = readFileSync(path, 'utf-8')
+
+    // P1: Prompt 长度保护 — 超长 prompt 可能被 LLM API 截断
+    const MAX_PROMPT_LENGTH = 8_000
+    if (content.length > MAX_PROMPT_LENGTH) {
+      log.warn(
+        `Prompt "${name}.md" is ${content.length} chars (max ${MAX_PROMPT_LENGTH}). ` +
+          `Long prompts may be truncated by the LLM API. Consider splitting.`,
+      )
+    }
+
     return content
   } catch (err) {
     log.warn(`Prompt file not found for agent type "${name}", using fallback`, err)
