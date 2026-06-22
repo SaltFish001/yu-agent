@@ -776,23 +776,27 @@ async function mainCli(): Promise<void> {
     process.exit(1)
   }
 
-  // `yu run <prompt>` — scheduler dispatch with optional --agent
+  // `yu run <prompt>` — scheduler dispatch with optional --agent and --bg
   // Classifies intent → pass_through to chat agent, or dispatch to
   // coding/search/review/etc. Replaces the old hardcoded coding-agent spawn.
   if (args[0] === 'run') {
     const agentIdx = args.indexOf('--agent')
+    const bgIdx = args.indexOf('--bg') !== -1 ? args.indexOf('--bg') : args.indexOf('--background')
     let agentName: string | undefined
+    let isBackground = false
     const filtered: string[] = []
     if (agentIdx !== -1 && args[agentIdx + 1]) {
       agentName = args[agentIdx + 1]
-      // Build args without --agent <name>
       filtered.push(...args.slice(1, agentIdx), ...args.slice(agentIdx + 2))
     } else {
       filtered.push(...args.slice(1))
     }
-    const prompt = filtered.join(' ')
+    // Remove --bg/--background flag
+    const finalArgs = filtered.filter((a) => a !== '--bg' && a !== '--background')
+    if (filtered.length !== finalArgs.length) isBackground = true
+    const prompt = finalArgs.join(' ')
     if (!prompt) {
-      console.error('Usage: yu run [--agent <name>] <prompt>')
+      console.error('Usage: yu run [--agent <name>] [--bg] <prompt>')
       process.exit(1)
     }
 
@@ -805,7 +809,24 @@ async function mainCli(): Promise<void> {
         console.error(`Available: ${Object.keys(mod.AGENT_TYPES || {}).join(', ')}`)
         process.exit(1)
       }
-      console.error(`  Using agent: ${agentName}`)
+      if (!isBackground) console.error(`  Using agent: ${agentName}`)
+    }
+
+    if (isBackground) {
+      const { bg } = await import('../extension/background.js')
+      const id = bg.register({ type: agentName || 'general', prompt })
+      const { spawnAgent } = await import('../extension/spawn.js')
+      spawnAgent({
+        type: agentName || 'general',
+        model: 'v4-flash',
+        maxTurns: 30,
+        task: prompt,
+        timeout: 300_000,
+        background: true,
+      })
+      console.log(`[background] Task submitted (id: ${id})`)
+      console.log(`  Use "yu bg list" to check status, "yu bg get ${id}" to see result.`)
+      return
     }
 
     const { handler } = await import('../extension/scheduler.js')
@@ -814,6 +835,77 @@ async function mainCli(): Promise<void> {
       console.log(result)
     }
     return
+  }
+
+  // `yu bg <subcommand>` — background task management
+  if (args[0] === 'bg') {
+    const sub = args[1] || 'list'
+    const { bg } = await import('../extension/background.js')
+
+    if (sub === 'list' || sub === 'ls') {
+      const tasks = bg.list()
+      if (tasks.length === 0) {
+        console.log('No background tasks.')
+      } else {
+        console.log(`Background tasks (${tasks.length}):`)
+        console.log('')
+        for (const t of tasks) {
+          const dur = t.endTime ? `${((t.endTime - t.startTime) / 1000).toFixed(1)}s` : '-'
+          const icon = t.status === 'completed' ? '✓' : t.status === 'failed' ? '✗' : t.status === 'running' ? '▶' : t.status === 'cancelled' ? '⊘' : '○'
+          console.log(`  ${icon} ${t.id}`)
+          console.log(`     Type: ${t.type}  Status: ${t.status}  Duration: ${dur}`)
+          console.log(`     Task: ${t.prompt}`)
+          if (t.status === 'failed' && t.error) {
+            console.log(`     Error: ${t.error.slice(0, 200)}`)
+          }
+          console.log('')
+        }
+      }
+      process.exit(0)
+    }
+
+    if (sub === 'get' || sub === 'show') {
+      const id = args[2]
+      if (!id) {
+        console.error('Usage: yu bg get <id>')
+        process.exit(1)
+      }
+      const t = bg.get(id)
+      if (!t) {
+        console.error(`Background task not found: ${id}`)
+        process.exit(1)
+      }
+      console.log(`Task: ${t.id}`)
+      console.log(`  Type:   ${t.type}`)
+      console.log(`  Status: ${t.status}`)
+      console.log(`  Start:  ${new Date(t.startTime).toLocaleString()}`)
+      if (t.endTime) console.log(`  End:    ${new Date(t.endTime).toLocaleString()}`)
+      console.log(`  Prompt: ${t.prompt}`)
+      if (t.result) console.log(`\n  Result:\n${t.result.slice(0, 2000)}`)
+      if (t.error) console.log(`\n  Error: ${t.error}`)
+      process.exit(0)
+    }
+
+    if (sub === 'cancel') {
+      const id = args[2]
+      if (!id) {
+        console.error('Usage: yu bg cancel <id>')
+        process.exit(1)
+      }
+      if (bg.cancel(id)) {
+        console.log(`Cancelled: ${id}`)
+      } else {
+        console.error(`Task not found or already finished: ${id}`)
+        process.exit(1)
+      }
+      process.exit(0)
+    }
+
+    console.error('Usage:')
+    console.error('  yu bg list           — list background tasks')
+    console.error('  yu bg get <id>       — show task result')
+    console.error('  yu bg cancel <id>    — cancel pending task')
+    process.exit(1)
   }
 
   // `yu supervisor <subcommand>` — supervisor management

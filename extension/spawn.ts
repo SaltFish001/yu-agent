@@ -25,6 +25,7 @@ export interface SpawnConfig {
   teamRunId?: string
   memberName?: string
   isolated?: boolean
+  background?: boolean // P2: run as background task
 }
 
 export interface SpawnResult {
@@ -56,6 +57,40 @@ export async function spawnAgent(config: SpawnConfig): Promise<SpawnResult> {
   totalSpawned++
   const startTime = Date.now()
 
+  // ── Background mode: fire & forget ──
+  if (config.background) {
+    const { bg } = await import('./background.js')
+    const id = bg.register({ type: config.type, prompt: config.task })
+
+    // Fire the agent in background (no await)
+    ;(async () => {
+      try {
+        bg.markRunning(id)
+        const maxIter = Math.min(config.maxTurns ?? 30, 50)
+        const result = await runAgent(config.task, {
+          systemPrompt: `You are a ${config.type} agent. Complete the assigned task.`,
+          maxIterations: maxIter,
+          maxTokens: 8192,
+        })
+        bg.markCompleted(id, result.output)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        bg.markFailed(id, msg)
+      }
+    })()
+
+    log.info(`Background agent spawned: type=${config.type} id=${id}`)
+    return {
+      response: `[background] Task submitted (id: ${id})`,
+      text: `[background] Task submitted (id: ${id})`,
+      content: `[background] Task submitted (id: ${id})`,
+      totalTokens: 0,
+      durationMs: 0,
+      model: config.model,
+    }
+  }
+
+  // ── Foreground mode: synchronous ──
   log.info(`Spawning agent: type=${config.type} model=${config.model}`)
 
   try {

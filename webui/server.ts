@@ -336,6 +336,22 @@ async function getFullStatus(): Promise<Record<string, unknown>> {
     result.skills = []
   }
 
+  // ── Background tasks ──
+  try {
+    const { bg } = await import('../extension/background.js')
+    result.backgroundTasks = bg.list().slice(0, 10).map((t) => ({
+      id: t.id,
+      type: t.type,
+      status: t.status,
+      prompt: t.prompt.slice(0, 80),
+      duration: t.endTime ? t.endTime - t.startTime : null,
+    }))
+    result.bgStats = bg.stats()
+  } catch {
+    result.backgroundTasks = []
+    result.bgStats = { active: 0, completed: 0, failed: 0 }
+  }
+
   return result
 }
 
