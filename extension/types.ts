@@ -49,6 +49,7 @@ export interface SchedulerContext {
   teamRunId?: string
   memberName?: string
   agentType?: string // --agent <name> override for yu run
+  background?: boolean // P2: run sub-agents in background mode
 }
 
 /** Structured result from scheduler handler. */

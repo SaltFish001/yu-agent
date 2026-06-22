@@ -826,19 +826,11 @@ async function mainCli(): Promise<void> {
     }
 
     if (isBackground) {
-      const { bg } = await import('../extension/background.js')
-      const id = bg.register({ type: agentName || 'general', prompt })
-      const { spawnAgent } = await import('../extension/spawn.js')
-      spawnAgent({
-        type: agentName || 'general',
-        model: 'v4-flash',
-        maxTurns: 30,
-        task: prompt,
-        timeout: 300_000,
-        background: true,
-      })
-      console.log(`[background] Task submitted (id: ${id})`)
-      console.log(`  Use "yu bg list" to check status, "yu bg get ${id}" to see result.`)
+      const { handler } = await import('../extension/scheduler.js')
+      const result = await handler(prompt, { agentType: agentName, background: true })
+      if (result !== null) {
+        console.log(result)
+      }
       return
     }
 

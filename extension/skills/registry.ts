@@ -25,6 +25,9 @@ interface CacheEntry {
 const _cache = new Map<string, CacheEntry>()
 let _cacheStats = { files: 0, fromCache: 0, fromDisk: 0 }
 
+// 独立于文件缓存的最新扫描结果
+let _loadedSkills: Map<string, LoadedSkill> | null = null
+
 // ── Loader ─────────────────────────────────────────────
 
 async function loadSkillFromFile(filePath: string): Promise<LoadedSkill | null> {
@@ -96,6 +99,7 @@ export async function scanSkills(): Promise<Map<string, LoadedSkill>> {
   }
 
   _cacheStats.files = result.size
+  _loadedSkills = result
   return result
 }
 
@@ -107,24 +111,15 @@ export async function getSkill(name: string): Promise<LoadedSkill | undefined> {
 
 /** List all loaded skills. */
 export async function listSkills(): Promise<LoadedSkill[]> {
-  if (_cache.size === 0) {
-    const scanned = await scanSkills()
-    return Array.from(scanned.values())
+  if (!_loadedSkills) {
+    await scanSkills()
   }
-  // Build from cache entries (deduped by file path, not by name)
-  const seen = new Set<string>()
-  const result: LoadedSkill[] = []
-  for (const [, entry] of _cache) {
-    if (!seen.has(entry.skill.def.name)) {
-      seen.add(entry.skill.def.name)
-      result.push(entry.skill)
-    }
-  }
-  return result
+  return Array.from(_loadedSkills!.values())
 }
 
 /** Force re-scan all scope directories. */
 export async function refreshSkills(): Promise<void> {
+  _loadedSkills = null
   _cache.clear()
   _cacheStats = { files: 0, fromCache: 0, fromDisk: 0 }
   await scanSkills()

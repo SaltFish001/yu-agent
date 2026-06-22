@@ -41,6 +41,7 @@ export async function executePlan(
   plan: import('./classifier.js').SchedulerPlan,
   userInput: string,
   sessionContext: Record<string, unknown> = {},
+  background = false,
 ): Promise<string | null> {
   try {
     // ── Pass-through: dispatch to chat agent ──
@@ -109,6 +110,7 @@ export async function executePlan(
       id: a.id,
       files: a.files,
       task: userInput,
+      background,
     }))
     const agentMap = new Map(agentTasks.map((t) => [t.id, t]))
 
@@ -142,6 +144,17 @@ export async function executePlan(
       if (output && 'files_modified' in output && Array.isArray((output as CodingOutput).files_modified)) {
         modifiedFiles.push(...(output as CodingOutput).files_modified)
       }
+    }
+
+    // ── Background mode: return immediately with task IDs, skip post-processing ──
+    if (background) {
+      const taskIds: string[] = []
+      for (const [, result] of allResults) {
+        const taskId = result?.text?.match(/id: ([^\s)]+)/)?.[1]
+        if (taskId) taskIds.push(taskId)
+      }
+      log.info(`Background plan completed: ${taskIds.length} task(s) submitted`)
+      return `[background] Plan submitted (tasks: ${taskIds.join(', ') || 'see bg list'}). Use "yu bg list" to check status.`
     }
 
     // Step 4b: Diff review — show the agent what changed
@@ -267,14 +280,14 @@ export async function handler(
           },
         ],
       }
-      return await executePlan(plan, userInput, sessionContext as Record<string, unknown>)
+      return await executePlan(plan, userInput, sessionContext as Record<string, unknown>, ctx.background ?? false)
     }
 
     // Step 2: Classify intent via scheduler agent
     const plan = await classifyIntent(userInput, sessionContext as Record<string, unknown>)
 
     // Step 2: Execute the plan
-    return await executePlan(plan, userInput, sessionContext as Record<string, unknown>)
+    return await executePlan(plan, userInput, sessionContext as Record<string, unknown>, ctx.background ?? false)
   } catch (err) {
     log.error('Scheduler handler failed', err, {
       userInput: userInput.slice(0, 200),

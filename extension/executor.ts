@@ -71,6 +71,7 @@ export interface AgentTask {
   id: string
   files?: string[]
   task: string
+  background?: boolean // P2: run in background mode
 }
 
 // ── Sub-agent spawn helpers ────────────────────────────
@@ -105,6 +106,7 @@ export async function spawnAgentWithTimeout(
         timeout: AGENT_TIMEOUT_MS,
         teamRunId: extraContext.teamRunId as string | undefined,
         memberName: extraContext.memberName as string | undefined,
+        background: task.background ?? false,
       }
       const result = await spawnAgent(config)
       trackAgent(task.id, 'completed')
