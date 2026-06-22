@@ -8,37 +8,67 @@
 import { createLogger } from '../logger.js'
 import type { SkillDef } from '../types.js'
 import type { LoadedSkill } from './types.js'
-import { existsSync } from 'fs'
+import { existsSync, statSync } from 'fs'
 import { resolve } from 'path'
 import { scanScopeFiles, ensureScopeDirs } from '../scope.js'
 
 const log = createLogger('skills:registry')
 
-// ── In-memory cache ────────────────────────────────────
+// ── In-memory cache with mtime tracking ─────────────────
 
-const _skills = new Map<string, LoadedSkill>()
+interface CacheEntry {
+  skill: LoadedSkill
+  mtimeMs: number
+  filePath: string
+}
+
+const _cache = new Map<string, CacheEntry>()
+let _cacheStats = { files: 0, fromCache: 0, fromDisk: 0 }
 
 // ── Loader ─────────────────────────────────────────────
 
 async function loadSkillFromFile(filePath: string): Promise<LoadedSkill | null> {
+  // Check mtime cache — skip reload if file unchanged
+  try {
+    const stat = statSync(filePath)
+    const cached = _cache.get(filePath)
+    if (cached && cached.mtimeMs === stat.mtimeMs) {
+      _cacheStats.fromCache++
+      return cached.skill
+    }
+  } catch { /* stat failed — will reload */ }
+
   try {
     const mod = await import(filePath)
     const exported = mod.default || mod
 
     if (!exported) return null
 
+    let loaded: LoadedSkill | null = null
+
     // Case 1: exported is a LoadedSkill (has def property)
     if (exported.def && typeof exported.def === 'object' && exported.def.name) {
-      return exported as LoadedSkill
+      loaded = exported as LoadedSkill
     }
 
     // Case 2: exported is a SkillDef directly
-    if (exported.name && exported.version && exported.description) {
-      return { def: exported as SkillDef }
+    if (!loaded && exported.name && exported.version && exported.description) {
+      loaded = { def: exported as SkillDef }
     }
 
-    log.warn(`Skill file ${filePath} has unrecognized export format. Expected SkillDef or LoadedSkill.`)
-    return null
+    if (!loaded) {
+      log.warn(`Skill file ${filePath} has unrecognized export format. Expected SkillDef or LoadedSkill.`)
+      return null
+    }
+
+    // Update cache with mtime
+    _cacheStats.fromDisk++
+    try {
+      const stat = statSync(filePath)
+      _cache.set(filePath, { skill: loaded, mtimeMs: stat.mtimeMs, filePath })
+    } catch { /* stat failed — don't cache */ }
+
+    return loaded
   } catch (err) {
     log.error(`Failed to load skill from ${filePath}:`, err instanceof Error ? err.message : String(err))
     return null
@@ -53,39 +83,54 @@ async function loadSkillFromFile(filePath: string): Promise<LoadedSkill | null> 
  */
 export async function scanSkills(): Promise<Map<string, LoadedSkill>> {
   ensureScopeDirs('skills')
-  _skills.clear()
 
   const files = scanScopeFiles('skills', ['.ts', '.mts'])
+  const result = new Map<string, LoadedSkill>()
 
   for (const file of files) {
     const skill = await loadSkillFromFile(file.path)
     if (skill) {
-      _skills.set(skill.def.name, skill)
+      result.set(skill.def.name, skill)
       log.info(`Loaded skill: ${skill.def.name} v${skill.def.version} (${file.scope}:${file.name})`)
     }
   }
 
-  return _skills
+  _cacheStats.files = result.size
+  return result
 }
 
 /** Get a skill by name (lazy-loads cache on first call). */
 export async function getSkill(name: string): Promise<LoadedSkill | undefined> {
-  if (_skills.size === 0) {
-    await scanSkills()
-  }
-  return _skills.get(name)
+  const byName = await listSkills()
+  return byName.find((s) => s.def.name === name)
 }
 
 /** List all loaded skills. */
 export async function listSkills(): Promise<LoadedSkill[]> {
-  if (_skills.size === 0) {
-    await scanSkills()
+  if (_cache.size === 0) {
+    const scanned = await scanSkills()
+    return Array.from(scanned.values())
   }
-  return Array.from(_skills.values())
+  // Build from cache entries (deduped by file path, not by name)
+  const seen = new Set<string>()
+  const result: LoadedSkill[] = []
+  for (const [, entry] of _cache) {
+    if (!seen.has(entry.skill.def.name)) {
+      seen.add(entry.skill.def.name)
+      result.push(entry.skill)
+    }
+  }
+  return result
 }
 
 /** Force re-scan all scope directories. */
 export async function refreshSkills(): Promise<void> {
-  _skills.clear()
+  _cache.clear()
+  _cacheStats = { files: 0, fromCache: 0, fromDisk: 0 }
   await scanSkills()
+}
+
+/** Get cache statistics for yu doctor. */
+export function getSkillCacheStats(): { files: number; fromCache: number; fromDisk: number } {
+  return { ..._cacheStats }
 }

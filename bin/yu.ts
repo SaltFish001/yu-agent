@@ -416,6 +416,19 @@ async function runDoctor(jsonOutput?: boolean): Promise<void> {
     results.push({ name: '事件通道', ok: false, detail: `诊断失败: ${msg}` })
   }
 
+  // ── Skill cache stats ──
+  try {
+    const { getSkillCacheStats } = await import('../extension/skills/registry.js')
+    const stats = getSkillCacheStats()
+    results.push({
+      name: '技能缓存',
+      ok: true,
+      detail: `${stats.files} 文件, ${stats.fromDisk} 次磁盘加载, ${stats.fromCache} 次缓存命中`,
+    })
+  } catch {
+    // non-critical
+  }
+
   // ── Print results ──
   let allOk = true
   for (const r of results) {
