@@ -18,7 +18,7 @@ import { createRequire } from 'module'
 
 const _require = createRequire(import.meta.url)
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'fs'
 import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { shutdownManager } from '../extension/lifecycle.js'
@@ -1115,13 +1115,101 @@ async function mainCli(): Promise<void> {
   }
 
   // Default: run via AgentLoop (取代旧的 Pi main() 回退)
-  const prompt = args.join(' ')
+  // ── Session tracking ──────────────────────────────
+  const YU_HOME_DIR = resolve(process.env.HOME || '/home/saltfish', '.yu')
+  const LAST_SESSION_FILE = resolve(YU_HOME_DIR, '.last_session')
+  const SESSIONS_DIR = resolve(YU_HOME_DIR, 'sessions')
+
+  function getLastSessionId(): string | null {
+    try {
+      if (existsSync(LAST_SESSION_FILE)) {
+        const tag = readFileSync(LAST_SESSION_FILE, 'utf-8').trim()
+        return tag || null
+      }
+    } catch { /* ignore */ }
+    return null
+  }
+
+  function saveLastSessionId(tag: string): void {
+    try {
+      mkdirSync(YU_HOME_DIR, { recursive: true })
+      writeFileSync(LAST_SESSION_FILE, tag, 'utf-8')
+    } catch { /* ignore */ }
+  }
+
+  // ── --new 标志 ────────────────────────────────────
+  const forceNew = args.includes('--new')
+  const cleanArgs = args.filter((a) => a !== '--new')
+  const prompt = cleanArgs.join(' ')
+
+  // ── 无参数 → 自动续接上次 session ─────────────────
+  if (!prompt) {
+    const lastId = getLastSessionId()
+    if (lastId && existsSync(resolve(SESSIONS_DIR, `${lastId}.json`))) {
+      const { ContextManager } = await import('../extension/context-manager.js')
+      const ctx = ContextManager.load(lastId)
+      if (ctx) {
+        const msgs = ctx.getMessages()
+        const msgCount = msgs.length
+        const lastMsg = msgs[msgs.length - 1]
+        console.error(`\n  ⤿ Resuming session ${lastId.slice(0, 8)}… (${msgCount} messages)`)
+        if (lastMsg?.content) {
+          const preview = lastMsg.content.slice(0, 120)
+          console.error(`  Last: ${preview}${lastMsg.content.length > 120 ? '…' : ''}`)
+        }
+        console.error(`  ───────────────────────────────────`)
+        console.error(`  Enter your next message, or --new to start fresh.\n`)
+        // Interactive prompt
+        process.stdout.write('  > ')
+        for await (const line of console) {
+          if (!line.trim()) {
+            process.stdout.write('  > ')
+            continue
+          }
+          if (line === '--new') {
+            console.error('  Starting fresh session.')
+            break
+          }
+          const { runAgent } = await import('../extension/agent-loop.js')
+          const result = await runAgent(line, { sessionId: lastId })
+          if (result.success) {
+            console.log(result.output)
+            saveLastSessionId(lastId)
+            if (result.cacheStats) {
+              const pct = Math.round(result.cacheStats.hitRate * 100)
+              console.error(
+                `\n── (${result.iterations} iters, ${result.totalTokens} tokens, cache ${pct}%, ${result.compressCount ?? 0} compressions) ──`,
+              )
+            }
+            await printCacheStats(result)
+          }
+          process.stdout.write('\n  > ')
+        }
+        return
+      }
+    }
+    console.log(HELP_TEXT)
+    return
+  }
+
   if (prompt) {
     try {
+      // Use last session for continuation unless --new was specified
+      const sessionId = forceNew ? undefined : getLastSessionId()
       const { runAgent } = await import('../extension/agent-loop.js')
-      const result = await runAgent(prompt)
+      const result = await runAgent(prompt, sessionId ? { sessionId } : undefined)
       if (result.success) {
         console.log(result.output)
+        // Save session ID for next continuation (AgentLoop auto-generates one if not provided)
+        const sessionsDir = resolve(process.env.HOME || '/home/saltfish', '.yu', 'sessions')
+        const sessionFiles = existsSync(sessionsDir)
+          ? readdirSync(sessionsDir).filter((f) => f.endsWith('.json')).sort().reverse()
+          : []
+        // Use the most recently modified session file
+        if (sessionFiles.length > 0) {
+          const latest = sessionFiles[0].replace(/\.json$/, '')
+          saveLastSessionId(latest)
+        }
         if (result.cacheStats) {
           const pct = Math.round(result.cacheStats.hitRate * 100)
           console.log(
