@@ -26,6 +26,7 @@
   },
   "scripts": {
     "build": "bun build ./bin/yu.ts --outdir ./dist --target bun --external @biomejs/js-api --external @biomejs/biome --external '@tintinweb/*' --external '@earendil-works/*'",
+    "build:web": "bun build ./webui/assets/client.ts --outdir ./webui/assets --target browser --minify",
     "postbuild": "bun -e \"import { cpSync, existsSync, mkdirSync } from 'fs'; import { resolve } from 'path'; import { homedir } from 'os'; const src = resolve(import.meta.dir, 'prompts'); const dst = resolve(homedir(), '.yu', 'prompts'); if (!existsSync(dst)) mkdirSync(dst, { recursive: true }); cpSync(src, dst, { recursive: true, force: true }); console.log('Prompts synced to ' + dst);\"",
     "typecheck": "tsc --noEmit --project tsconfig.typecheck.json",
     "lint": "biome lint .",
@@ -37,8 +38,11 @@
   },
   "dependencies": {
     "@colbymchenry/codegraph": "^0.9.9",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "duckduckgo-websearch": "^2.0.3",
-    "zod": "^3.23.8"
+    "hono": "^4.12.26",
+    "zod": "^4.4.3"
   },
   "optionalDependencies": {
     "@earendil-works/pi-coding-agent": "^0.79.1",
