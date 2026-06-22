@@ -245,7 +245,32 @@ export async function handler(
     // Initialize tracker for this invocation
     resetTracker()
 
-    // Step 1: Classify intent via scheduler agent
+    // Step 1: If --agent was specified, skip classification
+    const ctx = sessionContext as SchedulerContext
+    if (ctx.agentType) {
+      const { getAgentTypeConfig, AGENT_TYPES } = await import('./config.js')
+      const config = getAgentTypeConfig(ctx.agentType)
+      if (!config) {
+        return `Unknown agent type: "${ctx.agentType}"`
+      }
+
+      // Build an explicit plan from the agent type config
+      const plan: import('./classifier.js').SchedulerPlan = {
+        intent: ctx.agentType,
+        reasoning: `directed by --agent ${ctx.agentType}`,
+        agents: [
+          {
+            type: ctx.agentType,
+            model: config.model,
+            id: `${ctx.agentType}-1`,
+            task: userInput,
+          },
+        ],
+      }
+      return await executePlan(plan, userInput, sessionContext as Record<string, unknown>)
+    }
+
+    // Step 2: Classify intent via scheduler agent
     const plan = await classifyIntent(userInput, sessionContext as Record<string, unknown>)
 
     // Step 2: Execute the plan

@@ -48,6 +48,7 @@ export interface SchedulerContext {
   session?: unknown
   teamRunId?: string
   memberName?: string
+  agentType?: string // --agent <name> override for yu run
 }
 
 /** Structured result from scheduler handler. */

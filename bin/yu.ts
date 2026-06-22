@@ -776,17 +776,40 @@ async function mainCli(): Promise<void> {
     process.exit(1)
   }
 
-  // `yu run <prompt>` — scheduler dispatch (Plan B).
+  // `yu run <prompt>` — scheduler dispatch with optional --agent
   // Classifies intent → pass_through to chat agent, or dispatch to
   // coding/search/review/etc. Replaces the old hardcoded coding-agent spawn.
   if (args[0] === 'run') {
-    const prompt = args.slice(1).join(' ')
+    const agentIdx = args.indexOf('--agent')
+    let agentName: string | undefined
+    const filtered: string[] = []
+    if (agentIdx !== -1 && args[agentIdx + 1]) {
+      agentName = args[agentIdx + 1]
+      // Build args without --agent <name>
+      filtered.push(...args.slice(1, agentIdx), ...args.slice(agentIdx + 2))
+    } else {
+      filtered.push(...args.slice(1))
+    }
+    const prompt = filtered.join(' ')
     if (!prompt) {
-      console.error('Usage: yu run <prompt>')
+      console.error('Usage: yu run [--agent <name>] <prompt>')
       process.exit(1)
     }
+
+    // Validate agent name if specified
+    if (agentName) {
+      const mod = await import('../extension/config.js')
+      const { getAgentTypeConfig } = mod
+      if (!getAgentTypeConfig(agentName)) {
+        console.error(`Unknown agent type: "${agentName}"`)
+        console.error(`Available: ${Object.keys(mod.AGENT_TYPES || {}).join(', ')}`)
+        process.exit(1)
+      }
+      console.error(`  Using agent: ${agentName}`)
+    }
+
     const { handler } = await import('../extension/scheduler.js')
-    const result = await handler(prompt, {})
+    const result = await handler(prompt, { agentType: agentName })
     if (result !== null) {
       console.log(result)
     }
