@@ -81,11 +81,12 @@ Tool Registry:
   yu tool list                 List all registered tools
   yu tool inspect <name>       Inspect a specific tool's schema, auth, and hooks
 
-Role Management:
-  yu role list                 List all loaded roles
-  yu role get <name>           Show role details
-  yu role resolve <name>       Show resolved (inherited) role
-  yu role compose <n1> [n2..]  Compose multiple roles
+Rule Management (Orchestrator):
+  yu rule list                 List all active rules from orchestrator
+  yu rule inspect <name>       Show rule details
+
+Legacy (use \`yu rule\` instead):
+  yu role list                 List all loaded roles (deprecated)
 
 Skill Management:
   yu skill list                List all loaded skills
@@ -287,19 +288,33 @@ Data stored in ~/.yu/topics.db (SQLite).`
     case 'uninstall':
       return 'yu uninstall — Remove yu-agent from the system.'
 
-    case 'role':
-      return `yu role — Role management
+    case 'rule':
+      return `yu rule — Rule (orchestrator) management
 
-Controls role-based access and capability filtering for tools.
+Reads rules from ~/.yu/orchestrator.json.
 
 Usage:
-  yu role list                    List all loaded roles
+  yu rule list                    List all active rules
+  yu rule inspect <name>          Show rule details (trigger, actions, conditions)
+
+Rules define auto-triggered actions across topics.
+Example orchestrator.json:
+  { "rules": [{ "name": "测试通过→部署", "trigger": "test:pass", "action": "deploy" }] }`
+
+    case 'role':
+      return `yu role — Role management (deprecated, use 'yu rule' instead)
+
+Legacy role-based access control for tools.
+Still available for compatibility.
+
+Usage:
+  yu role list                    List all loaded roles (deprecated)
   yu role get <name>              Show role details
   yu role resolve <name>          Show resolved (inherited) role
   yu role compose <n1> [<n2>...]  Compose multiple roles
-  yu role refresh                 Re-scan roles directory
 
-Role files: ~/.yu/roles/*.{yaml,yml,ts,json}`
+Note: This system is being replaced by the new Rule (orchestrator) system.
+Use \`yu help rule\` for the new system.`
 
     case 'skill':
       return `yu skill — Skill management

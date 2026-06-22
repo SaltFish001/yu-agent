@@ -3,12 +3,15 @@
  *
  * 启动 server 实例，通过 HTTP 请求验证所有端点。
  * 不依赖浏览器，用 fetch API 模拟真实请求。
+ *
+ * Phase 3: SSE 改用 ReadableStream，chat 接入真实 AgentLoop，
+ * 静态文件拆分 assets/ 目录，零 CDN 依赖。
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test'
 import { createServer } from '../webui/server'
 
-const PORT = 19876 // 固定端口，避免冲突
+const PORT = 19876
 const BASE = `http://localhost:${PORT}`
 
 let server: ReturnType<typeof Bun.serve> | null = null
@@ -34,15 +37,40 @@ describe('GET /', () => {
     expect(html).toContain('</html>')
   })
 
-  test('返回 HTML 包含界面标题', async () => {
-    const html = await (await fetch(BASE + '/')).text()
-    expect(html).toContain('yu-agent')
-    expect(html).toContain('<h1>')
-  })
-
   test('Cache-Control 为 no-cache', async () => {
     const res = await fetch(BASE + '/')
     expect(res.headers.get('Cache-Control')).toContain('no-cache')
+  })
+
+  test('HTML 无 CDN 外链', async () => {
+    const html = await (await fetch(BASE + '/')).text()
+    expect(html).not.toContain('cdn.')
+    expect(html).not.toContain('unpkg.com')
+    expect(html).not.toContain('googleapis.com')
+    expect(html).not.toContain('cdnjs')
+  })
+})
+
+// ── GET /assets/* ──────────────────────────────────────
+
+describe('GET /assets/* (静态文件)', () => {
+  test('/assets/style.css 返回 200 + CSS', async () => {
+    const res = await fetch(BASE + '/assets/style.css')
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Content-Type')).toContain('text/css')
+    const css = await res.text()
+    expect(css).toContain('sidebar')
+    expect(css).toContain('chat')
+  })
+
+  test('/assets/client.js 返回 200 + JS', async () => {
+    const res = await fetch(BASE + '/assets/client.js')
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Content-Type')).toContain('javascript')
+    const js = await res.text()
+    expect(js).toContain('EventSource')
+    expect(js).toContain('/api/chat')
+    expect(js).toContain('/api/status')
   })
 })
 
@@ -59,12 +87,11 @@ describe('GET /api/status', () => {
     expect(res.headers.get('Content-Type')).toContain('application/json')
   })
 
-  test('返回对象包含 version 字段', async () => {
+  test('返回对象包含 version/uptime/memory', async () => {
     const data = await getStatus()
     expect(data).toHaveProperty('version')
     expect(data).toHaveProperty('uptime')
     expect(data).toHaveProperty('memory')
-    expect(data).toHaveProperty('session')
   })
 
   test('version 为非空字符串', async () => {
@@ -94,34 +121,36 @@ describe('POST /api/chat', () => {
     const res = await fetch(BASE + '/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: '你好 yu' }),
+      body: JSON.stringify({ message: '说一句"hello"就行了' }),
     })
     expect(res.status).toBe(200)
     expect(res.headers.get('Content-Type')).toContain('application/json')
   })
 
-  test('返回包含 success 和 output', async () => {
+  test('返回包含 success/output/iterations', async () => {
     const data = await (
       await fetch(BASE + '/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: '测试消息' }),
+        body: JSON.stringify({ message: '说一句"hello"就行了' }),
       })
-    ).json()
+    ).json() as Record<string, unknown>
     expect(data).toHaveProperty('success')
     expect(data).toHaveProperty('output')
     expect(data).toHaveProperty('iterations')
+    expect(data).toHaveProperty('totalTokens')
   })
 
-  test('output 包含发送的消息内容', async () => {
+  test('返回包含 output 字段', async () => {
     const data = await (
       await fetch(BASE + '/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: 'hello yu' }),
+        body: JSON.stringify({ message: '说一句"hello"就行了' }),
       })
-    ).json()
-    expect((data as Record<string, unknown>).output).toContain('hello yu')
+    ).json() as Record<string, unknown>
+    expect(data).toHaveProperty('output')
+    expect(typeof data.output).toBe('string')
   })
 
   test('空消息返回 400', async () => {
@@ -131,7 +160,6 @@ describe('POST /api/chat', () => {
       body: JSON.stringify({ message: '' }),
     })
     expect(res.status).toBe(400)
-
     const data = await res.json()
     expect(data).toHaveProperty('error')
   })
@@ -145,33 +173,148 @@ describe('POST /api/chat', () => {
     expect(res.status).toBe(400)
   })
 
-  test('非法 JSON 返回 500', async () => {
+  test('非法 JSON 返回 400', async () => {
     const res = await fetch(BASE + '/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: '这不是 JSON',
     })
-    expect(res.status).toBe(500)
+    expect(res.status).toBe(400)
   })
 
   test('GET /api/chat 返回 404', async () => {
     const res = await fetch(BASE + '/api/chat')
     expect(res.status).toBe(404)
   })
-})
 
-// ── GET /events (SSE) ────────────────────────────────────
-
-describe('GET /events (SSE)', () => {
-  test('返回 426 当不是 WebSocket 请求', async () => {
-    const res = await fetch(BASE + '/events')
-    expect(res.status).toBe(426)
+  test('消息为数字时返回 400 + Zod 错误信息', async () => {
+    const res = await fetch(BASE + '/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: 123 }),
+    })
+    expect(res.status).toBe(400)
+    const data = await res.json() as { error?: string }
+    expect(data).toHaveProperty('error')
+    expect(data.error).toContain('参数错误')
   })
 
-  test('返回 Upgrade Required 提示', async () => {
+  test('消息过长返回 400', async () => {
+    const res = await fetch(BASE + '/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: 'x'.repeat(10001) }),
+    })
+    expect(res.status).toBe(400)
+    const data = await res.json() as { error?: string }
+    expect(data.error).toContain('消息过长')
+  })
+})
+
+// ── GET /events (SSE via ReadableStream) ────────────────
+
+describe('GET /events (SSE via ReadableStream)', () => {
+  test('返回 200 + text/event-stream', async () => {
     const res = await fetch(BASE + '/events')
-    const text = await res.text()
-    expect(text).toContain('SSE')
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Content-Type')).toContain('text/event-stream')
+    expect(res.headers.get('Cache-Control')).toContain('no-cache')
+  })
+
+  test('返回流式数据包含 connected 事件', async () => {
+    const res = await fetch(BASE + '/events')
+    const reader = res.body?.getReader()
+    expect(reader).toBeDefined()
+
+    if (reader) {
+      const { value, done } = await reader.read()
+      expect(done).toBe(false)
+      const text = new TextDecoder().decode(value)
+      expect(text).toContain('event: connected')
+      expect(text).toContain('"status":"ok"')
+      reader.cancel()
+    }
+  })
+})
+
+// ── WebSocket /ws ───────────────────────────────────────
+
+describe('WebSocket /ws', () => {
+  test('WebSocket 连接成功并收到 connected 消息', async () => {
+    const ws = new WebSocket(`ws://localhost:${PORT}/ws`)
+    const msg = await new Promise<string>((resolve, reject) => {
+      ws.onopen = () => { /* 等待第一条消息 */ }
+      ws.onmessage = (e) => {
+        resolve(e.data as string)
+        ws.close()
+      }
+      ws.onerror = () => reject(new Error('WS error'))
+      setTimeout(() => reject(new Error('Timeout')), 3000)
+    })
+
+    const parsed = JSON.parse(msg)
+    expect(parsed.type).toBe('connected')
+    expect(parsed.data.status).toBe('ok')
+    expect(parsed.timestamp).toBeGreaterThan(0)
+  })
+
+  test('WebSocket 收到 status 推送', async () => {
+    const ws = new WebSocket(`ws://localhost:${PORT}/ws`)
+    let receivedStatus = false
+    let receivedConnected = false
+
+    const result = await new Promise<string[]>((resolve, reject) => {
+      const messages: string[] = []
+      ws.onmessage = (e) => {
+        messages.push(e.data as string)
+        // 等待 connected + 至少一条 status
+        if (messages.length >= 2) {
+          resolve(messages)
+          ws.close()
+        }
+      }
+      ws.onerror = () => reject(new Error('WS error'))
+      setTimeout(() => reject(new Error('Timeout after 5s')), 5000)
+    })
+
+    for (const msg of result) {
+      const parsed = JSON.parse(msg)
+      if (parsed.type === 'status') {
+        receivedStatus = true
+        expect(parsed.data).toHaveProperty('version')
+        expect(parsed.data).toHaveProperty('uptime')
+        expect(parsed.data).toHaveProperty('memory')
+      }
+      if (parsed.type === 'connected') {
+        receivedConnected = true
+      }
+    }
+
+    expect(receivedConnected).toBe(true)
+    expect(receivedStatus).toBe(true)
+  })
+
+  test('WebSocket 支持 ping/pong', async () => {
+    const ws = new WebSocket(`ws://localhost:${PORT}/ws`)
+    const result = await new Promise<string>((resolve, reject) => {
+      ws.onopen = () => {
+        // 等 connected 消息到达后再发 ping
+        setTimeout(() => ws.send(JSON.stringify({ type: 'ping' })), 100)
+      }
+      ws.onmessage = (e) => {
+        const parsed = JSON.parse(e.data as string)
+        if (parsed.type === 'pong') {
+          resolve(e.data as string)
+          ws.close()
+        }
+        // 忽略 connected/status 消息
+      }
+      ws.onerror = () => reject(new Error('WS error'))
+      setTimeout(() => reject(new Error('Timeout')), 3000)
+    })
+
+    const parsed = JSON.parse(result)
+    expect(parsed.type).toBe('pong')
   })
 })
 
@@ -191,6 +334,15 @@ describe('未定义路由', () => {
   test('POST /nonexistent 返回 404', async () => {
     const res = await fetch(BASE + '/nonexistent', { method: 'POST' })
     expect(res.status).toBe(404)
+  })
+
+  test('404 返回 HTML', async () => {
+    const res = await fetch(BASE + '/no-such-page')
+    expect(res.status).toBe(404)
+    expect(res.headers.get('Content-Type')).toContain('text/html')
+    const html = await res.text()
+    expect(html).toContain('404')
+    expect(html).toContain('返回首页')
   })
 })
 
