@@ -94,7 +94,7 @@ export async function sendMessage(
   teamRunId: string,
   context: { isLead: boolean; activeMembers: string[] },
 ): Promise<{ messageId: string; deliveredTo: string[] }> {
-  const payloadBytes = Buffer.byteLength(message.body, 'utf-8')
+  const payloadBytes = new TextEncoder().encode(message.body).length
   if (payloadBytes > 32 * 1024) throw new PayloadTooLargeError()
 
   if (message.to === '*' && !context.isLead) {
@@ -106,7 +106,7 @@ export async function sendMessage(
 
   const deliveredTo: string[] = []
   const serialized = `${JSON.stringify(message, null, 2)}\n`
-  const msgBytes = Buffer.byteLength(serialized, 'utf-8')
+  const msgBytes = new TextEncoder().encode(serialized).length
 
   for (const recipient of recipients) {
     const inboxDir = getInboxDir(baseDir, teamRunId, recipient)

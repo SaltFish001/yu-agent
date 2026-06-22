@@ -145,9 +145,9 @@ export interface McpTransportConfig {
   env?: Record<string, string>
 }
 
-// ── Roles ────────────────────────────────────────────────
+// ── Rules ────────────────────────────────────────────────
 
-export interface RoleCapability {
+export interface RuleCapability {
   allowTools?: string[]
   denyTools?: string[]
   maxToolCalls?: number
@@ -155,7 +155,7 @@ export interface RoleCapability {
   maxTokens?: number
 }
 
-export interface RoleDef {
+export interface RuleDef {
   name: string
   description?: string
   extend?: string[]
@@ -163,7 +163,7 @@ export interface RoleDef {
   model?: string
   thinking?: 'none' | 'low' | 'high' | 'max'
   maxTurns?: number
-  capabilities?: RoleCapability
+  capabilities?: RuleCapability
 }
 
 // ── Skills ───────────────────────────────────────────────

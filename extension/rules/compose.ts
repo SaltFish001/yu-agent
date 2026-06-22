@@ -1,8 +1,8 @@
 /**
- * yu-agent — Role composition (multi-role merge)
+ * yu-agent — Rule composition (multi-rule merge)
  *
- * Supports the `extend` field on RoleDef: a role can extend one or more
- * parent roles, inheriting and merging their settings. Child settings
+ * Supports the `extend` field on RuleDef: a rule can extend one or more
+ * parent rules, inheriting and merging their settings. Child settings
  * take precedence over parent settings.
  *
  * Merge rules (child wins):
@@ -18,14 +18,14 @@
  */
 
 import { createLogger } from '../logger.js'
-import type { RoleDef, RoleCapability } from '../types.js'
-import { getRole } from './registry.js'
+import type { RuleDef, RuleCapability } from '../types.js'
+import { getRule } from './registry.js'
 
-const log = createLogger('roles:compose')
+const log = createLogger('rules:compose')
 
 // ── Merge helper ───────────────────────────────────────
 
-function mergeCapabilities(parent: RoleCapability, child: RoleCapability): RoleCapability {
+function mergeCapabilities(parent: RuleCapability, child: RuleCapability): RuleCapability {
   return {
     // Union: parent tools + child tools
     allowTools: [
@@ -52,7 +52,7 @@ function mergeCapabilities(parent: RoleCapability, child: RoleCapability): RoleC
   }
 }
 
-function mergeRoles(parent: RoleDef, child: RoleDef): RoleDef {
+function mergeRules(parent: RuleDef, child: RuleDef): RuleDef {
   return {
     name: child.name,
     description: child.description ?? parent.description,
@@ -74,76 +74,76 @@ function mergeRoles(parent: RoleDef, child: RoleDef): RoleDef {
 // ── Public API ─────────────────────────────────────────
 
 /**
- * Resolve a role with its full inheritance chain.
+ * Resolve a rule with its full inheritance chain.
  *
- * Walks the `extend` array recursively, merging ancestor roles
+ * Walks the `extend` array recursively, merging ancestor rules
  * bottom-up (furthest ancestor first), then applying the child on top.
  *
- * @param roleName - The name of the role to resolve
- * @param roleMap - Optional pre-loaded map of roles (avoids repeated scans)
+ * @param ruleName - The name of the rule to resolve
+ * @param ruleMap - Optional pre-loaded map of rules (avoids repeated scans)
  * @param visited - Internal: prevents circular dependency loops
  */
-export async function resolveRole(
-  roleName: string,
-  roleMap?: Map<string, RoleDef>,
+export async function resolveRule(
+  ruleName: string,
+  ruleMap?: Map<string, RuleDef>,
   visited?: Set<string>,
-): Promise<RoleDef | undefined> {
-  if (visited?.has(roleName)) {
-    log.warn(`Circular role dependency detected: ${roleName}`)
+): Promise<RuleDef | undefined> {
+  if (visited?.has(ruleName)) {
+    log.warn(`Circular rule dependency detected: ${ruleName}`)
     return undefined
   }
 
   const _visited = visited ?? new Set<string>()
-  _visited.add(roleName)
+  _visited.add(ruleName)
 
-  const role = roleMap?.get(roleName) ?? (await getRole(roleName))
-  if (!role) {
-    log.warn(`Role not found: ${roleName}`)
+  const rule = ruleMap?.get(ruleName) ?? (await getRule(ruleName))
+  if (!rule) {
+    log.warn(`Rule not found: ${ruleName}`)
     return undefined
   }
 
   // No parents → return as-is
-  if (!role.extend || role.extend.length === 0) {
-    return role
+  if (!rule.extend || rule.extend.length === 0) {
+    return rule
   }
 
   // Resolve parents (furthest ancestor first)
-  let merged: RoleDef | undefined
-  for (const parentName of role.extend) {
-    const parent = await resolveRole(parentName, roleMap, _visited)
+  let merged: RuleDef | undefined
+  for (const parentName of rule.extend) {
+    const parent = await resolveRule(parentName, ruleMap, _visited)
     if (parent) {
       if (!merged) {
         merged = parent
       } else {
         // Merge grandparent into accumulated parent
-        merged = mergeRoles(parent, merged)
+        merged = mergeRules(parent, merged)
       }
     }
   }
 
   // Apply child on top of merged parent
   if (merged) {
-    return mergeRoles(merged, role)
+    return mergeRules(merged, rule)
   }
 
   // No valid parents found
-  return role
+  return rule
 }
 
 /**
- * Compose multiple roles into a single effective role.
- * Useful when an agent has multiple applicable roles.
+ * Compose multiple rules into a single effective rule.
+ * Useful when an agent has multiple applicable rules.
  *
- * Roles are applied left-to-right: each subsequent role overrides
+ * Roles are applied left-to-right: each subsequent rule overrides
  * the previous one in the merge chain.
  */
-export async function composeRoles(roleNames: string[]): Promise<RoleDef | undefined> {
-  if (roleNames.length === 0) return undefined
-  if (roleNames.length === 1) return resolveRole(roleNames[0])
+export async function composeRules(ruleNames: string[]): Promise<RuleDef | undefined> {
+  if (ruleNames.length === 0) return undefined
+  if (ruleNames.length === 1) return resolveRule(ruleNames[0])
 
-  let composed: RoleDef | undefined
-  for (const name of roleNames) {
-    const resolved = await resolveRole(name)
+  let composed: RuleDef | undefined
+  for (const name of ruleNames) {
+    const resolved = await resolveRule(name)
     if (!resolved) {
       log.warn(`Role "${name}" not found, skipping in composition.`)
       continue
@@ -151,7 +151,7 @@ export async function composeRoles(roleNames: string[]): Promise<RoleDef | undef
     if (!composed) {
       composed = { ...resolved }
     } else {
-      composed = mergeRoles(composed, resolved)
+      composed = mergeRules(composed, resolved)
     }
   }
 

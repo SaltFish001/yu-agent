@@ -252,7 +252,7 @@ export class Supervisor {
 
     // ── Ping child to confirm it's alive ──
     // Give the child a short moment to boot up before sending ping
-    setImmediate(async () => {
+    setTimeout(async () => {
       try {
         sendToChild(child, 'ping')
         await waitForMessage(child, 'pong', cfg.spawning_timeout ?? 30_000)

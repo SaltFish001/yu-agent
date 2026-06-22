@@ -179,10 +179,10 @@ export function readProcessOutput(pid: number): string {
   let fd: number | undefined
   try {
     fd = openSync(stdoutPath, 'r')
-    const buf = Buffer.alloc(READ_BUF_SIZE)
+    const buf = new Uint8Array(READ_BUF_SIZE)
     const bytesRead = readSync(fd, buf, 0, READ_BUF_SIZE, 0)
     if (bytesRead <= 0) return ''
-    return buf.toString('utf-8', 0, bytesRead)
+    return new TextDecoder().decode(buf.subarray(0, bytesRead))
   } finally {
     if (fd !== undefined) closeSync(fd)
   }
@@ -234,11 +234,11 @@ export function watchProcessOutput(pid: number, callback: (output: TerminalOutpu
     }
 
     try {
-      const buf = Buffer.alloc(READ_BUF_SIZE)
+      const buf = new Uint8Array(READ_BUF_SIZE)
       const bytesRead = readSync(fd!, buf, 0, READ_BUF_SIZE, lastOffset)
 
       if (bytesRead > 0) {
-        const text = buf.toString('utf-8', 0, bytesRead)
+        const text = new TextDecoder().decode(buf.subarray(0, bytesRead))
         lastOffset += bytesRead
         lastFlush = Date.now()
 

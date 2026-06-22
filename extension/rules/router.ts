@@ -1,30 +1,30 @@
 /**
- * yu-agent — Role router
+ * yu-agent — Rule router
  *
- * Filters available tools based on the active role's capabilities.
+ * Filters available tools based on the active rule's capabilities.
  * Integrates with ToolRegistry to restrict which tools can be called
- * by a given role.
+ * by a given rule.
  */
 
 import { createLogger } from '../logger.js'
-import type { RoleDef, RoleCapability } from '../types.js'
+import type { RuleDef, RuleCapability } from '../types.js'
 import { listTools, type ToolDefinition } from '../tools/registry.js'
 
-const log = createLogger('roles:router')
+const log = createLogger('rules:router')
 
 // ── Tool filtering ─────────────────────────────────────
 
 /**
- * Filter tools based on a role's capabilities.
+ * Filter tools based on a rule's capabilities.
  *
  * Logic:
- * 1. If role has no capabilities, all tools are allowed.
+ * 1. If rule has no capabilities, all tools are allowed.
  * 2. If allowTools is specified, only those tools are included.
  * 3. If denyTools is specified, those tools are excluded.
  * 4. denyTools takes precedence over allowTools.
  */
-export function filterToolsForRole(role: RoleDef): ToolDefinition[] {
-  const caps = role.capabilities
+export function filterToolsForRule(rule: RuleDef): ToolDefinition[] {
+  const caps = rule.capabilities
   if (!caps) {
     // No capability constraints — return all tools
     return listTools()
@@ -49,21 +49,21 @@ export function filterToolsForRole(role: RoleDef): ToolDefinition[] {
 }
 
 /**
- * Check if a specific tool is allowed for a given role.
+ * Check if a specific tool is allowed for a given rule.
  * Returns { allowed: boolean; reason?: string }.
  */
-export function isToolAllowedForRole(
+export function isToolAllowedForRule(
   toolName: string,
-  role: RoleDef,
+  rule: RuleDef,
 ): { allowed: boolean; reason?: string } {
-  const caps = role.capabilities
+  const caps = rule.capabilities
   if (!caps) {
     return { allowed: true }
   }
 
   // denyTools takes precedence
   if (caps.denyTools && caps.denyTools.includes(toolName)) {
-    return { allowed: false, reason: `Tool "${toolName}" is denied by role "${role.name}"` }
+    return { allowed: false, reason: `Tool "${toolName}" is denied by rule "${rule.name}"` }
   }
 
   // allowTools constraint
@@ -71,7 +71,7 @@ export function isToolAllowedForRole(
     if (!caps.allowTools.includes(toolName)) {
       return {
         allowed: false,
-        reason: `Tool "${toolName}" is not in allow list for role "${role.name}". Allowed: ${caps.allowTools.join(', ')}`,
+        reason: `Tool "${toolName}" is not in allow list for rule "${rule.name}". Allowed: ${caps.allowTools.join(', ')}`,
       }
     }
   }
@@ -80,14 +80,14 @@ export function isToolAllowedForRole(
 }
 
 /**
- * Get tool schemas filtered for a role — used by AgentLoop
+ * Get tool schemas filtered for a rule — used by AgentLoop
  * to present only allowed tools to the LLM.
  */
-export function getToolSchemasForRole(role: RoleDef): Array<{
+export function getToolSchemasForRule(rule: RuleDef): Array<{
   type: 'function'
   function: { name: string; description: string; parameters: Record<string, unknown> }
 }> {
-  const tools = filterToolsForRole(role)
+  const tools = filterToolsForRule(rule)
   return tools.map((t) => ({
     type: 'function' as const,
     function: {
@@ -99,15 +99,15 @@ export function getToolSchemasForRole(role: RoleDef): Array<{
 }
 
 /**
- * Get max tool calls for a role (from capabilities or default).
+ * Get max tool calls for a rule (from capabilities or default).
  */
-export function getMaxToolCalls(role?: RoleDef): number {
-  return role?.capabilities?.maxToolCalls ?? 50
+export function getMaxToolCalls(rule?: RuleDef): number {
+  return rule?.capabilities?.maxToolCalls ?? 50
 }
 
 /**
- * Get max tokens for a role (from capabilities or default).
+ * Get max tokens for a rule (from capabilities or default).
  */
-export function getMaxTokensForRole(role?: RoleDef): number {
-  return role?.capabilities?.maxTokens ?? 8192
+export function getMaxTokensForRule(rule?: RuleDef): number {
+  return rule?.capabilities?.maxTokens ?? 8192
 }

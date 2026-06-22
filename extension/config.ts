@@ -22,11 +22,11 @@ import { MCP_CONFIG_PATH, PROMPTS_DIR, YU_HOME } from './paths.js'
 const McpServerConfigSchema = z.object({
   command: z.string().min(1, 'command is required'),
   args: z.array(z.string()).optional(),
-  env: z.record(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
 })
 
 const McpConfigSchema = z.object({
-  servers: z.record(McpServerConfigSchema),
+  servers: z.record(z.string(), McpServerConfigSchema),
 })
 
 export type McpConfig = z.infer<typeof McpConfigSchema>

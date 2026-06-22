@@ -1,41 +1,34 @@
 /**
- * yu-agent — Role registry
+ * yu-agent — Rule registry
  *
- * Scans ~/.yu/roles/*.yaml and ~/.yu/roles/*.ts for role definitions.
- * Loads and caches RoleDef objects for use by the router and compose modules.
+ * 三作用域扫描：全局 /etc/yu/rules/ → 用户 ~/.yu/rules/ → 项目 .yu/rules/
+ * 优先级：项目 > 用户 > 全局（同名覆盖）
  */
 
 import { createLogger } from '../logger.js'
-import type { RoleDef } from '../types.js'
-import { existsSync, readFileSync, readdirSync } from 'fs'
+import type { RuleDef } from '../types.js'
+import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
-import { homedir } from 'os'
+import { scanScopeFiles, ensureScopeDirs } from '../scope.js'
 
-const log = createLogger('roles:registry')
-
-// ── Constants ──────────────────────────────────────────
-
-const ROLES_DIR = resolve(homedir(), '.yu', 'roles')
+const log = createLogger('rules:registry')
 
 // ── In-memory cache ────────────────────────────────────
 
-const _roles = new Map<string, RoleDef>()
+const _rules = new Map<string, RuleDef>()
 
 // ── Simple YAML parser (no external dep) ───────────────
 // Stack-based approach to handle nested maps and lists.
 
-function parseYamlRoles(content: string): RoleDef[] {
-  const results: RoleDef[] = []
+function parseYamlRules(content: string): RuleDef[] {
+  const results: RuleDef[] = []
   const docs = content.split(/^---\s*$/m).filter(Boolean)
 
   for (const doc of docs) {
     const lines = doc.split('\n')
     const root: Record<string, unknown> = {}
 
-    // Stack of { obj, indent } — the current object at each indent level
     const stack: Array<{ obj: Record<string, unknown>; indent: number }> = [{ obj: root, indent: -1 }]
-    // Track the most recent key that had no value (expecting list or nested map)
-    // Stores { parentObj, key, indent } so we can set lists on the parent.
     let pending: { parent: Record<string, unknown>; key: string; indent: number } | null = null
 
     for (const raw of lines) {
@@ -45,34 +38,23 @@ function parseYamlRoles(content: string): RoleDef[] {
       const indent = line.search(/\S/)
       const trimmed = line.trim()
 
-      // List item
       if (trimmed.startsWith('- ')) {
         const itemVal = parseYamlValue(trimmed.slice(2).trim())
-
-        // Pop stack to find the right parent
         while (stack.length > 1 && stack[stack.length - 1].indent >= indent) {
           stack.pop()
         }
-
         const currentObj = stack[stack.length - 1].obj
-
-        // If we have a pending key at a lower indent, use it to set/append to parent
         if (pending && indent > pending.indent) {
           const existing = pending.parent[pending.key]
           if (Array.isArray(existing)) {
             existing.push(itemVal)
           } else {
             pending.parent[pending.key] = [itemVal]
-            // Pop the nested object from stack — it was replaced by the array
-            if (stack.length > 1) {
-              stack.pop()
-            }
+            if (stack.length > 1) stack.pop()
           }
           pending = null
           continue
         }
-
-        // Find the most recent key on currentObj that has an array value
         const keys = Object.keys(currentObj)
         for (let i = keys.length - 1; i >= 0; i--) {
           const val = currentObj[keys[i]]
@@ -85,7 +67,6 @@ function parseYamlRoles(content: string): RoleDef[] {
         continue
       }
 
-      // Regular key:value line
       pending = null
       const colonIdx = trimmed.indexOf(':')
       if (colonIdx === -1) continue
@@ -93,21 +74,15 @@ function parseYamlRoles(content: string): RoleDef[] {
       const key = trimmed.slice(0, colonIdx).trim()
       const val = trimmed.slice(colonIdx + 1).trim()
 
-      // Pop stack to find the right parent for this indent
       while (stack.length > 1 && stack[stack.length - 1].indent >= indent) {
         stack.pop()
       }
-
       const currentObj = stack[stack.length - 1].obj
 
       if (val) {
-        // Scalar value
         currentObj[key] = parseYamlValue(val)
       } else {
-        // No value — could be nested object or list parent
-        // Remember parent for potential list items
         pending = { parent: currentObj, key, indent }
-        // Push an empty object for potential sub-keys
         const nested: Record<string, unknown> = {}
         currentObj[key] = nested
         stack.push({ obj: nested, indent })
@@ -115,7 +90,7 @@ function parseYamlRoles(content: string): RoleDef[] {
     }
 
     if (root.name) {
-      const def = yamlToRoleDef(root)
+      const def = yamlToRuleDef(root)
       if (def) results.push(def)
     }
   }
@@ -129,14 +104,13 @@ function parseYamlValue(val: string): unknown {
   if (val === 'null' || val === '~') return null
   if (/^\d+$/.test(val)) return parseInt(val, 10)
   if (/^\d+\.\d+$/.test(val)) return parseFloat(val)
-  // Remove surrounding quotes
   if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
     return val.slice(1, -1)
   }
   return val
 }
 
-function yamlToRoleDef(raw: Record<string, unknown>): RoleDef | null {
+function yamlToRuleDef(raw: Record<string, unknown>): RuleDef | null {
   const name = String(raw.name ?? '')
   if (!name) return null
 
@@ -148,7 +122,7 @@ function yamlToRoleDef(raw: Record<string, unknown>): RoleDef | null {
     extend: raw.extend ? (raw.extend as string[]) : undefined,
     systemPrompt: raw.systemPrompt ? String(raw.systemPrompt) : undefined,
     model: raw.model ? String(raw.model) : undefined,
-    thinking: raw.thinking as RoleDef['thinking'] | undefined,
+    thinking: raw.thinking as RuleDef['thinking'] | undefined,
     maxTurns: raw.maxTurns ? Number(raw.maxTurns) : undefined,
     capabilities: caps
       ? {
@@ -164,53 +138,37 @@ function yamlToRoleDef(raw: Record<string, unknown>): RoleDef | null {
 
 // ── Loader ─────────────────────────────────────────────
 
-function ensureRolesDir(): void {
-  if (!existsSync(ROLES_DIR)) {
-    try {
-      const { mkdirSync } = require('fs')
-      mkdirSync(ROLES_DIR, { recursive: true })
-    } catch {
-      // Best-effort
-    }
-  }
-}
-
-async function loadRoleFromFile(filePath: string): Promise<RoleDef | null> {
+async function loadRuleFromFile(filePath: string): Promise<RuleDef | null> {
   try {
     const ext = filePath.split('.').pop()?.toLowerCase()
 
     if (ext === 'ts' || ext === 'mts') {
-      // Dynamic import for TypeScript files
       const mod = await import(filePath)
       const exported = mod.default || mod
       if (exported && typeof exported === 'object' && exported.name) {
-        return exported as RoleDef
+        return exported as RuleDef
       }
       return null
     }
 
     if (ext === 'yaml' || ext === 'yml') {
       const content = readFileSync(filePath, 'utf-8')
-      const roles = parseYamlRoles(content)
-      return roles[0] ?? null
+      const rules = parseYamlRules(content)
+      return rules[0] ?? null
     }
 
     if (ext === 'json') {
       const content = readFileSync(filePath, 'utf-8')
       const parsed = JSON.parse(content)
-      if (Array.isArray(parsed)) {
-        return parsed[0] ?? null
-      }
-      if (parsed.name) {
-        return parsed as RoleDef
-      }
+      if (Array.isArray(parsed)) return parsed[0] ?? null
+      if (parsed.name) return parsed as RuleDef
       return null
     }
 
-    log.warn(`Unsupported role file format: ${filePath}`)
+    log.warn(`Unsupported rule file format: ${filePath}`)
     return null
   } catch (err) {
-    log.error(`Failed to load role from ${filePath}:`, err instanceof Error ? err.message : String(err))
+    log.error(`Failed to load rule from ${filePath}:`, err instanceof Error ? err.message : String(err))
     return null
   }
 }
@@ -218,55 +176,44 @@ async function loadRoleFromFile(filePath: string): Promise<RoleDef | null> {
 // ── Public API ─────────────────────────────────────────
 
 /**
- * Scan the roles directory and load all role definitions.
- * Caches results; call refreshRoles() to re-scan.
+ * 从三作用域扫描并加载所有 rule 定义。
+ * 项目级优先于用户级，用户级优先于全局级（同名覆盖）。
  */
-export async function scanRoles(): Promise<Map<string, RoleDef>> {
-  ensureRolesDir()
-  _roles.clear()
+export async function scanRules(): Promise<Map<string, RuleDef>> {
+  ensureScopeDirs('rules')
+  _rules.clear()
 
-  if (!existsSync(ROLES_DIR)) {
-    log.warn(`Roles directory not found: ${ROLES_DIR}`)
-    return _roles
-  }
-
-  const files = readdirSync(ROLES_DIR).filter(
-    (f) => f.endsWith('.yaml') || f.endsWith('.yml') || f.endsWith('.ts') || f.endsWith('.mts') || f.endsWith('.json'),
-  )
+  const files = scanScopeFiles('rules', ['.yaml', '.yml', '.ts', '.mts', '.json'])
 
   for (const file of files) {
-    const filePath = resolve(ROLES_DIR, file)
-    const role = await loadRoleFromFile(filePath)
-    if (role) {
-      if (_roles.has(role.name)) {
-        log.warn(`Duplicate role name "${role.name}" from ${file}, overwriting.`)
-      }
-      _roles.set(role.name, role)
-      log.info(`Loaded role: ${role.name} from ${file}`)
+    const rule = await loadRuleFromFile(file.path)
+    if (rule) {
+      _rules.set(rule.name, rule)
+      log.info(`Loaded rule: ${rule.name} (${file.scope}:${file.name})`)
     }
   }
 
-  return _roles
+  return _rules
 }
 
-/** Get a role by name (lazy-loads cache on first call). */
-export async function getRole(name: string): Promise<RoleDef | undefined> {
-  if (_roles.size === 0) {
-    await scanRoles()
+/** Get a rule by name (lazy-loads cache on first call). */
+export async function getRule(name: string): Promise<RuleDef | undefined> {
+  if (_rules.size === 0) {
+    await scanRules()
   }
-  return _roles.get(name)
+  return _rules.get(name)
 }
 
-/** List all loaded roles. */
-export async function listRoles(): Promise<RoleDef[]> {
-  if (_roles.size === 0) {
-    await scanRoles()
+/** List all loaded rules. */
+export async function listRules(): Promise<RuleDef[]> {
+  if (_rules.size === 0) {
+    await scanRules()
   }
-  return Array.from(_roles.values())
+  return Array.from(_rules.values())
 }
 
-/** Force re-scan the roles directory. */
-export async function refreshRoles(): Promise<void> {
-  _roles.clear()
-  await scanRoles()
+/** Force re-scan all scope directories. */
+export async function refreshRules(): Promise<void> {
+  _rules.clear()
+  await scanRules()
 }

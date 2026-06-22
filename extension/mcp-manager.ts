@@ -23,8 +23,7 @@ import { createLogger } from './logger.js'
 
 const log = createLogger('mcp-manager')
 
-import { existsSync, readFileSync } from 'fs'
-import { MCP_CONFIG_PATH } from './paths.js'
+import { mergeJsonConfig } from './scope.js'
 import { type MCPServerStatus, writeMCPStatus } from './status.js'
 import { McpTransport } from './mcp/transport.js'
 import { StdioTransport } from './mcp/transport-stdio.js'
@@ -418,19 +417,22 @@ function pingAll(): void {
   }
 }
 
-// ── 配置读取 ──────────────────────────────────────────
+// ── 配置读取（三作用域合并） ─────────────────────────────
 
 function loadConfig(): McpConfig {
-  if (!existsSync(MCP_CONFIG_PATH)) {
-    return { servers: {} }
+  const merged = mergeJsonConfig<{ servers: Record<string, unknown> }>('mcp.config.json')
+  const servers: McpConfig['servers'] = {}
+
+  if (merged.servers && typeof merged.servers === 'object') {
+    for (const [name, cfg] of Object.entries(merged.servers)) {
+      const c = cfg as Record<string, unknown>
+      if (typeof c === 'object' && c !== null && typeof c.command === 'string') {
+        servers[name] = c as McpConfig['servers'][string]
+      }
+    }
   }
-  try {
-    const raw = readFileSync(MCP_CONFIG_PATH, 'utf-8')
-    return JSON.parse(raw) as McpConfig
-  } catch (err) {
-    log.warn(`Failed to parse ${MCP_CONFIG_PATH}`, err)
-    return { servers: {} }
-  }
+
+  return { servers }
 }
 
 // ── 公共 API ──────────────────────────────────────────

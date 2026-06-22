@@ -1,47 +1,34 @@
 /**
  * yu-agent — 动态工具加载器
  *
- * 扫描 ~/.yu/tools/ 目录下的 .ts/.js 文件，自动注册为工具。
- * 每个文件应默认导出一个 ToolDefinition 或 ToolDefinition[]。
+ * 三作用域扫描：全局 /etc/yu/tools/ → 用户 ~/.yu/tools/ → 项目 .yu/tools/
+ * 优先级：项目 > 用户 > 全局（同名覆盖）
  */
 
-import { existsSync, mkdirSync, readdirSync } from 'fs'
-import { resolve } from 'path'
-import { homedir } from 'os'
 import { createLogger } from '../logger.js'
 import { registerTool } from './registry.js'
 import type { ToolDefinition } from './registry.js'
+import { scanScopeFiles, ensureScopeDirs } from '../scope.js'
 
 const log = createLogger('tool-loader')
 
-const TOOLS_DIR = resolve(homedir(), '.yu', 'tools')
-
-/** 确保工具目录存在 */
-export function ensureToolsDir(): string {
-  if (!existsSync(TOOLS_DIR)) {
-    mkdirSync(TOOLS_DIR, { recursive: true })
-    log.info(`Created tools directory: ${TOOLS_DIR}`)
-  }
-  return TOOLS_DIR
-}
-
-/** 扫描并加载所有用户工具 */
+/**
+ * 从三作用域扫描并加载所有用户工具（.ts/.js）。
+ * 项目级优先于用户级，用户级优先于全局级（同名覆盖）。
+ */
 export async function loadUserTools(): Promise<number> {
-  const dir = ensureToolsDir()
-  const files = readdirSync(dir).filter((f) => f.endsWith('.ts') || f.endsWith('.js'))
+  ensureScopeDirs('tools')
+  const files = scanScopeFiles('tools', ['.ts', '.js'])
 
   if (files.length === 0) {
-    log.info(`No user tools found in ${dir}`)
+    log.info('No user tools found in any scope')
     return 0
   }
 
   let count = 0
   for (const file of files) {
     try {
-      const filePath = resolve(dir, file)
-      const mod = await import(filePath)
-
-      // 支持导出单个工具或工具数组
+      const mod = await import(file.path)
       const tools: ToolDefinition[] = Array.isArray(mod.default)
         ? mod.default
         : mod.default
@@ -52,16 +39,17 @@ export async function loadUserTools(): Promise<number> {
         if (tool?.name) {
           registerTool(tool)
           count++
-          log.info(`Loaded user tool: ${tool.name} (from ${file})`)
+          log.info(`Loaded user tool: ${tool.name} (${file.scope}:${file.name})`)
         }
       }
     } catch (err) {
-      log.error(`Failed to load tool from ${file}`, {
+      log.error(`Failed to load tool from ${file.name}`, {
         error: err instanceof Error ? err.message : String(err),
+        scope: file.scope,
       })
     }
   }
 
-  log.info(`Loaded ${count} user tool(s) from ${files.length} file(s)`)
+  log.info(`Loaded ${count} user tool(s) from ${files.length} file(s) across all scopes`)
   return count
 }

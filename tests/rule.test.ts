@@ -1,7 +1,7 @@
 /**
  * Unit tests — Roles subsystem (registry, router, compose)
  *
- * Tests the role loading, tool filtering, and role composition logic.
+ * Tests the rule loading, tool filtering, and rule composition logic.
  */
 
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test'
@@ -9,40 +9,40 @@ import { mkdirSync, rmSync, writeFileSync, existsSync } from 'fs'
 import { resolve } from 'path'
 import { homedir } from 'os'
 
-const ROLES_DIR = resolve(homedir(), '.yu', 'roles')
+const RULES_DIR = resolve(homedir(), '.yu', 'rules')
 
 // ── Helpers ────────────────────────────────────────────
 
-async function cleanRolesDir(): Promise<void> {
-  if (existsSync(ROLES_DIR)) {
-    rmSync(ROLES_DIR, { recursive: true, force: true })
+async function cleanRulesDir(): Promise<void> {
+  if (existsSync(RULES_DIR)) {
+    rmSync(RULES_DIR, { recursive: true, force: true })
   }
-  mkdirSync(ROLES_DIR, { recursive: true })
+  mkdirSync(RULES_DIR, { recursive: true })
 }
 
-async function writeRoleFile(name: string, content: string): Promise<void> {
-  writeFileSync(resolve(ROLES_DIR, name), content, 'utf-8')
+async function writeRuleFile(name: string, content: string): Promise<void> {
+  writeFileSync(resolve(RULES_DIR, name), content, 'utf-8')
 }
 
 // ── Tests ──────────────────────────────────────────────
 
 describe('Role Registry', () => {
   beforeEach(async () => {
-    await cleanRolesDir()
+    await cleanRulesDir()
   })
 
   afterEach(async () => {
-    await cleanRolesDir()
+    await cleanRulesDir()
   })
 
-  it('scanRoles returns empty map when no role files exist', async () => {
-    const { scanRoles } = await import('../extension/roles/registry.js')
-    const roles = await scanRoles()
-    expect(roles.size).toBe(0)
+  it('scanRules returns empty map when no role files exist', async () => {
+    const { scanRules } = await import('../extension/rules/registry.js')
+    const rules = await scanRules()
+    expect(rules.size).toBe(0)
   })
 
   it('loads a role from a YAML file', async () => {
-    await writeRoleFile(
+    await writeRuleFile(
       'coder.yaml',
       `name: coder
 description: A coding agent
@@ -56,9 +56,9 @@ capabilities:
 `,
     )
 
-    const { scanRoles, getRole } = await import('../extension/roles/registry.js')
-    await scanRoles()
-    const role = await getRole('coder')
+    const { scanRules, getRule } = await import('../extension/rules/registry.js')
+    await scanRules()
+    const role = await getRule('coder')
     expect(role).toBeDefined()
     expect(role!.name).toBe('coder')
     expect(role!.description).toBe('A coding agent')
@@ -68,7 +68,7 @@ capabilities:
   })
 
   it('loads a role from a JSON file', async () => {
-    await writeRoleFile(
+    await writeRuleFile(
       'reviewer.json',
       JSON.stringify({
         name: 'reviewer',
@@ -80,52 +80,52 @@ capabilities:
       }),
     )
 
-    const { scanRoles, getRole } = await import('../extension/roles/registry.js')
-    await scanRoles()
-    const role = await getRole('reviewer')
+    const { scanRules, getRule } = await import('../extension/rules/registry.js')
+    await scanRules()
+    const role = await getRule('reviewer')
     expect(role).toBeDefined()
     expect(role!.name).toBe('reviewer')
     expect(role!.capabilities?.allowTools).toEqual(['read', 'grep'])
     expect(role!.capabilities?.denyTools).toEqual(['write', 'bash'])
   })
 
-  it('loads multiple roles from multiple files', async () => {
-    await writeRoleFile(
+  it('loads multiple rules from multiple files', async () => {
+    await writeRuleFile(
       'role1.yaml',
       `name: role1
 description: First role
 `,
     )
-    await writeRoleFile(
+    await writeRuleFile(
       'role2.yaml',
       `name: role2
 description: Second role
 `,
     )
 
-    const { scanRoles, listRoles } = await import('../extension/roles/registry.js')
-    await scanRoles()
-    const roles = await listRoles()
-    expect(roles.length).toBe(2)
-    const names = roles.map((r) => r.name).sort()
+    const { scanRules, listRules } = await import('../extension/rules/registry.js')
+    await scanRules()
+    const rules = await listRules()
+    expect(rules.length).toBe(2)
+    const names = rules.map((r) => r.name).sort()
     expect(names).toEqual(['role1', 'role2'])
   })
 
-  it('refreshRoles clears and reloads', async () => {
-    await writeRoleFile('r1.yaml', 'name: r1\n')
-    const { scanRoles, listRoles, refreshRoles } = await import('../extension/roles/registry.js')
-    await scanRoles()
-    expect((await listRoles()).length).toBe(1)
+  it('refreshRules clears and reloads', async () => {
+    await writeRuleFile('r1.yaml', 'name: r1\n')
+    const { scanRules, listRules, refreshRules } = await import('../extension/rules/registry.js')
+    await scanRules()
+    expect((await listRules()).length).toBe(1)
 
-    await writeRoleFile('r2.yaml', 'name: r2\n')
-    await refreshRoles()
-    expect((await listRoles()).length).toBe(2)
+    await writeRuleFile('r2.yaml', 'name: r2\n')
+    await refreshRules()
+    expect((await listRules()).length).toBe(2)
   })
 })
 
 describe('Role Router', () => {
   beforeEach(async () => {
-    await cleanRolesDir()
+    await cleanRulesDir()
     // Register some test tools
     const { registerTool } = await import('../extension/tools/registry.js')
 
@@ -145,26 +145,26 @@ describe('Role Router', () => {
   })
 
   afterEach(async () => {
-    await cleanRolesDir()
+    await cleanRulesDir()
   })
 
-  it('filterToolsForRole returns all tools when no capabilities', async () => {
-    const { filterToolsForRole } = await import('../extension/roles/router.js')
+  it('filterToolsForRule returns all tools when no capabilities', async () => {
+    const { filterToolsForRule } = await import('../extension/rules/router.js')
     const role = {
       name: 'unrestricted',
       capabilities: undefined,
     }
-    const tools = filterToolsForRole(role)
+    const tools = filterToolsForRule(role)
     expect(tools.length).toBeGreaterThanOrEqual(5)
   })
 
-  it('filterToolsForRole respects allowTools', async () => {
-    const { filterToolsForRole } = await import('../extension/roles/router.js')
+  it('filterToolsForRule respects allowTools', async () => {
+    const { filterToolsForRule } = await import('../extension/rules/router.js')
     const role = {
       name: 'reader',
       capabilities: { allowTools: ['read', 'grep'] },
     }
-    const tools = filterToolsForRole(role)
+    const tools = filterToolsForRule(role)
     const names = tools.map((t) => t.name)
     expect(names).toContain('read')
     expect(names).toContain('grep')
@@ -172,13 +172,13 @@ describe('Role Router', () => {
     expect(names).not.toContain('bash')
   })
 
-  it('filterToolsForRole respects denyTools', async () => {
-    const { filterToolsForRole } = await import('../extension/roles/router.js')
+  it('filterToolsForRule respects denyTools', async () => {
+    const { filterToolsForRule } = await import('../extension/rules/router.js')
     const role = {
       name: 'safe',
       capabilities: { denyTools: ['bash', 'write'] },
     }
-    const tools = filterToolsForRole(role)
+    const tools = filterToolsForRule(role)
     const names = tools.map((t) => t.name)
     expect(names).toContain('read')
     expect(names).toContain('grep')
@@ -187,7 +187,7 @@ describe('Role Router', () => {
   })
 
   it('denyTools takes precedence over allowTools', async () => {
-    const { filterToolsForRole } = await import('../extension/roles/router.js')
+    const { filterToolsForRule } = await import('../extension/rules/router.js')
     const role = {
       name: 'conflicted',
       capabilities: {
@@ -195,25 +195,25 @@ describe('Role Router', () => {
         denyTools: ['bash'],
       },
     }
-    const tools = filterToolsForRole(role)
+    const tools = filterToolsForRule(role)
     const names = tools.map((t) => t.name)
     expect(names).toContain('read')
     expect(names).toContain('write')
     expect(names).not.toContain('bash')
   })
 
-  it('isToolAllowedForRole returns correct results', async () => {
-    const { isToolAllowedForRole } = await import('../extension/roles/router.js')
+  it('isToolAllowedForRule returns correct results', async () => {
+    const { isToolAllowedForRule } = await import('../extension/rules/router.js')
     const role = { name: 'test', capabilities: { allowTools: ['read'], denyTools: ['bash'] } }
 
-    expect(isToolAllowedForRole('read', role).allowed).toBe(true)
-    expect(isToolAllowedForRole('bash', role).allowed).toBe(false)
-    expect(isToolAllowedForRole('write', role).allowed).toBe(false)
-    expect(isToolAllowedForRole('write', { name: 'free', capabilities: undefined }).allowed).toBe(true)
+    expect(isToolAllowedForRule('read', role).allowed).toBe(true)
+    expect(isToolAllowedForRule('bash', role).allowed).toBe(false)
+    expect(isToolAllowedForRule('write', role).allowed).toBe(false)
+    expect(isToolAllowedForRule('write', { name: 'free', capabilities: undefined }).allowed).toBe(true)
   })
 
   it('getMaxToolCalls returns default when not set', async () => {
-    const { getMaxToolCalls } = await import('../extension/roles/router.js')
+    const { getMaxToolCalls } = await import('../extension/rules/router.js')
     expect(getMaxToolCalls(undefined)).toBe(50)
     expect(getMaxToolCalls({ name: 'test', capabilities: { maxToolCalls: 10 } })).toBe(10)
   })
@@ -221,12 +221,12 @@ describe('Role Router', () => {
 
 describe('Role Compose', () => {
   beforeEach(async () => {
-    await cleanRolesDir()
+    await cleanRulesDir()
     // Refresh the role registry cache after cleaning
-    const { refreshRoles } = await import('../extension/roles/registry.js')
-    await refreshRoles()
-    // Write parent roles
-    await writeRoleFile(
+    const { refreshRules } = await import('../extension/rules/registry.js')
+    await refreshRules()
+    // Write parent rules
+    await writeRuleFile(
       'base.yaml',
       `name: base
 systemPrompt: Base system prompt
@@ -239,7 +239,7 @@ capabilities:
   maxTokens: 4096
 `,
     )
-    await writeRoleFile(
+    await writeRuleFile(
       'admin.yaml',
       `name: admin
 extend:
@@ -254,20 +254,20 @@ capabilities:
   })
 
   afterEach(async () => {
-    await cleanRolesDir()
+    await cleanRulesDir()
   })
 
-  it('resolveRole returns base role as-is (no extend)', async () => {
-    const { resolveRole } = await import('../extension/roles/compose.js')
-    const role = await resolveRole('base')
+  it('resolveRule returns base role as-is (no extend)', async () => {
+    const { resolveRule } = await import('../extension/rules/compose.js')
+    const role = await resolveRule('base')
     expect(role).toBeDefined()
     expect(role!.name).toBe('base')
     expect(role!.systemPrompt).toBe('Base system prompt')
   })
 
-  it('resolveRole merges extended role', async () => {
-    const { resolveRole } = await import('../extension/roles/compose.js')
-    const role = await resolveRole('admin')
+  it('resolveRule merges extended role', async () => {
+    const { resolveRule } = await import('../extension/rules/compose.js')
+    const role = await resolveRule('admin')
     expect(role).toBeDefined()
     expect(role!.name).toBe('admin')
     // Child systemPrompt overrides parent
@@ -280,8 +280,8 @@ capabilities:
     expect(role!.capabilities?.maxTokens).toBe(4096)
   })
 
-  it('composeRoles merges multiple roles left-to-right', async () => {
-    await writeRoleFile(
+  it('composeRules merges multiple rules left-to-right', async () => {
+    await writeRuleFile(
       'limited.yaml',
       `name: limited
 capabilities:
@@ -289,8 +289,8 @@ capabilities:
 `,
     )
 
-    const { composeRoles } = await import('../extension/roles/compose.js')
-    const composed = await composeRoles(['base', 'limited'])
+    const { composeRules } = await import('../extension/rules/compose.js')
+    const composed = await composeRules(['base', 'limited'])
     expect(composed).toBeDefined()
     expect(composed!.name).toBe('limited') // Last role's name wins
     // maxToolCalls: min of 50 and 5 = 5
@@ -298,14 +298,14 @@ capabilities:
   })
 
   it('handles circular dependency gracefully', async () => {
-    await writeRoleFile(
+    await writeRuleFile(
       'a.yaml',
       `name: a
 extend:
   - b
 `,
     )
-    await writeRoleFile(
+    await writeRuleFile(
       'b.yaml',
       `name: b
 extend:
@@ -313,11 +313,11 @@ extend:
 `,
     )
 
-    const { refreshRoles } = await import('../extension/roles/registry.js')
-    await refreshRoles()
-    const { resolveRole } = await import('../extension/roles/compose.js')
+    const { refreshRules } = await import('../extension/rules/registry.js')
+    await refreshRules()
+    const { resolveRule } = await import('../extension/rules/compose.js')
     // Should not throw; should return undefined or the role without cycling
-    const role = await resolveRole('a')
+    const role = await resolveRule('a')
     // Circular -> warns and returns undefined
     // It might resolve to the base level if one is found
     expect(role).toBeDefined()

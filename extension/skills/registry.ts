@@ -1,45 +1,24 @@
 /**
  * yu-agent — Skill registry
  *
- * Scans ~/.yu/skills/*.ts for skill files and loads them into
- * memory. Skills are TypeScript modules that export a LoadedSkill
- * (or a SkillDef) as their default export.
- *
- * Each skill file should export:
- *   export default { def: SkillDef, beforeIteration?, afterIteration? }
- * or just:
- *   export default SkillDef
+ * 三作用域扫描：全局 /etc/yu/skills/ → 用户 ~/.yu/skills/ → 项目 .yu/skills/
+ * 优先级：项目 > 用户 > 全局（同名覆盖）
  */
 
 import { createLogger } from '../logger.js'
 import type { SkillDef } from '../types.js'
 import type { LoadedSkill } from './types.js'
-import { existsSync, readdirSync } from 'fs'
+import { existsSync } from 'fs'
 import { resolve } from 'path'
-import { homedir } from 'os'
+import { scanScopeFiles, ensureScopeDirs } from '../scope.js'
 
 const log = createLogger('skills:registry')
-
-// ── Constants ──────────────────────────────────────────
-
-const SKILLS_DIR = resolve(homedir(), '.yu', 'skills')
 
 // ── In-memory cache ────────────────────────────────────
 
 const _skills = new Map<string, LoadedSkill>()
 
 // ── Loader ─────────────────────────────────────────────
-
-function ensureSkillsDir(): void {
-  if (!existsSync(SKILLS_DIR)) {
-    try {
-      const { mkdirSync } = require('fs')
-      mkdirSync(SKILLS_DIR, { recursive: true })
-    } catch {
-      // Best-effort
-    }
-  }
-}
 
 async function loadSkillFromFile(filePath: string): Promise<LoadedSkill | null> {
   try {
@@ -69,31 +48,20 @@ async function loadSkillFromFile(filePath: string): Promise<LoadedSkill | null> 
 // ── Public API ─────────────────────────────────────────
 
 /**
- * Scan the skills directory and load all skill definitions.
- * Caches results; call refreshSkills() to re-scan.
+ * 从三作用域扫描并加载所有 skill 定义。
+ * 项目级优先于用户级，用户级优先于全局级（同名覆盖）。
  */
 export async function scanSkills(): Promise<Map<string, LoadedSkill>> {
-  ensureSkillsDir()
+  ensureScopeDirs('skills')
   _skills.clear()
 
-  if (!existsSync(SKILLS_DIR)) {
-    log.warn(`Skills directory not found: ${SKILLS_DIR}`)
-    return _skills
-  }
-
-  const files = readdirSync(SKILLS_DIR).filter(
-    (f) => f.endsWith('.ts') || f.endsWith('.mts'),
-  )
+  const files = scanScopeFiles('skills', ['.ts', '.mts'])
 
   for (const file of files) {
-    const filePath = resolve(SKILLS_DIR, file)
-    const skill = await loadSkillFromFile(filePath)
+    const skill = await loadSkillFromFile(file.path)
     if (skill) {
-      if (_skills.has(skill.def.name)) {
-        log.warn(`Duplicate skill name "${skill.def.name}" from ${file}, overwriting.`)
-      }
       _skills.set(skill.def.name, skill)
-      log.info(`Loaded skill: ${skill.def.name} v${skill.def.version} from ${file}`)
+      log.info(`Loaded skill: ${skill.def.name} v${skill.def.version} (${file.scope}:${file.name})`)
     }
   }
 
@@ -116,7 +84,7 @@ export async function listSkills(): Promise<LoadedSkill[]> {
   return Array.from(_skills.values())
 }
 
-/** Force re-scan the skills directory. */
+/** Force re-scan all scope directories. */
 export async function refreshSkills(): Promise<void> {
   _skills.clear()
   await scanSkills()

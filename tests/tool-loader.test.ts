@@ -452,15 +452,23 @@ describe('Tool Loader — dynamic loading', () => {
     cleanupToolsDir()
   })
 
-  it('ensureToolsDir creates directory if missing', async () => {
+  it('tools directory auto-created on loadUserTools', async () => {
     if (existsSync(TOOLS_DIR)) {
       rmSync(TOOLS_DIR, { recursive: true, force: true })
     }
-    const { ensureToolsDir } = await import('../extension/tools/loader.js')
+    expect(existsSync(TOOLS_DIR)).toBe(false)
 
-    const dir = ensureToolsDir()
-    expect(existsSync(dir)).toBe(true)
-    expect(dir).toBe(TOOLS_DIR)
+    const { loadUserTools } = await import('../extension/tools/loader.js')
+    await loadUserTools()
+
+    // loadUserTools calls ensureScopeDirs which creates the dir
+    // We check either user or project scope dir exists
+    const { existsSync: es } = await import('fs')
+    const { resolve } = await import('path')
+    const { homedir } = await import('os')
+    const userDir = resolve(homedir(), '.yu', 'tools')
+    const projectDir = resolve(process.cwd(), '.yu', 'tools')
+    expect(es(userDir) || es(projectDir)).toBe(true)
   }, 10000)
 
   it('loadUserTools returns 0 when no tool files exist', async () => {
