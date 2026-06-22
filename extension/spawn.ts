@@ -73,9 +73,19 @@ export async function spawnAgent(config: SpawnConfig): Promise<SpawnResult> {
           maxTokens: 8192,
         })
         bg.markCompleted(id, result.output)
+        // Emit event
+        try {
+          const { eventBus } = await import('./events.js')
+          eventBus.emit('task.completed', { taskId: id, type: config.type, task: config.task.slice(0, 200) })
+        } catch { /* non-critical */ }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         bg.markFailed(id, msg)
+        // Emit event
+        try {
+          const { eventBus } = await import('./events.js')
+          eventBus.emit('task.failed', { taskId: id, type: config.type, error: msg })
+        } catch { /* non-critical */ }
       }
     })()
 

@@ -12,6 +12,7 @@
  */
 
 import { createLogger } from './logger.js'
+import type { BusEvent } from './events.js'
 
 const log = createLogger('background')
 
