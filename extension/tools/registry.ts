@@ -28,6 +28,8 @@ export interface ToolDefinition {
   execute: (params: Record<string, unknown>) => Promise<ToolResult>
   /** 增强配置 (可选) */
   enhancement?: ToolEnhancement
+  /** 启用状态 (默认 true) */
+  enabled?: boolean
 }
 
 export interface ToolResult {
@@ -44,7 +46,7 @@ export function registerTool(tool: ToolDefinition): void {
   if (_tools.has(tool.name)) {
     log.warn(`Tool already registered, overwriting: ${tool.name}`)
   }
-  _tools.set(tool.name, tool)
+  _tools.set(tool.name, { ...tool, enabled: tool.enabled ?? true })
 }
 
 export function getTool(name: string): ToolDefinition | undefined {
@@ -77,6 +79,11 @@ export async function executeTool(
   const tool = _tools.get(name)
   if (!tool) {
     return { success: false, output: '', error: `Unknown tool: ${name}` }
+  }
+
+  // ── Enabled check ────────────────────────────────────
+  if (tool.enabled === false) {
+    return { success: false, output: '', error: `Tool "${name}" is disabled` }
   }
 
   const enhancement = tool.enhancement
@@ -134,4 +141,13 @@ export function setGlobalAuditHook(hook: ToolAuditHook): void {
   for (const tool of _tools.values()) {
     tool.enhancement = { ...tool.enhancement, audit: hook }
   }
+}
+
+/** 切换工具的启用/禁用状态。返回切换后的状态。 */
+export function toggleTool(name: string): boolean | null {
+  const tool = _tools.get(name)
+  if (!tool) return null
+  tool.enabled = !(tool.enabled ?? true)
+  log.info(`Tool "${name}" is now ${tool.enabled ? 'enabled' : 'disabled'}`)
+  return tool.enabled
 }

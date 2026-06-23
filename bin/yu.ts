@@ -735,6 +735,7 @@ async function mainCli(): Promise<void> {
           console.log(`  ${t.name}`)
           console.log(`    Description: ${t.description}`)
           console.log(`    Parameters: ${hasSchema ? Object.keys(t.parameters.properties || {}).join(', ') : 'none'}`)
+          if (t.enabled === false) console.log(`    Status: disabled`)
           if (t.enhancement?.auth) {
             const auth = t.enhancement.auth
             const parts: string[] = []
@@ -765,6 +766,9 @@ async function mainCli(): Promise<void> {
       console.log(`Tool: ${tool.name}`)
       console.log(`  Description: ${tool.description}`)
       console.log(`  Parameters: ${JSON.stringify(tool.parameters, null, 4)}`)
+      if (tool.enabled !== undefined) {
+        console.log(`  Enabled: ${tool.enabled}`)
+      }
       if (tool.enhancement) {
         console.log(`  Enhancement:`)
         if (tool.enhancement.auth) {
@@ -783,9 +787,26 @@ async function mainCli(): Promise<void> {
       process.exit(0)
     }
 
+    if (sub === 'toggle') {
+      const name = args[2]
+      if (!name) {
+        console.error('Usage: yu tool toggle <name>')
+        process.exit(1)
+      }
+      const { toggleTool } = await import('../extension/tools/registry.js')
+      const result = toggleTool(name)
+      if (result === null) {
+        console.error(`Tool not found: ${name}`)
+        process.exit(1)
+      }
+      console.log(`Tool "${name}" is now ${result ? 'enabled' : 'disabled'}`)
+      process.exit(0)
+    }
+
     console.error('Usage:')
     console.error('  yu tool list              — list all registered tools')
     console.error('  yu tool inspect <name>    — inspect a specific tool')
+    console.error('  yu tool toggle <name>     — enable/disable a tool')
     process.exit(1)
   }
 
