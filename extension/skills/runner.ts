@@ -14,6 +14,7 @@
 
 import { createLogger } from '../logger.js'
 import type { LoadedSkill, SkillExecutionContext, SkillRunResult } from './types.js'
+import { eventBus } from '../events.js'
 import { listTools } from '../tools/registry.js'
 import { listSkills } from './registry.js'
 
@@ -40,6 +41,8 @@ export class SkillRunner {
         if (!this.activeSkills.find((s) => s.def.name === name)) {
           this.activeSkills.push(skill)
           log.info(`Skill activated: ${name}`)
+          // Emit skill.activated
+          try { eventBus.emit('skill.activated', { name }) } catch { /* non-critical */ }
         }
       } else {
         log.warn(`Skill "${name}" not found in registry, skipping.`)
@@ -55,6 +58,8 @@ export class SkillRunner {
     if (idx !== -1) {
       this.activeSkills.splice(idx, 1)
       log.info(`Skill deactivated: ${name}`)
+      // Emit skill.deactivated
+      try { eventBus.emit('skill.deactivated', { name }) } catch { /* non-critical */ }
     }
   }
 
@@ -164,6 +169,11 @@ export class SkillRunner {
     await this.runBeforeIteration(ctx)
 
     const skillsUsed = this.activeSkills.map((s) => s.def.name)
+
+    // Emit skill.executed
+    try {
+      eventBus.emit('skill.executed', { skills: skillsUsed, task: task.slice(0, 200) })
+    } catch { /* non-critical */ }
 
     return {
       success: true,

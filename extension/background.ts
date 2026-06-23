@@ -13,6 +13,7 @@
 
 import { createLogger } from './logger.js'
 import type { BusEvent } from './events.js'
+import { eventBus } from './events.js'
 
 const log = createLogger('background')
 
@@ -69,6 +70,10 @@ export const bg = {
     if (t) {
       t.status = 'running'
       log.info(`Background task running: ${id}`)
+      // Emit task.started
+      try {
+        eventBus.emit('task.started', { taskId: id, type: t.type, prompt: t.prompt })
+      } catch { /* non-critical */ }
     }
   },
 
@@ -82,6 +87,10 @@ export const bg = {
       t.endTime = Date.now()
       t.result = result.slice(0, 5000)
       log.info(`Background task completed: ${id} (${(t.endTime - t.startTime) / 1000}s)`)
+      // Emit task.completed
+      try {
+        eventBus.emit('task.completed', { taskId: id, type: t.type, task: t.prompt, duration: t.endTime - t.startTime })
+      } catch { /* non-critical */ }
     }
   },
 
@@ -95,6 +104,10 @@ export const bg = {
       t.endTime = Date.now()
       t.error = error.slice(0, 1000)
       log.warn(`Background task failed: ${id} — ${error}`)
+      // Emit task.failed
+      try {
+        eventBus.emit('task.failed', { taskId: id, type: t.type, error, duration: t.endTime - t.startTime })
+      } catch { /* non-critical */ }
     }
   },
 

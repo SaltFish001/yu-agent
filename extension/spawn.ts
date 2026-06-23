@@ -62,6 +62,12 @@ export async function spawnAgent(config: SpawnConfig): Promise<SpawnResult> {
     const { bg } = await import('./background.js')
     const id = bg.register({ type: config.type, prompt: config.task })
 
+    // Emit task.started
+    try {
+      const { eventBus } = await import('./events.js')
+      eventBus.emit('task.started', { taskId: id, type: config.type, task: config.task.slice(0, 200) })
+    } catch { /* non-critical */ }
+
     // Fire the agent in background (no await)
     ;(async () => {
       try {
@@ -73,19 +79,10 @@ export async function spawnAgent(config: SpawnConfig): Promise<SpawnResult> {
           maxTokens: 8192,
         })
         bg.markCompleted(id, result.output)
-        // Emit event
-        try {
-          const { eventBus } = await import('./events.js')
-          eventBus.emit('task.completed', { taskId: id, type: config.type, task: config.task.slice(0, 200) })
-        } catch { /* non-critical */ }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         bg.markFailed(id, msg)
         // Emit event
-        try {
-          const { eventBus } = await import('./events.js')
-          eventBus.emit('task.failed', { taskId: id, type: config.type, error: msg })
-        } catch { /* non-critical */ }
       }
     })()
 
@@ -103,6 +100,12 @@ export async function spawnAgent(config: SpawnConfig): Promise<SpawnResult> {
   // ── Foreground mode: synchronous ──
   log.info(`Spawning agent: type=${config.type} model=${config.model}`)
 
+  // Emit agent.started
+  try {
+    const { eventBus } = await import('./events.js')
+    eventBus.emit('agent.started', { type: config.type, model: config.model, task: config.task.slice(0, 200) })
+  } catch { /* non-critical */ }
+
   try {
     // 限制迭代次数
     const maxIter = Math.min(config.maxTurns ?? 30, 50)
@@ -116,6 +119,12 @@ export async function spawnAgent(config: SpawnConfig): Promise<SpawnResult> {
     const duration = Date.now() - startTime
 
     log.info(`Agent completed: type=${config.type} iterations=${result.iterations} duration=${duration}ms`)
+
+    // Emit agent.completed
+    try {
+      const { eventBus } = await import('./events.js')
+      eventBus.emit('agent.completed', { type: config.type, model: config.model, duration, iterations: result.iterations })
+    } catch { /* non-critical */ }
 
     const response: SpawnResult = {
       response: result.output,
@@ -134,6 +143,12 @@ export async function spawnAgent(config: SpawnConfig): Promise<SpawnResult> {
     errorCount++
     const msg = err instanceof Error ? err.message : String(err)
     log.error(`Agent failed: type=${config.type} error=${msg}`)
+
+    // Emit agent.error
+    try {
+      const { eventBus } = await import('./events.js')
+      eventBus.emit('agent.error', { type: config.type, model: config.model, error: msg })
+    } catch { /* non-critical */ }
 
     return {
       response: '',

@@ -38,6 +38,12 @@ export type EventType =
   | 'topic.archived'
   | 'system.startup'
   | 'system.shutdown'
+  | 'skill.activated'
+  | 'skill.deactivated'
+  | 'skill.executed'
+  | 'team.started'
+  | 'team.phase'
+  | 'team.completed'
 
 export interface BusEvent {
   type: EventType | string

@@ -14,6 +14,7 @@ import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import type { ExtendedTopicStatus } from './types.js'
 import { createLogger } from './logger.js'
+import { eventBus } from './events.js'
 
 const log = createLogger('topic')
 
@@ -258,6 +259,11 @@ export function create(name: string, dir: string): Topic {
     VALUES (?, ?, ?, '', 'idle', 0, NULL, ?, 0)
   `).run(id, name, dir, now)
 
+  // Emit topic.created
+  try {
+    eventBus.emit('topic.created', { name, dir })
+  } catch { /* non-critical */ }
+
   return {
     id,
     name,
@@ -291,6 +297,11 @@ export function switchTopic(name: string): void {
   if (topic.dir && existsSync(topic.dir)) {
     process.chdir(topic.dir)
   }
+
+  // Emit topic.switched
+  try {
+    eventBus.emit('topic.switched', { name, from: topic.status })
+  } catch { /* non-critical */ }
 }
 
 /**
@@ -322,6 +333,11 @@ export function archive(name: string): void {
   }
 
   db.prepare('UPDATE topics SET archived = 1 WHERE id = ?').run(topic.id)
+
+  // Emit topic.archived
+  try {
+    eventBus.emit('topic.archived', { name })
+  } catch { /* non-critical */ }
 }
 
 /**
