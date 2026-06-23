@@ -10417,6 +10417,34 @@ function initPanelTabs() {
     });
   });
 }
+function initSidebarResize() {
+  const handle = document.getElementById("sidebar-resize");
+  const sidebar = document.getElementById("sidebar");
+  if (!handle || !sidebar)
+    return;
+  let isResizing = false;
+  handle.addEventListener("mousedown", (e) => {
+    isResizing = true;
+    handle.classList.add("active");
+    document.body.style.cursor = "col-resize";
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", (e) => {
+    if (!isResizing)
+      return;
+    const newWidth = Math.max(140, Math.min(400, e.clientX));
+    sidebar.style.width = `${newWidth}px`;
+    sidebar.style.minWidth = `${newWidth}px`;
+    document.documentElement.style.setProperty("--sidebar-width", `${newWidth}px`);
+  });
+  document.addEventListener("mouseup", () => {
+    if (isResizing) {
+      isResizing = false;
+      handle.classList.remove("active");
+      document.body.style.cursor = "";
+    }
+  });
+}
 async function fetchTopics() {
   try {
     const res = await fetch("/api/topics");
@@ -10509,5 +10537,6 @@ connectSSE();
 initTerminal();
 initSidebarCollapse();
 initPanelTabs();
+initSidebarResize();
 inputEl.focus();
 setInterval(fetchTopics, 1e4);
