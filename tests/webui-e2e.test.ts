@@ -16,9 +16,9 @@ const BASE = `http://localhost:${PORT}`
 
 let server: ReturnType<typeof Bun.serve> | null = null
 
-beforeAll(() => {
+beforeAll(async () => {
   process.env.YU_WEBUI_HOST = '127.0.0.1'
-  server = createServer(PORT)
+  server = await createServer(PORT)
 })
 
 afterAll(() => {
