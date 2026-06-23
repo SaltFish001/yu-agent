@@ -811,7 +811,7 @@ app.notFound((c) => {
 
 // ── Server ──────────────────────────────────────────────
 
-export function createServer(port?: number): ReturnType<typeof Bun.serve> {
+export async function createServer(port?: number): Promise<ReturnType<typeof Bun.serve>> {
   const activePort = port ?? DEFAULT_PORT
   log.info(`Starting Web UI server on ${HOST}:${activePort}`)
 
@@ -823,13 +823,51 @@ export function createServer(port?: number): ReturnType<typeof Bun.serve> {
   })
 
   log.info(`Web UI ready at http://${HOST}:${activePort}`)
+
+  // ── Wire EventBus → WebSocket broadcast ──
+  try {
+    const { eventBus } = await import('../extension/events.js')
+    const unsubCompleted = eventBus.on('task.completed', (event) => {
+      broadcastWS('task.completed', event.payload)
+    })
+    const unsubFailed = eventBus.on('task.failed', (event) => {
+      broadcastWS('task.failed', event.payload)
+    })
+    const unsubStarted = eventBus.on('task.started', (event) => {
+      broadcastWS('task.started', event.payload)
+    })
+    const unsubAgentStarted = eventBus.on('agent.started', (event) => {
+      broadcastWS('agent.started', event.payload)
+    })
+    const unsubAgentCompleted = eventBus.on('agent.completed', (event) => {
+      broadcastWS('agent.completed', event.payload)
+    })
+    const unsubAgentError = eventBus.on('agent.error', (event) => {
+      broadcastWS('agent.error', event.payload)
+    })
+    // Clean up on server shutdown
+    const origStop: (() => void) | undefined = server.stop?.bind(server)
+    ;(server as Record<string, unknown>).stop = () => {
+      unsubCompleted()
+      unsubFailed()
+      unsubStarted()
+      unsubAgentStarted()
+      unsubAgentCompleted()
+      unsubAgentError()
+      return origStop?.()
+    }
+    log.info('EventBus → WebSocket bridge active')
+  } catch {
+    log.warn('EventBus bridge not available (events.ts not loaded)')
+  }
+
   return server
 }
 
 // ── 直接运行 ─────────────────────────────────────────────
 
 if (process.argv[1]?.includes('server')) {
-  createServer()
+  await createServer()
   console.log(`\n  🎣 yu-agent Web UI`)
   console.log(`  ─────────────────────`)
   console.log(`  → http://localhost:${DEFAULT_PORT}\n`)

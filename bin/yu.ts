@@ -1335,7 +1335,7 @@ async function mainCli(): Promise<void> {
   // `yu ui` — launch Web UI
   if (args[0] === 'ui') {
     const { createServer } = await import('../webui/server.js')
-    createServer()
+    await createServer()
     // Keep process alive
     await new Promise(() => {})
     return

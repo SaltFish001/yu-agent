@@ -10187,6 +10187,11 @@ function connectWS() {
           }
           break;
         }
+        case "task.completed":
+        case "task.failed":
+        case "task.started":
+          renderPanels();
+          break;
       }
     } catch {}
   };

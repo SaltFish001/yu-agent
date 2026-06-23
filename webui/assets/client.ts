@@ -376,6 +376,12 @@ function connectWS(): void {
           }
           break
         }
+        case 'task.completed':
+        case 'task.failed':
+        case 'task.started':
+          // EventBus events — trigger panel re-render
+          renderPanels()
+          break
       }
     } catch { /* ignore */ }
   }
