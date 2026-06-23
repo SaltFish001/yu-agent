@@ -31,7 +31,17 @@ const DEFAULT_PORT = parseInt(process.env.YU_WEBUI_PORT || '9876', 10)
 const HOST = process.env.YU_WEBUI_HOST || '0.0.0.0'
 const WS_STATUS_INTERVAL = 2_000 // 每 2 秒推送一次状态
 
-let wsInterval: ReturnType<typeof setInterval> | null = null
+// ── Per-client push config ──────────────────────────────
+
+interface ClientPushConfig {
+  interval: number      // 推送间隔 (ms), default WS_STATUS_INTERVAL
+  channels: Set<string> // 订阅通道, default all
+}
+const clientConfigs = new Map<any, ClientPushConfig>()
+const clientLastPush = new Map<any, number>()
+
+let wsTicker: ReturnType<typeof setInterval> | null = null
+const TICK_INTERVAL = 500 // 每 500ms 检查一次到期 client
 
 // ── HTML 模板 ──────────────────────────────────────────
 
@@ -402,26 +412,51 @@ const app = new Hono()
 
 app.get(
   '/ws',
-  upgradeWebSocket(() => ({
+  upgradeWebSocket((c) => {
+    // Parse per-client interval from query param
+    const intervalParam = c.req.query('interval')
+    const clientInterval = intervalParam ? Math.max(500, parseInt(intervalParam, 10) || WS_STATUS_INTERVAL) : WS_STATUS_INTERVAL
+    return {
     onOpen(_event, ws) {
       wsClients.add(ws)
+      clientConfigs.set(ws, { interval: clientInterval, channels: new Set() })
+      clientLastPush.set(ws, Date.now())
       wsStats.connectionsTotal++
       wsStats.connectionsCurrent = wsClients.size
       if (wsClients.size > wsStats.connectionsPeak) {
         wsStats.connectionsPeak = wsClients.size
       }
-      log.info(`WS client connected (${wsClients.size} active, ${wsStats.connectionsTotal} total)`)
+      log.info(`WS client connected (${wsClients.size} active, interval=${clientInterval}ms)`)
 
-      if (wsClients.size === 1 && !wsInterval) {
-        wsInterval = setInterval(async () => {
-          broadcastWS('status', await getFullStatus())
-        }, WS_STATUS_INTERVAL)
+      // Start ticker on first client
+      if (wsClients.size === 1 && !wsTicker) {
+        wsTicker = setInterval(async () => {
+          const full = await getFullStatus()
+          const now = Date.now()
+          for (const [client, cfg] of clientConfigs) {
+            if (!wsClients.has(client)) {
+              clientConfigs.delete(client)
+              clientLastPush.delete(client)
+              continue
+            }
+            const last = clientLastPush.get(client) ?? 0
+            if (now - last >= cfg.interval) {
+              clientLastPush.set(client, now)
+              try {
+                client.send(JSON.stringify({ type: 'status', data: full, timestamp: now }))
+                wsStats.messagesSent++
+              } catch {
+                wsClients.delete(client)
+              }
+            }
+          }
+        }, TICK_INTERVAL)
       }
 
       ws.send(
         JSON.stringify({
           type: 'connected',
-          data: { status: 'ok', timestamp: Date.now() },
+          data: { status: 'ok', interval: clientInterval, timestamp: Date.now() },
           timestamp: Date.now(),
         }),
       )
@@ -430,23 +465,45 @@ app.get(
     onMessage(event, ws) {
       try {
         const parsed = JSON.parse(event.data as string)
-        if (parsed.type === 'ping') {
-          ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }))
+        switch (parsed.type) {
+          case 'ping':
+            ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }))
+            break
+          case 'set_interval': {
+            const newInterval = Math.max(500, parseInt(parsed.interval, 10) || WS_STATUS_INTERVAL)
+            const cfg = clientConfigs.get(ws)
+            if (cfg) {
+              cfg.interval = newInterval
+              clientLastPush.set(ws, Date.now())
+              ws.send(JSON.stringify({ type: 'interval_set', data: { interval: newInterval }, timestamp: Date.now() }))
+            }
+            break
+          }
+          case 'set_channels': {
+            const cfg = clientConfigs.get(ws)
+            if (cfg && Array.isArray(parsed.channels)) {
+              cfg.channels = new Set(parsed.channels)
+              ws.send(JSON.stringify({ type: 'channels_set', data: { channels: parsed.channels }, timestamp: Date.now() }))
+            }
+            break
+          }
         }
       } catch { /* 忽略无法解析的消息 */ }
     },
 
     onClose(_event, ws) {
       wsClients.delete(ws)
+      clientConfigs.delete(ws)
+      clientLastPush.delete(ws)
       wsStats.connectionsCurrent = wsClients.size
       log.info(`WS client disconnected (${wsClients.size} remaining)`)
 
-      if (wsClients.size === 0 && wsInterval) {
-        clearInterval(wsInterval)
-        wsInterval = null
+      if (wsClients.size === 0 && wsTicker) {
+        clearInterval(wsTicker)
+        wsTicker = null
       }
     },
-  })),
+  }}),
 )
 
 // ── Terminal WebSocket ──
@@ -634,9 +691,21 @@ app.get('/events', (c) => {
   })
 })
 
-// ── API: status ──
+// ── API: status (with optional ?fields= filter) ──
 
-app.get('/api/status', async (c) => c.json(await getStatus()))
+app.get('/api/status', async (c) => {
+  const fields = c.req.query('fields')
+  if (!fields) return c.json(await getStatus())
+
+  // Field-filtered mode: only return requested fields
+  const full = await getFullStatus()
+  const fieldList = fields.split(',').map((f) => f.trim()).filter(Boolean)
+  const filtered: Record<string, unknown> = {}
+  for (const f of fieldList) {
+    if (f in full) filtered[f] = full[f]
+  }
+  return c.json(filtered)
+})
 
 // ── API: ws stats ──
 

@@ -294,6 +294,9 @@ function fmtDuration(secs: number): string {
 // ── Status update ──
 
 function applyStatus(data: StatusData): void {
+  // Incremental merge: skip render if core fields unchanged
+  const changed = hasStatusChanged(data)
+
   state.uptime = data.uptime ?? 0
   state.memory = data.memory ?? { rss: 0, heapTotal: 0, heapUsed: 0 }
   if (data.ws) {
@@ -333,18 +336,75 @@ function applyStatus(data: StatusData): void {
   // Store raw data for dashboard
   ;(window as any).__lastStatus = data
   versionEl.textContent = data.version ?? 'v0.1.0'
-  render()
-  renderPanels()
+
+  // Only re-render when data actually changed (reduces layout churn)
+  if (changed) {
+    render()
+    renderPanels()
+  }
 }
 
 // ── WebSocket ──
 
 let wsReconnectTimer: ReturnType<typeof setTimeout> | null = null
+let wsHeartbeatTimer: ReturnType<typeof setInterval> | null = null
+let lastWsMessageTime = 0
+const HEARTBEAT_INTERVAL = 10_000  // 每 10s 发一次 ping
+const HEARTBEAT_TIMEOUT = 20_000   // 20s 无消息判定断线
+
+// ── HTTP fallback polling (when WS is offline) ──
+let httpPollTimer: ReturnType<typeof setInterval> | null = null
+let httpPollActive = false
+
+function startHttpPolling(): void {
+  if (httpPollActive) return
+  httpPollActive = true
+  httpPollTimer = setInterval(async () => {
+    try {
+      const res = await fetch('/api/status')
+      if (!res.ok) return
+      const data = await res.json() as StatusData
+      applyStatus(data)
+    } catch { /* ignore */ }
+  }, 5_000)
+}
+
+function stopHttpPolling(): void {
+  httpPollActive = false
+  if (httpPollTimer) {
+    clearInterval(httpPollTimer)
+    httpPollTimer = null
+  }
+}
+
+// ── Incremental merge ──
+let _prevStatusHash = ''
+
+function hasStatusChanged(data: StatusData): boolean {
+  const hash = JSON.stringify({ uptime: data.uptime, memory: data.memory, ws: data.ws, bgStats: data.bgStats })
+  if (hash === _prevStatusHash) return false
+  _prevStatusHash = hash
+  return true
+}
 
 function connectWS(): void {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
   const wsUrl = `${protocol}//${location.host}/ws`
   const ws = new WebSocket(wsUrl)
+  lastWsMessageTime = Date.now()
+
+  // Heartbeat: ping every 10s, check timeout every 5s
+  if (!wsHeartbeatTimer) {
+    wsHeartbeatTimer = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'ping' }))
+      }
+      if (Date.now() - lastWsMessageTime > HEARTBEAT_TIMEOUT) {
+        // No message received — force reconnect
+        ws.close()
+      }
+    }, 5_000)
+  }
 
   ws.onopen = () => {
     wsStatusEl.textContent = '在线'
@@ -354,9 +414,11 @@ function connectWS(): void {
       clearTimeout(wsReconnectTimer)
       wsReconnectTimer = null
     }
+    stopHttpPolling() // WS back online → stop HTTP fallback
   }
 
   ws.onmessage = (e: MessageEvent) => {
+    lastWsMessageTime = Date.now()
     try {
       const msg = JSON.parse(e.data as string) as WsMessage
       switch (msg.type) {
@@ -391,6 +453,7 @@ function connectWS(): void {
     statusBadge.className = 'disconnected'
     state.wsConnected = 0
     render()
+    startHttpPolling() // WS offline → start HTTP fallback
     wsReconnectTimer = setTimeout(() => connectWS(), 3000)
   }
 
