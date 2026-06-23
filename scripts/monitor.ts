@@ -247,6 +247,7 @@ const intervalId = setInterval(tick, pollInterval)
 // Handle Ctrl+C gracefully
 process.on('SIGINT', () => {
   clearInterval(intervalId)
+  process.stdout.write('\x1B[?25h') // 确保光标可见
   console.log(`\n${DIM}monitor stopped${RESET}`)
   process.exit(0)
 })
