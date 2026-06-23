@@ -30,6 +30,10 @@ interface StatusData {
   agentStats?: { total?: number; completed?: number; failed?: number; avgDurationMs?: number } | null
   tokenUsage?: { totalTokens?: number; sessionCount?: number; totalCost?: number } | null
   skills?: Array<{ name: string; description?: string }>
+  backgroundTasks?: Array<{
+    id: string; type: string; status: string; prompt?: string; duration?: number | null
+  }>
+  bgStats?: { active: number; completed: number; failed: number }
   ws?: {
     connected: number; total: number; peak: number; messagesSent: number; uptimeSec: number
   }
@@ -91,6 +95,8 @@ const state: {
   wsTotal: number
   wsMsgs: number
   wsUptime: number
+  backgroundTasks: Array<{ id: string; type: string; status: string; prompt?: string; duration?: number | null }>
+  bgStats: { active: number; completed: number; failed: number }
 } = {
   messages: [],
   uptime: 0,
@@ -317,8 +323,18 @@ function applyStatus(data: StatusData): void {
   if (data.skills) {
     ;(window as any).__skills = data.skills
   }
+  // Background tasks
+  if (data.backgroundTasks) {
+    state.backgroundTasks = data.backgroundTasks as any
+  }
+  if (data.bgStats) {
+    state.bgStats = data.bgStats
+  }
+  // Store raw data for dashboard
+  ;(window as any).__lastStatus = data
   versionEl.textContent = data.version ?? 'v0.1.0'
   render()
+  renderPanels()
 }
 
 // ── WebSocket ──
@@ -502,6 +518,119 @@ async function showTopicDetail(name: string): Promise<void> {
   render()
 }
 
+// ── Panel rendering ──
+
+function renderPanels(): void {
+  const data = (window as any).__lastStatus as StatusData | undefined
+  if (!data) return
+
+  // Dashboard
+  const dashUptime = document.getElementById('dash-uptime')
+  const dashMem = document.getElementById('dash-mem')
+  const dashRules = document.getElementById('dash-rules')
+  const dashTools = document.getElementById('dash-tools')
+  const dashBgActive = document.getElementById('dash-bg-active')
+  const dashBgDetail = document.getElementById('dash-bg-detail')
+  const dashEvents = document.getElementById('dash-events')
+  const dashEventsDetail = document.getElementById('dash-events-detail')
+  const dashVersion = document.getElementById('dash-version')
+  const dashAgentRuns = document.getElementById('dash-agent-runs')
+
+  if (dashUptime) dashUptime.textContent = fmtDuration(data.uptime ?? 0)
+  if (dashMem) dashMem.textContent = fmtBytes(data.memory?.rss ?? 0)
+  if (dashRules) dashRules.textContent = String(data.rules?.length ?? 0)
+  if (dashTools) dashTools.textContent = String(data.tools?.length ?? 0)
+  if (dashVersion) dashVersion.textContent = data.version ?? '0.1.0'
+
+  // Background tasks stats
+  const bgStats = data.bgStats || state.bgStats
+  if (dashBgActive && bgStats) {
+    const total = (bgStats.active ?? 0) + (bgStats.completed ?? 0) + (bgStats.failed ?? 0)
+    dashBgActive.textContent = String(bgStats.active ?? 0)
+    if (dashBgDetail) {
+      const parts: string[] = []
+      if (bgStats.active > 0) parts.push(`${bgStats.active} 运行中`)
+      if (bgStats.completed > 0) parts.push(`${bgStats.completed} 完成`)
+      if (bgStats.failed > 0) parts.push(`${bgStats.failed} 失败`)
+      dashBgDetail.textContent = parts.join(' · ') || '无任务'
+    }
+  }
+
+  // Events
+  const ev = data.events as { total?: number; unacknowledged?: number } | undefined
+  if (dashEvents) dashEvents.textContent = String(ev?.total ?? 0)
+  if (dashEventsDetail) dashEventsDetail.textContent = `${ev?.unacknowledged ?? 0} 未确认`
+
+  // Agent runs
+  const agentStats = data.agentStats as { total?: number } | undefined
+  if (dashAgentRuns) dashAgentRuns.textContent = String(agentStats?.total ?? 0)
+
+  // Topics table
+  const topicsTbody = document.getElementById('topics-tbody')
+  if (topicsTbody && state.topics.length > 0) {
+    topicsTbody.innerHTML = state.topics
+      .map((t) => {
+        const statusIcon = t.status === 'active' ? '▶' : t.status === 'background' ? '⏳' : '○'
+        const lastActive = t.lastActive ? new Date(t.lastActive).toLocaleString() : '-'
+        return `<tr data-topic="${escapeHtml(t.name)}">
+          <td>${escapeHtml(t.name)}</td>
+          <td>${statusIcon} ${t.status}</td>
+          <td>${t.turns}</td>
+          <td>${lastActive}</td>
+        </tr>`
+      })
+      .join('')
+    // Click to load topic detail
+    topicsTbody.querySelectorAll('tr').forEach((row) => {
+      row.addEventListener('click', () => {
+        const name = (row as HTMLElement).dataset.topic || ''
+        if (name) showTopicDetail(name)
+      })
+    })
+  } else if (topicsTbody) {
+    topicsTbody.innerHTML = '<tr><td colspan="4"><span class="sidebar-hint">暂无主题</span></td></tr>'
+  }
+
+  // Background tasks table
+  const bgTbody = document.getElementById('bg-tbody')
+  const bgTasks = data.backgroundTasks || state.backgroundTasks
+  if (bgTbody && bgTasks && bgTasks.length > 0) {
+    bgTbody.innerHTML = bgTasks
+      .map((t) => {
+        const statusIcon = t.status === 'running' ? '🟢' : t.status === 'completed' ? '✅' : t.status === 'failed' ? '❌' : t.status === 'pending' ? '⏳' : '○'
+        const dur = t.duration != null ? fmtDuration(Math.floor(t.duration / 1000)) : '-'
+        const prompt = t.prompt ? escapeHtml(t.prompt.slice(0, 60)) : '-'
+        return `<tr>
+          <td>${escapeHtml(t.id)}</td>
+          <td>${escapeHtml(t.type)}</td>
+          <td>${statusIcon} ${t.status}</td>
+          <td>${dur}</td>
+          <td>${prompt}</td>
+        </tr>`
+      })
+      .join('')
+  } else if (bgTbody) {
+    bgTbody.innerHTML = '<tr><td colspan="5"><span class="sidebar-hint">无后台任务</span></td></tr>'
+  }
+}
+
+// ── Panel tab switching ──
+
+function initPanelTabs(): void {
+  document.querySelectorAll('.panel-tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      // Deactivate all tabs and panels
+      document.querySelectorAll('.panel-tab').forEach((t) => t.classList.remove('active'))
+      document.querySelectorAll('.panel').forEach((p) => p.classList.remove('active'))
+      // Activate selected
+      tab.classList.add('active')
+      const panelId = `panel-${(tab as HTMLElement).dataset.panel || ''}`
+      const panel = document.getElementById(panelId)
+      if (panel) panel.classList.add('active')
+    })
+  })
+}
+
 // ── Fetch topics ──
 
 async function fetchTopics(): Promise<void> {
@@ -618,6 +747,7 @@ connectWS()
 connectSSE()
 initTerminal()
 initSidebarCollapse()
+initPanelTabs()
 inputEl.focus()
 
 // Re-fetch topics periodically (every 10s)
