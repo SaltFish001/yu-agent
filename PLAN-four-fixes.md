@@ -1,4 +1,14 @@
-# yu-agent 四修计划: Skills / Tools / MCP / Roles
+# yu-agent 四修计划: Skills / Tools / MCP / Roles — ✅ 已完成
+
+## 状态
+Phase 1-4 全部落地，对应 5 个 commit：
+
+| Phase | 内容 | Commit |
+|-------|------|--------|
+| P1 Tools | `yu tool toggle` + enabled 状态 | `dac8ebd` |
+| P2 MCP | 流式调用 + CLI add/rm/ls | `91a5b6d` |
+| P3 Roles | Team 集成 (rules → agent type) | `a22f093` |
+| P4 Skills | Store + CLI list/inspect/scan | `d7d7727` |
 
 ## 总估
 

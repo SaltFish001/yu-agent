@@ -1,4 +1,15 @@
-# Multi-Channel Architecture — yu-agent
+# Multi-Channel Architecture — yu-agent — ✅ Phase 0-4 已完成
+
+## 状态
+
+| Phase | 内容 | 状态 | Commit |
+|-------|------|------|--------|
+| P0 | Event Hub 内存 pub/sub（events.ts） | ✅ 已有 | 前置已有 |
+| P1 | 多面板 Web UI（4 面板切换 + 侧栏） | ✅ | `25fd03b` |
+| P2 | EventBus → WebSocket 事件桥 | ✅ | `264b806` |
+| P3 | 定时器管道 + 状态拉取（心跳/降级/增量/字段过滤） | ✅ | `92b664f` |
+| P4 | 面板拖拽/缩放/样式 | ✅ | `d152137` |
+| P5 | 外部通道桥接 | ❌ 未做（不在需求内） | — |
 
 ## 现状分析
 

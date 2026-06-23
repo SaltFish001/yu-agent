@@ -1,6 +1,7 @@
-# Monitor 审查问题修复计划
+# Monitor 审查问题修复计划 — ✅ 已完成
 
-## 分析
+## 状态
+所有 5 项修复已于 monitor.ts（原 monitor.mjs 重构后）落地。
 
 当前文件: `/home/saltfish/yu-agent/scripts/monitor.mjs`
 

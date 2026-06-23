@@ -1,4 +1,14 @@
-# Web UI 优化计划
+# Web UI 优化计划 — ✅ 已完成
+
+## 状态
+Phase 1-4 全部落地（随 MC 重构和代码清理完成）：
+
+| Phase | 内容 | 状态 |
+|-------|------|------|
+| P0 | SSE ReadableStream + 实时 /api/status + /api/chat → AgentLoop + 会话 API | ✅ |
+| P1 | 无 CDN 依赖 + 原生 JS + DOM 操作 + 系统字体栈 | ✅ |
+| P2 | `bun run build:web` + `yu server` 子命令 | ✅ |
+| P3 | assets/ 目录拆分 + 前端 TS + 去 node:* 模块 + 实时推送 | ✅ |
 
 ## 现状
 
