@@ -8,6 +8,7 @@ import type { SchedulerPlan } from './classifier.js'
 import { AGENT_TYPES } from './config.js'
 import { type AgentTask, runParallelGroup } from './executor.js'
 import { TEMP_DIR } from './paths.js'
+import { resolveRule } from './rules/compose.js'
 import { writeTeamStatus } from './status.js'
 import type { ReviewOutput } from './template.js'
 import { parseAgentOutput } from './template.js'
@@ -16,6 +17,32 @@ import { parseAgentOutput } from './template.js'
 
 const _MAX_RETRY_TEAM = 2
 const TEAM_FILE_TIMEOUT_MS = 120_000
+
+// ── Rule-based role resolution ─────────────────────────
+
+/**
+ * Resolve agent config for a team role from rules system.
+ * Falls back to AGENT_TYPES defaults if no matching rule found.
+ */
+async function resolveRoleConfig(
+  roleName: string,
+  defaultType: string,
+): Promise<{ model: string; systemPrompt?: string }> {
+  try {
+    const rule = await resolveRule(`team-${roleName}`)
+    if (rule) {
+      return {
+        model: rule.model ?? AGENT_TYPES[defaultType as keyof typeof AGENT_TYPES]?.model ?? 'v4-flash',
+        systemPrompt: rule.systemPrompt,
+      }
+    }
+  } catch {
+    // Rule resolution failed — use defaults
+  }
+  return {
+    model: AGENT_TYPES[defaultType as keyof typeof AGENT_TYPES]?.model ?? 'v4-flash',
+  }
+}
 
 // ── Team mode orchestrator ─────────────────────────────
 
@@ -39,15 +66,17 @@ export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, 
   })
 
   // Phase 1: Architect + Searcher in parallel
+  const architectCfg = await resolveRoleConfig('architect', 'plan')
+  const searcherCfg = await resolveRoleConfig('searcher', 'search')
   const architectTask: AgentTask = {
     type: 'plan',
-    model: AGENT_TYPES.plan.model,
+    model: architectCfg.model,
     id: 'team-architect',
     task: `分析现有代码结构并出方案。将方案写入 ${planFile}`,
   }
   const searcherTask: AgentTask = {
     type: 'search',
-    model: AGENT_TYPES.search.model,
+    model: searcherCfg.model,
     id: 'team-searcher',
     task: `搜索相关信息。结果写入 ${resolve(sharedDir, 'context.md')}`,
   }
@@ -137,9 +166,10 @@ export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, 
   })
 
   // Create one Coder task per module and run in parallel
+  const coderCfg = await resolveRoleConfig('coder', 'coding')
   const coderTasks: AgentTask[] = modules.map((mod, i) => ({
     type: 'coding',
-    model: AGENT_TYPES.coding.model,
+    model: coderCfg.model,
     id: `team-coder-${i}`,
     task: `实现模块: ${mod.name}。遵循 plan.md 的方案。\n\n模块文件: ${(mod.files || []).join(', ')}\n\n约束: 只实现本模块 ${mod.name} 的内容，不要改其他模块的代码。`,
     files: mod.files.length > 0 ? mod.files : undefined,
@@ -171,9 +201,10 @@ export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, 
     })
 
     // Create one Reviewer task per module
+    const reviewerCfg = await resolveRoleConfig('reviewer', 'review')
     const reviewerTasks: AgentTask[] = modules.map((mod, i) => ({
       type: 'review',
-      model: AGENT_TYPES.review.model,
+      model: reviewerCfg.model,
       id: `team-reviewer-${i}-r${round}`,
       task: `审查模块 "${mod.name}" 的代码实现。\n模块文件: ${mod.files.join(', ')}\n\n根据 plan.md 的方案评估实现质量。返回 approved 或 changes_requested。如果 changes_requested，请列出具体问题。`,
       files: mod.files.length > 0 ? mod.files : undefined,
