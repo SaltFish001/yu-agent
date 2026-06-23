@@ -681,6 +681,167 @@ function renderPanels(): void {
   } else if (bgTbody) {
     bgTbody.innerHTML = '<tr><td colspan="5"><span class="sidebar-hint">无后台任务</span></td></tr>'
   }
+
+  // ── Rules table ──
+  const rulesTbody = document.getElementById('rules-tbody')
+  const rules = data.rules
+  if (rulesTbody && rules && rules.length > 0) {
+    rulesTbody.innerHTML = rules.map((r) => {
+      const name = escapeHtml(r.name || '')
+      const trigger = escapeHtml(r.trigger || '-')
+      const action = escapeHtml(r.action || '-')
+      const cond = escapeHtml(r.condition || '-')
+      return `<tr><td>${name}</td><td><code>${trigger}</code></td><td>${action}</td><td>${cond}</td></tr>`
+    }).join('')
+  } else if (rulesTbody) {
+    const count = document.getElementById('rules-count')
+    if (count) count.textContent = String(rules?.length ?? 0)
+    rulesTbody.innerHTML = '<tr><td colspan="4"><span class="sidebar-hint">暂无规则</span></td></tr>'
+  }
+
+  // ── Skills table ──
+  const skillsTbody = document.getElementById('skills-tbody')
+  const skills = data.skills
+  if (skillsTbody && skills && skills.length > 0) {
+    skillsTbody.innerHTML = skills.map((s) => {
+      const name = escapeHtml(s.name || '')
+      const desc = escapeHtml((s.description || '').slice(0, 120))
+      return `<tr><td>${name}</td><td>${desc}</td></tr>`
+    }).join('')
+  } else if (skillsTbody) {
+    skillsTbody.innerHTML = '<tr><td colspan="2"><span class="sidebar-hint">无技能</span></td></tr>'
+  }
+}
+
+// ── Dashboard card detail expand ──
+
+let _detailOpen = ''
+
+function initDashboardDetail(): void {
+  const closeBtn = document.getElementById('dash-detail-close')
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      document.getElementById('dash-detail')?.classList.add('hidden')
+      _detailOpen = ''
+    })
+  }
+
+  document.querySelectorAll('.dashboard-card[data-detail]').forEach((card) => {
+    card.addEventListener('click', () => {
+      const detail = (card as HTMLElement).dataset.detail || ''
+      showDashboardDetail(detail)
+    })
+    // Cursor hint
+    (card as HTMLElement).style.cursor = 'pointer'
+  })
+}
+
+function showDashboardDetail(detail: string): void {
+  const data = (window as any).__lastStatus as StatusData | undefined
+  if (!data) return
+
+  const titleEl = document.getElementById('dash-detail-title')
+  const bodyEl = document.getElementById('dash-detail-body')
+  const detailEl = document.getElementById('dash-detail')
+  if (!titleEl || !bodyEl || !detailEl) return
+
+  const titles: Record<string, string> = { uptime: '运行时间详情', mem: '内存详情', rules: '规则列表', tools: '工具列表', bg: '后台任务', events: '事件详情', version: '版本信息', agent: 'Agent 运行统计' }
+  titleEl.textContent = titles[detail] || detail
+
+  let html = ''
+  switch (detail) {
+    case 'uptime': {
+      const uptime = data.uptime ?? 0
+      const day = Math.floor(uptime / 86400)
+      const hr = Math.floor((uptime % 86400) / 3600)
+      const min = Math.floor((uptime % 3600) / 60)
+      html = `<div class="detail-row"><span>启动时长</span><span>${day}d ${hr}h ${min}m</span></div>
+        <div class="detail-row"><span>秒数</span><span>${uptime.toFixed(1)}s</span></div>`
+      break
+    }
+    case 'mem': {
+      const mem = data.memory
+      if (mem) {
+        html = `<div class="detail-row"><span>RSS</span><span>${fmtBytes(mem.rss)}</span></div>
+          <div class="detail-row"><span>Heap Total</span><span>${fmtBytes(mem.heapTotal)}</span></div>
+          <div class="detail-row"><span>Heap Used</span><span>${fmtBytes(mem.heapUsed)}</span></div>`
+      }
+      break
+    }
+    case 'rules':
+      html = (data.rules ?? []).map((r) => `<div class="detail-row"><span>${escapeHtml(r.name || '')}</span><span><code>${escapeHtml(r.trigger || '-')}</code></span></div>`).join('') || '<div class="detail-row"><span class="sidebar-hint">无规则</span></div>'
+      break
+    case 'tools':
+      html = (data.tools ?? []).map((t) => {
+        const n = escapeHtml(t.name || '')
+        const p = t.paramCount != null ? `${t.paramCount}p` : ''
+        return `<div class="detail-row"><span>${n}</span><span>${p}</span></div>`
+      }).join('') || '<div class="detail-row"><span class="sidebar-hint">无工具</span></div>'
+      break
+    case 'bg': {
+      const bg = data.bgStats || state.bgStats
+      if (bg) {
+        html = `<div class="detail-row"><span>活跃</span><span>${bg.active ?? 0}</span></div>
+          <div class="detail-row"><span>完成</span><span>${bg.completed ?? 0}</span></div>
+          <div class="detail-row"><span>失败</span><span>${bg.failed ?? 0}</span></div>`
+      }
+      break
+    }
+    case 'events': {
+      const ev = data.events as { total?: number; unacknowledged?: number; pendingTopics?: string[] } | undefined
+      if (ev) {
+        html = `<div class="detail-row"><span>总计</span><span>${ev.total ?? 0}</span></div>
+          <div class="detail-row"><span>未确认</span><span>${ev.unacknowledged ?? 0}</span></div>`
+        if (ev.pendingTopics?.length) {
+          html += `<div class="detail-row"><span>待处理主题</span><span>${ev.pendingTopics.join(', ')}</span></div>`
+        }
+      }
+      break
+    }
+    case 'version':
+      html = `<div class="detail-row"><span>版本</span><span>${escapeHtml(data.version || '0.1.0')}</span></div>
+        <div class="detail-row"><span>WS 消息</span><span>${(data.ws?.messagesSent ?? 0).toLocaleString()}</span></div>`
+      break
+    case 'agent': {
+      const a = data.agentStats as { total?: number; completed?: number; failed?: number; avgDurationMs?: number } | undefined
+      if (a) {
+        html = `<div class="detail-row"><span>总计</span><span>${a.total ?? 0}</span></div>
+          <div class="detail-row"><span>完成</span><span>${a.completed ?? 0}</span></div>
+          <div class="detail-row"><span>失败</span><span>${a.failed ?? 0}</span></div>`
+        if (a.avgDurationMs != null) html += `<div class="detail-row"><span>平均耗时</span><span>${fmtDuration(Math.floor(a.avgDurationMs / 1000))}</span></div>`
+      }
+      break
+    }
+  }
+
+  bodyEl.innerHTML = html
+  detailEl.classList.remove('hidden')
+  _detailOpen = detail
+}
+
+// ── Topics filter ──
+
+function initTopicsFilter(): void {
+  const input = document.getElementById('topics-filter') as HTMLInputElement | null
+  if (!input) return
+
+  let filterTimer: ReturnType<typeof setTimeout> | null = null
+  input.addEventListener('input', () => {
+    if (filterTimer) clearTimeout(filterTimer)
+    filterTimer = setTimeout(() => {
+      const q = input.value.trim().toLowerCase()
+      const tbody = document.getElementById('topics-tbody')
+      if (!tbody) return
+      const rows = tbody.querySelectorAll('tr')
+      let visible = 0
+      rows.forEach((row) => {
+        const name = (row as HTMLElement).dataset.topic || row.cells[0]?.textContent || ''
+        const match = !q || name.toLowerCase().includes(q)
+        ;(row as HTMLElement).style.display = match ? '' : 'none'
+        if (match) visible++
+      })
+    }, 200) // debounce 200ms
+  })
 }
 
 // ── Panel tab switching ──
@@ -696,6 +857,8 @@ function initPanelTabs(): void {
       const panelId = `panel-${(tab as HTMLElement).dataset.panel || ''}`
       const panel = document.getElementById(panelId)
       if (panel) panel.classList.add('active')
+      // Persist active tab
+      savePanelState({ activeTab: (tab as HTMLElement).dataset.panel || 'chat', sidebarWidth: parseInt(document.getElementById('sidebar')?.style.width || '240') })
     })
   })
 }
@@ -729,6 +892,8 @@ function initSidebarResize(): void {
       isResizing = false
       handle.classList.remove('active')
       document.body.style.cursor = ''
+      // Persist sidebar width
+      savePanelState({ activeTab: document.querySelector('.panel-tab.active')?.getAttribute('data-panel') || 'chat', sidebarWidth: parseInt(sidebar.style.width || '240') })
     }
   })
 }
@@ -769,6 +934,7 @@ function connectSSE(): void {
 
 // Store collapse state per section name
 const COLLAPSE_KEY = 'yu:sidebar-collapse'
+const PANEL_STATE_KEY = 'yu:panel-state'
 
 function loadCollapseState(): Record<string, boolean> {
   try { return JSON.parse(localStorage.getItem(COLLAPSE_KEY) || '{}') } catch { return {} }
@@ -778,6 +944,43 @@ function saveCollapseState(name: string, collapsed: boolean): void {
   const s = loadCollapseState()
   s[name] = collapsed
   localStorage.setItem(COLLAPSE_KEY, JSON.stringify(s))
+}
+
+// ── Panel state persistence ──
+
+interface PanelState {
+  activeTab: string
+  sidebarWidth: number
+}
+
+function loadPanelState(): PanelState {
+  try { return JSON.parse(localStorage.getItem(PANEL_STATE_KEY) || '{}') as PanelState } catch { return { activeTab: 'chat', sidebarWidth: 240 } }
+}
+
+function savePanelState(state: PanelState): void {
+  localStorage.setItem(PANEL_STATE_KEY, JSON.stringify(state))
+}
+
+function initPanelPersistence(): void {
+  const saved = loadPanelState()
+  // Restore active tab
+  const tab = document.querySelector(`.panel-tab[data-panel="${saved.activeTab}"]`) as HTMLElement | null
+  if (tab) {
+    document.querySelectorAll('.panel-tab').forEach((t) => t.classList.remove('active'))
+    document.querySelectorAll('.panel').forEach((p) => p.classList.remove('active'))
+    tab.classList.add('active')
+    const panel = document.getElementById(`panel-${saved.activeTab}`)
+    if (panel) panel.classList.add('active')
+  }
+  // Restore sidebar width
+  if (saved.sidebarWidth && saved.sidebarWidth !== 240) {
+    const sidebar = document.getElementById('sidebar')
+    if (sidebar) {
+      sidebar.style.width = `${saved.sidebarWidth}px`
+      sidebar.style.minWidth = `${saved.sidebarWidth}px`
+      document.documentElement.style.setProperty('--sidebar-width', `${saved.sidebarWidth}px`)
+    }
+  }
 }
 
 function initSidebarCollapse(): void {
@@ -851,6 +1054,9 @@ initTerminal()
 initSidebarCollapse()
 initPanelTabs()
 initSidebarResize()
+initPanelPersistence()
+initDashboardDetail()
+initTopicsFilter()
 inputEl.focus()
 
 // Re-fetch topics periodically (every 10s)

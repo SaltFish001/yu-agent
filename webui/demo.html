@@ -91,6 +91,8 @@
       <button class="panel-tab" data-panel="dashboard">📊 仪表盘</button>
       <button class="panel-tab" data-panel="topics">📋 主题</button>
       <button class="panel-tab" data-panel="bg">⏳ 后台</button>
+      <button class="panel-tab" data-panel="rules">🔒 规则</button>
+      <button class="panel-tab" data-panel="skills">🧩 技能</button>
     </div>
 
     <!-- Chat Panel -->
@@ -111,49 +113,60 @@
     <!-- Dashboard Panel -->
     <div id="panel-dashboard" class="panel">
       <div class="panel-header"><h2>仪表盘</h2></div>
-      <div class="dashboard-grid">
-        <div class="dashboard-card">
+      <div class="dashboard-grid" id="dash-grid-1">
+        <div class="dashboard-card" data-detail="uptime">
           <div class="card-label">运行时间</div>
           <div class="card-value" id="dash-uptime">-</div>
         </div>
-        <div class="dashboard-card">
+        <div class="dashboard-card" data-detail="mem">
           <div class="card-label">内存 (RSS)</div>
           <div class="card-value" id="dash-mem">-</div>
         </div>
-        <div class="dashboard-card">
+        <div class="dashboard-card" data-detail="rules">
           <div class="card-label">规则</div>
           <div class="card-value" id="dash-rules">0</div>
         </div>
-        <div class="dashboard-card">
+        <div class="dashboard-card" data-detail="tools">
           <div class="card-label">工具</div>
           <div class="card-value" id="dash-tools">0</div>
         </div>
       </div>
-      <div class="dashboard-grid">
-        <div class="dashboard-card">
+      <div class="dashboard-grid" id="dash-grid-2">
+        <div class="dashboard-card" data-detail="bg">
           <div class="card-label">后台任务</div>
           <div class="card-value" id="dash-bg-active">0</div>
           <div class="card-sub" id="dash-bg-detail"></div>
         </div>
-        <div class="dashboard-card">
+        <div class="dashboard-card" data-detail="events">
           <div class="card-label">事件</div>
           <div class="card-value" id="dash-events">0</div>
           <div class="card-sub" id="dash-events-detail"></div>
         </div>
-        <div class="dashboard-card">
+        <div class="dashboard-card" data-detail="version">
           <div class="card-label">版本</div>
           <div class="card-value" id="dash-version">-</div>
         </div>
-        <div class="dashboard-card">
+        <div class="dashboard-card" data-detail="agent">
           <div class="card-label">Agent 运行</div>
           <div class="card-value" id="dash-agent-runs">0</div>
         </div>
+      </div>
+      <!-- Dashboard detail expand area -->
+      <div id="dash-detail" class="dash-detail hidden">
+        <div class="dash-detail-header">
+          <span id="dash-detail-title"></span>
+          <button id="dash-detail-close" class="dash-detail-close">×</button>
+        </div>
+        <div id="dash-detail-body" class="dash-detail-body"></div>
       </div>
     </div>
 
     <!-- Topics Panel -->
     <div id="panel-topics" class="panel">
       <div class="panel-header"><h2>主题</h2></div>
+      <div class="panel-controls">
+        <input id="topics-filter" type="text" placeholder="筛选主题..." class="panel-filter" />
+      </div>
       <div id="topics-table-wrapper">
         <table id="topics-table">
           <thead><tr><th>名称</th><th>状态</th><th>轮次</th><th>上次活跃</th></tr></thead>
@@ -169,6 +182,28 @@
         <table id="bg-table">
           <thead><tr><th>ID</th><th>类型</th><th>状态</th><th>耗时</th><th>任务</th></tr></thead>
           <tbody id="bg-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Rules Panel -->
+    <div id="panel-rules" class="panel">
+      <div class="panel-header"><h2>规则</h2></div>
+      <div id="rules-table-wrapper">
+        <table id="rules-table">
+          <thead><tr><th>名称</th><th>触发器</th><th>动作</th><th>条件</th></tr></thead>
+          <tbody id="rules-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Skills Panel -->
+    <div id="panel-skills" class="panel">
+      <div class="panel-header"><h2>技能</h2></div>
+      <div id="skills-table-wrapper">
+        <table id="skills-table">
+          <thead><tr><th>名称</th><th>描述</th></tr></thead>
+          <tbody id="skills-tbody"></tbody>
         </table>
       </div>
     </div>
