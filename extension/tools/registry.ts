@@ -7,7 +7,7 @@
 
 import { createLogger } from '../logger.js'
 import type { ToolAuditHook, ToolEnhancement } from '../types.js'
-import { checkAuth, denyReason, type AuthConfig } from './auth.js'
+import { type AuthConfig, checkAuth, denyReason } from './auth.js'
 import { isToolEnabled } from './toggle.js'
 
 const log = createLogger('registry')
@@ -132,7 +132,9 @@ export async function executeTool(
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err))
       if (attempt < retryCount) {
-        log.warn(`Tool ${name} failed on attempt ${attempt + 1}/${retryCount + 1}, retrying...`, { error: lastError.message })
+        log.warn(`Tool ${name} failed on attempt ${attempt + 1}/${retryCount + 1}, retrying...`, {
+          error: lastError.message,
+        })
         continue
       }
       break

@@ -4,10 +4,10 @@
  * Tests path resolution, file scanning, config merging, and priority ordering.
  */
 
-import { describe, expect, it, beforeEach, afterEach } from 'bun:test'
-import { mkdirSync, rmSync, writeFileSync, existsSync } from 'fs'
-import { resolve } from 'path'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
+import { resolve } from 'path'
 
 const PROJECT_SCOPE = resolve(process.cwd(), '.yu')
 const USER_SCOPE = resolve(homedir(), '.yu')
@@ -294,18 +294,28 @@ describe('Scope config merging', () => {
   })
 
   it('project overrides user config (deep merge)', async () => {
-    writeScopeFileAt('user', '', 'mcp.config.json', JSON.stringify({
-      servers: {
-        common: { command: 'old-cmd', args: ['--old'] },
-        extra: { command: 'keep-me' },
-      },
-    }))
-    writeScopeFileAt('project', '', 'mcp.config.json', JSON.stringify({
-      servers: {
-        common: { command: 'new-cmd', args: ['--new'] },
-        newone: { command: 'new-srv' },
-      },
-    }))
+    writeScopeFileAt(
+      'user',
+      '',
+      'mcp.config.json',
+      JSON.stringify({
+        servers: {
+          common: { command: 'old-cmd', args: ['--old'] },
+          extra: { command: 'keep-me' },
+        },
+      }),
+    )
+    writeScopeFileAt(
+      'project',
+      '',
+      'mcp.config.json',
+      JSON.stringify({
+        servers: {
+          common: { command: 'new-cmd', args: ['--new'] },
+          newone: { command: 'new-srv' },
+        },
+      }),
+    )
 
     const { mergeJsonConfig } = await import('../extension/scope.js')
     const result = mergeJsonConfig<{ servers: Record<string, unknown> }>('mcp.config.json')
@@ -323,16 +333,26 @@ describe('Scope config merging', () => {
   })
 
   it('null value in higher scope overwrites lower scope value', async () => {
-    writeScopeFileAt('user', '', 'mcp.config.json', JSON.stringify({
-      servers: {
-        s1: { command: 'old', env: { KEY: 'val' } },
-      },
-    }))
-    writeScopeFileAt('project', '', 'mcp.config.json', JSON.stringify({
-      servers: {
-        s1: { command: null },
-      },
-    }))
+    writeScopeFileAt(
+      'user',
+      '',
+      'mcp.config.json',
+      JSON.stringify({
+        servers: {
+          s1: { command: 'old', env: { KEY: 'val' } },
+        },
+      }),
+    )
+    writeScopeFileAt(
+      'project',
+      '',
+      'mcp.config.json',
+      JSON.stringify({
+        servers: {
+          s1: { command: null },
+        },
+      }),
+    )
 
     const { mergeJsonConfig } = await import('../extension/scope.js')
     const result = mergeJsonConfig<{ servers: Record<string, unknown> }>('mcp.config.json')
@@ -345,12 +365,22 @@ describe('Scope config merging', () => {
   })
 
   it('deeply nested objects merge correctly', async () => {
-    writeScopeFileAt('user', '', 'mcp.config.json', JSON.stringify({
-      logging: { console: { level: 'info', format: 'text' }, file: { level: 'warn' } },
-    }))
-    writeScopeFileAt('project', '', 'mcp.config.json', JSON.stringify({
-      logging: { console: { level: 'debug' } },
-    }))
+    writeScopeFileAt(
+      'user',
+      '',
+      'mcp.config.json',
+      JSON.stringify({
+        logging: { console: { level: 'info', format: 'text' }, file: { level: 'warn' } },
+      }),
+    )
+    writeScopeFileAt(
+      'project',
+      '',
+      'mcp.config.json',
+      JSON.stringify({
+        logging: { console: { level: 'debug' } },
+      }),
+    )
 
     const { mergeJsonConfig } = await import('../extension/scope.js')
     const result = mergeJsonConfig<{ logging: Record<string, unknown> }>('mcp.config.json')
@@ -363,12 +393,22 @@ describe('Scope config merging', () => {
   })
 
   it('arrays are overwritten not merged', async () => {
-    writeScopeFileAt('user', '', 'mcp.config.json', JSON.stringify({
-      servers: { s1: { command: 'cmd', allowedUsers: ['alice', 'bob'] } },
-    }))
-    writeScopeFileAt('project', '', 'mcp.config.json', JSON.stringify({
-      servers: { s1: { allowedUsers: ['charlie'] } },
-    }))
+    writeScopeFileAt(
+      'user',
+      '',
+      'mcp.config.json',
+      JSON.stringify({
+        servers: { s1: { command: 'cmd', allowedUsers: ['alice', 'bob'] } },
+      }),
+    )
+    writeScopeFileAt(
+      'project',
+      '',
+      'mcp.config.json',
+      JSON.stringify({
+        servers: { s1: { allowedUsers: ['charlie'] } },
+      }),
+    )
 
     const { mergeJsonConfig } = await import('../extension/scope.js')
     const result = mergeJsonConfig<{ servers: Record<string, unknown> }>('mcp.config.json')
@@ -381,24 +421,39 @@ describe('Scope config merging', () => {
 
   it('three-level merge works', async () => {
     if (!canWriteGlobal()) return
-    writeScopeFileAt('global', '', 'mcp.config.json', JSON.stringify({
-      servers: {
-        base: { command: 'base-cmd' },
-        shared: { command: 'shared-global' },
-      },
-    }))
-    writeScopeFileAt('user', '', 'mcp.config.json', JSON.stringify({
-      servers: {
-        shared: { command: 'shared-user' },
-        userOnly: { command: 'user-only' },
-      },
-    }))
-    writeScopeFileAt('project', '', 'mcp.config.json', JSON.stringify({
-      servers: {
-        userOnly: { command: 'project-override' },
-        projOnly: { command: 'proj-only' },
-      },
-    }))
+    writeScopeFileAt(
+      'global',
+      '',
+      'mcp.config.json',
+      JSON.stringify({
+        servers: {
+          base: { command: 'base-cmd' },
+          shared: { command: 'shared-global' },
+        },
+      }),
+    )
+    writeScopeFileAt(
+      'user',
+      '',
+      'mcp.config.json',
+      JSON.stringify({
+        servers: {
+          shared: { command: 'shared-user' },
+          userOnly: { command: 'user-only' },
+        },
+      }),
+    )
+    writeScopeFileAt(
+      'project',
+      '',
+      'mcp.config.json',
+      JSON.stringify({
+        servers: {
+          userOnly: { command: 'project-override' },
+          projOnly: { command: 'proj-only' },
+        },
+      }),
+    )
 
     const { mergeJsonConfig } = await import('../extension/scope.js')
     const result = mergeJsonConfig<{ servers: Record<string, unknown> }>('mcp.config.json')

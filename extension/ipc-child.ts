@@ -14,14 +14,17 @@ import type { IpcMessage, IpcMessageType } from './types.js'
 
 const log = createLogger('ipc-child')
 
-// Shared message counter for seq generation
+// Worker globals for Bun's Worker context
+interface WorkerGlobals {
+  postMessage(message: string): void
+  close(): void
+  onmessage: ((event: MessageEvent) => void) | null
+}
+
+const isWorkerMode = typeof (globalThis as unknown as WorkerGlobals).postMessage === 'function'
 let msgSeq = 0
 
 type MessageHandler = (payload: unknown) => void | Promise<void>
-
-// Detect if running inside a Bun Worker context
-// In Workers, globalThis has postMessage but process.stdout may not be available
-const isWorkerMode = typeof (globalThis as any).postMessage === 'function'
 
 // Readline buffer for stdin (process mode only)
 let stdinBuffer = ''
@@ -47,10 +50,10 @@ function buildMessage(type: IpcMessageType, payload?: Record<string, unknown>): 
 export function send(type: IpcMessageType, payload?: Record<string, unknown>): boolean {
   try {
     if (isWorkerMode) {
-    ;(globalThis as any).postMessage(JSON.stringify(buildMessage(type, payload)))
+      ;(globalThis as unknown as WorkerGlobals).postMessage(JSON.stringify(buildMessage(type, payload)))
       return true
     }
-    const buffer = new TextEncoder().encode(JSON.stringify(buildMessage(type, payload)) + '\n')
+    const buffer = new TextEncoder().encode(`${JSON.stringify(buildMessage(type, payload))}\n`)
     return process.stdout.write(buffer) as unknown as boolean
   } catch {
     return false
@@ -91,10 +94,8 @@ function processLine(line: string, handlers: Record<string, MessageHandler>): vo
 /**
  * Set up IPC in Worker mode via self.onmessage.
  */
-function setupWorkerIPC(
-  handlers: Record<string, MessageHandler>,
-): void {
-  ;(globalThis as any).onmessage = (event: MessageEvent) => {
+function setupWorkerIPC(handlers: Record<string, MessageHandler>): void {
+  ;(globalThis as unknown as WorkerGlobals).onmessage = (event: MessageEvent) => {
     try {
       const raw = typeof event.data === 'string' ? event.data : new TextDecoder().decode(event.data)
       const msg = JSON.parse(raw) as IpcMessage
@@ -131,7 +132,6 @@ export function setupChildIPC(
     setupWorkerIPC(handlers)
     return
   }
-
   // ── Process mode: stdin reader ──
   ;(async () => {
     try {

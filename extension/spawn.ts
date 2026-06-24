@@ -62,11 +62,7 @@ let errorCount = 0
  * Create (or update) a spawn pool with a concurrency limit.
  * Agents of this type will queue up when at capacity.
  */
-export async function createSpawnPool(
-  type: string,
-  concurrency: number,
-  _config?: SpawnConfig,
-): Promise<void> {
+export async function createSpawnPool(type: string, concurrency: number, _config?: SpawnConfig): Promise<void> {
   const existing = pools.get(type)
   if (existing) {
     existing.maxConcurrency = concurrency
@@ -87,14 +83,20 @@ async function acquireSlot(type: string): Promise<() => void> {
 
   if (pool.running < pool.maxConcurrency) {
     pool.running++
-    return () => { pool.running--; dequeueNext(type) }
+    return () => {
+      pool.running--
+      dequeueNext(type)
+    }
   }
 
   // Queue
   return new Promise<() => void>((resolve) => {
     pool.queue.push(() => {
       pool.running++
-      resolve(() => { pool.running--; dequeueNext(type) })
+      resolve(() => {
+        pool.running--
+        dequeueNext(type)
+      })
     })
   })
 }
@@ -122,7 +124,9 @@ export async function spawnAgent(config: SpawnConfig): Promise<SpawnResult> {
     try {
       const { eventBus } = await import('./events.js')
       eventBus.emit('agent.started', { type: config.type, model: config.model, task: config.task.slice(0, 200) })
-    } catch { /* non-critical */ }
+    } catch {
+      /* non-critical */
+    }
 
     // Acquire pool slot
     const release = await acquireSlot(config.type)
@@ -143,8 +147,15 @@ export async function spawnAgent(config: SpawnConfig): Promise<SpawnResult> {
       // Emit agent.completed
       try {
         const { eventBus } = await import('./events.js')
-        eventBus.emit('agent.completed', { type: config.type, model: config.model, duration, iterations: result.iterations })
-      } catch { /* non-critical */ }
+        eventBus.emit('agent.completed', {
+          type: config.type,
+          model: config.model,
+          duration,
+          iterations: result.iterations,
+        })
+      } catch {
+        /* non-critical */
+      }
 
       return {
         response: result.output,
@@ -166,7 +177,9 @@ export async function spawnAgent(config: SpawnConfig): Promise<SpawnResult> {
       try {
         const { eventBus } = await import('./events.js')
         eventBus.emit('agent.error', { type: config.type, model: config.model, error: msg })
-      } catch { /* non-critical */ }
+      } catch {
+        /* non-critical */
+      }
 
       return {
         response: '',
@@ -193,7 +206,9 @@ export async function spawnAgent(config: SpawnConfig): Promise<SpawnResult> {
   try {
     const { eventBus } = await import('./events.js')
     eventBus.emit('task.started', { taskId: id, type: config.type, task: config.task.slice(0, 200) })
-  } catch { /* non-critical */ }
+  } catch {
+    /* non-critical */
+  }
 
   // Fire the agent in background (no await)
   const signal = bg.getSignal(id)
@@ -228,7 +243,9 @@ export async function spawnAgent(config: SpawnConfig): Promise<SpawnResult> {
         try {
           const { eventBus } = await import('./events.js')
           eventBus.emit('task.failed', { taskId: id, type: config.type, error: task.error ?? 'unknown' })
-        } catch { /* non-critical */ }
+        } catch {
+          /* non-critical */
+        }
       }
     }
   })()

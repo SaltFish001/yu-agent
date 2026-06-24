@@ -6,7 +6,7 @@
  */
 
 import crypto from 'crypto'
-import { mkdirSync, readdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'fs'
+import { existsSync, mkdirSync, readdirSync, renameSync } from 'fs'
 import path from 'path'
 import { getTasksDir, resolveBaseDir } from './mailbox.js'
 import { type Task, TaskSchema } from './types.js'

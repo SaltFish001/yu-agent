@@ -149,6 +149,9 @@ export class ContextManager {
   private cacheHitTokens = 0
   private cacheMissTokens = 0
 
+  // 内部创建时间（持久化用）
+  private _createdAt?: number
+
   // 子模块
   readonly tokenCounter: TokenCounter
 
@@ -392,7 +395,7 @@ export class ContextManager {
             totalPromptTokens: this.totalPromptTokens,
             totalCompletionTokens: this.totalCompletionTokens,
             updatedAt: Date.now(),
-            createdAt: (this as any)._createdAt ?? Date.now(),
+            createdAt: this._createdAt ?? Date.now(),
           },
           null,
           2,
@@ -427,7 +430,7 @@ export class ContextManager {
       cm.cacheMissTokens = data.cacheMissTokens ?? 0
       cm.totalPromptTokens = data.totalPromptTokens ?? 0
       cm.totalCompletionTokens = data.totalCompletionTokens ?? 0
-      ;(cm as any)._createdAt = data.createdAt ?? Date.now()
+      cm._createdAt = data.createdAt ?? Date.now()
       return cm
     } catch (err) {
       log.error('Failed to load context', err)

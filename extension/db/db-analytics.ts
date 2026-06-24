@@ -1,10 +1,7 @@
-import { Database as DatabaseSync } from 'bun:sqlite'
-import { getDb, getStatusDirPath } from './db-core.js'
 import { createLogger } from '../logger.js'
-import type { SessionMeta } from './db-core.js'
+import { getDb } from './db-core.js'
 
-const log = createLogger('db-analytics')
-
+const _log = createLogger('db-analytics')
 
 export interface UpdateSummaryOptions {
   /** 'accumulate' (default): add values to existing counts (old updateSessionSummary behavior).

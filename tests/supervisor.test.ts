@@ -4,7 +4,7 @@
  * 覆盖 IPC 消息处理 (handleChildMessage)、killChild、scheduleRestart。
  * Worker/process 启动本身（Bun.spawn / new Worker）在集成测试中覆盖。
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'bun:test'
 
 // ── Setup: create a Supervisor instance with minimal mocking ──
 
@@ -188,7 +188,9 @@ describe('killChild', () => {
   it('terminates a Worker child', () => {
     let terminated = false
     const mockWorker = {
-      terminate: () => { terminated = true },
+      terminate: () => {
+        terminated = true
+      },
       threadId: 42,
     }
 

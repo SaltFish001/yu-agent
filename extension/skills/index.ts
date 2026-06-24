@@ -10,7 +10,7 @@
  *   yu skill refresh                 Re-scan skills directory
  */
 
-import { scanSkills, listSkills, getSkill, refreshSkills } from './registry.js'
+import { getSkill, listSkills, refreshSkills } from './registry.js'
 import { SkillRunner } from './runner.js'
 
 // ── Global singleton runner (for CLI-driven activation) ──
@@ -30,9 +30,7 @@ export async function skillCommand(sub: string, args: string[]): Promise<string>
       const skills = await listSkills()
       if (skills.length === 0) return 'No skills loaded.\nPlace .ts skill files in ~/.yu/skills/'
 
-      const lines = skills.map(
-        (s) => `  ${s.def.name} v${s.def.version} — ${s.def.description}`,
-      )
+      const lines = skills.map((s) => `  ${s.def.name} v${s.def.version} — ${s.def.description}`)
       return `Loaded skills (${skills.length}):\n${lines.join('\n')}`
     }
 
@@ -49,7 +47,9 @@ export async function skillCommand(sub: string, args: string[]): Promise<string>
         `  Description: ${skill.def.description}`,
       ]
       if (skill.def.systemPrompt) {
-        lines.push(`  System prompt: ${skill.def.systemPrompt.slice(0, 200)}${skill.def.systemPrompt.length > 200 ? '...' : ''}`)
+        lines.push(
+          `  System prompt: ${skill.def.systemPrompt.slice(0, 200)}${skill.def.systemPrompt.length > 200 ? '...' : ''}`,
+        )
       }
       if (skill.def.requiresTools?.length) {
         lines.push(`  Requires tools: ${skill.def.requiresTools.join(', ')}`)
@@ -95,8 +95,6 @@ export async function skillCommand(sub: string, args: string[]): Promise<string>
       const skills = await listSkills()
       return `Skills refreshed. ${skills.length} skill(s) loaded.`
     }
-
-    case 'help':
     default:
       return `yu skill — Skill management
 

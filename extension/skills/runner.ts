@@ -12,12 +12,12 @@
  * at each iteration boundary.
  */
 
-import { createLogger } from '../logger.js'
-import type { LoadedSkill, SkillExecutionContext, SkillRunResult } from './types.js'
+import type { AgentLoop } from '../agent-loop.js'
 import { eventBus } from '../events.js'
+import { createLogger } from '../logger.js'
 import { listTools } from '../tools/registry.js'
 import { listSkills } from './registry.js'
-import { AgentLoop } from '../agent-loop.js'
+import type { LoadedSkill, SkillExecutionContext, SkillRunResult } from './types.js'
 
 const log = createLogger('skills:runner')
 
@@ -26,8 +26,6 @@ const log = createLogger('skills:runner')
 export class SkillRunner {
   private activeSkills: LoadedSkill[] = []
   private shared: Map<string, unknown> = new Map()
-
-  constructor() {}
 
   /**
    * Activate skills by name. Loads them from the registry if not already loaded.
@@ -43,7 +41,11 @@ export class SkillRunner {
           this.activeSkills.push(skill)
           log.info(`Skill activated: ${name}`)
           // Emit skill.activated
-          try { eventBus.emit('skill.activated', { name }) } catch { /* non-critical */ }
+          try {
+            eventBus.emit('skill.activated', { name })
+          } catch {
+            /* non-critical */
+          }
         }
       } else {
         log.warn(`Skill "${name}" not found in registry, skipping.`)
@@ -60,7 +62,11 @@ export class SkillRunner {
       this.activeSkills.splice(idx, 1)
       log.info(`Skill deactivated: ${name}`)
       // Emit skill.deactivated
-      try { eventBus.emit('skill.deactivated', { name }) } catch { /* non-critical */ }
+      try {
+        eventBus.emit('skill.deactivated', { name })
+      } catch {
+        /* non-critical */
+      }
     }
   }
 
@@ -155,7 +161,7 @@ export class SkillRunner {
   async runWithSkills(
     task: string,
     baseSystemPrompt: string,
-    options?: {
+    _options?: {
       onIteration?: (iteration: number, content: string) => void
     },
   ): Promise<SkillRunResult> {
@@ -174,7 +180,9 @@ export class SkillRunner {
     // Emit skill.executed
     try {
       eventBus.emit('skill.executed', { skills: skillsUsed, task: task.slice(0, 200) })
-    } catch { /* non-critical */ }
+    } catch {
+      /* non-critical */
+    }
 
     return {
       success: true,
@@ -197,20 +205,20 @@ export class SkillRunner {
 
     // Wrap the run() method to inject before/after iteration hooks
     const origRun = agent.run.bind(agent)
-    const self = this
+
     agent.run = async (task: string) => {
       const hookCtx: SkillExecutionContext = {
         messages: [{ role: 'user', content: task }],
         systemPrompt: combined,
-        shared: self.shared,
+        shared: this.shared,
       }
 
-      await self.runBeforeIteration(hookCtx)
+      await this.runBeforeIteration(hookCtx)
 
       const result = await origRun(task)
 
-      hookCtx.messages = ctx.getMessages() as any
-      await self.runAfterIteration(hookCtx)
+      hookCtx.messages = ctx.getMessages()
+      await this.runAfterIteration(hookCtx)
 
       return result
     }

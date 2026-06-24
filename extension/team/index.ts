@@ -212,8 +212,6 @@ export async function teamCommand(subcommand: string, args: string[]): Promise<s
     }
 
     default:
-      return (
-        `Unknown team command: ${subcommand}\n` + 'Available: create, list, status, send, task, shutdown, delete, specs'
-      )
+      return `Unknown team command: ${subcommand}\nAvailable: create, list, status, send, task, shutdown, delete, specs`
   }
 }

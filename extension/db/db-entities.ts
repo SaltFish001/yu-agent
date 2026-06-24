@@ -1,7 +1,6 @@
-import { Database as DatabaseSync } from 'bun:sqlite'
-import { getDb, getDbPath, getStatusDirPath } from './db-core.js'
 import { createLogger } from '../logger.js'
-import type { SessionMeta, MessageRow, TodoRow, SummaryRow, CacheRow } from './db-core.js'
+import type { CacheRow, MessageRow, SessionMeta, SummaryRow, TodoRow } from './db-core.js'
+import { getDb } from './db-core.js'
 
 const log = createLogger('db-entities')
 

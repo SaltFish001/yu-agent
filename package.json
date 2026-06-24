@@ -3,7 +3,7 @@
   "engines": {
     "bun": ">=1.2"
   },
-  "version": "0.1.0",
+  "version": "0.2.0-beta",
   "description": "DeepSeek-native AI programming agent — AgentLoop + ToolRegistry + Web UI",
   "type": "module",
   "author": "",
@@ -29,8 +29,8 @@
     "build:web": "bun build ./webui/assets/client.ts --outdir ./webui/assets --target browser --minify",
     "postbuild": "bun -e \"import { cpSync, existsSync, mkdirSync } from 'fs'; import { resolve } from 'path'; import { homedir } from 'os'; const src = resolve(import.meta.dir, 'prompts'); const dst = resolve(homedir(), '.yu', 'prompts'); if (!existsSync(dst)) mkdirSync(dst, { recursive: true }); cpSync(src, dst, { recursive: true, force: true }); console.log('Prompts synced to ' + dst);\"",
     "typecheck": "tsc --noEmit --project tsconfig.typecheck.json",
-    "lint": "biome lint .",
-    "lint:fix": "biome lint --apply .",
+    "lint": "biome lint ./bin/ ./extension/ ./tests/",
+    "lint:fix": "biome check --write --unsafe ./bin/ ./extension/ ./tests/",
     "format": "biome format .",
     "format:fix": "biome format --write .",
     "test": "bun test",

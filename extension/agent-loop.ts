@@ -235,7 +235,9 @@ export class AgentLoop {
             }
           }
         }
-      } catch { /* skip malformed */ }
+      } catch {
+        /* skip malformed */
+      }
     }
 
     // 格式 2: 内联 JSON 对象 — brace-counting 提取所有顶层 JSON
@@ -252,7 +254,9 @@ export class AgentLoop {
             })
           }
         }
-      } catch { /* not valid JSON, skip */ }
+      } catch {
+        /* not valid JSON, skip */
+      }
     }
 
     // 格式 3: tool_use XML block

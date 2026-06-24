@@ -124,7 +124,13 @@ export interface SupervisorStatus {
 
 export interface ToolAuditHook {
   before?: (params: { name: string; args: Record<string, unknown>; role?: string }) => void
-  after?: (params: { name: string; args: Record<string, unknown>; result: unknown; durationMs: number; role?: string }) => void
+  after?: (params: {
+    name: string
+    args: Record<string, unknown>
+    result: unknown
+    durationMs: number
+    role?: string
+  }) => void
   error?: (params: { name: string; args: Record<string, unknown>; error: Error; role?: string }) => void
 }
 

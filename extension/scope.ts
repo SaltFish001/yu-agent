@@ -10,8 +10,8 @@
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'fs'
-import { resolve, parse } from 'path'
 import { homedir } from 'os'
+import { parse, resolve } from 'path'
 import { createLogger } from './logger.js'
 
 const log = createLogger('scope')
@@ -114,9 +114,7 @@ export function findInScope(sub: string, name: string): string | null {
  * @param fileName   配置文件名（如 'mcp.config.json'）
  * @returns          合并后的对象
  */
-export function mergeJsonConfig<T extends Record<string, unknown>>(
-  fileName: string,
-): Partial<T> {
+export function mergeJsonConfig<T extends Record<string, unknown>>(fileName: string): Partial<T> {
   let merged: Record<string, unknown> = {}
 
   // 从低优先到高优先迭代，后加载覆盖先加载
@@ -167,10 +165,7 @@ function extnameLower(name: string): string {
 }
 
 /** 深层合并：b 的字段覆盖 a 的同名字段，对象则递归合并 */
-function deepMerge(
-  a: Record<string, unknown>,
-  b: Record<string, unknown>,
-): Record<string, unknown> {
+function deepMerge(a: Record<string, unknown>, b: Record<string, unknown>): Record<string, unknown> {
   const result = { ...a }
   for (const [key, val] of Object.entries(b)) {
     if (
@@ -182,10 +177,7 @@ function deepMerge(
       typeof result[key] === 'object' &&
       !Array.isArray(result[key])
     ) {
-      result[key] = deepMerge(
-        result[key] as Record<string, unknown>,
-        val as Record<string, unknown>,
-      )
+      result[key] = deepMerge(result[key] as Record<string, unknown>, val as Record<string, unknown>)
     } else {
       result[key] = val
     }

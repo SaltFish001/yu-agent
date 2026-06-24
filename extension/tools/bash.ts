@@ -57,7 +57,7 @@ registerTool({
         ),
       ])
 
-      const [exitCode, stdoutResult, stderrResult] = result as [number, any, any]
+      const [exitCode, stdoutResult, stderrResult] = result as [number, { value?: Uint8Array; done: boolean }, { value?: Uint8Array; done: boolean }]
       const stdout = new TextDecoder().decode(stdoutResult?.value ?? new Uint8Array())
       const stderr = new TextDecoder().decode(stderrResult?.value ?? new Uint8Array())
 

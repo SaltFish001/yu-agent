@@ -7,7 +7,7 @@
  */
 
 import { createLogger } from '../logger.js'
-import { McpTransport } from './transport.js'
+import type { McpTransport } from './transport.js'
 
 const log = createLogger('mcp:prompts')
 
@@ -38,18 +38,20 @@ export interface McpPromptMessage {
   /** 角色：user / assistant / system */
   role: 'user' | 'assistant' | 'system'
   /** 文本内容 */
-  content: {
-    type: 'text'
-    text: string
-  } | {
-    type: 'resource'
-    resource: {
-      uri: string
-      mimeType?: string
-      text?: string
-      blob?: string
-    }
-  }
+  content:
+    | {
+        type: 'text'
+        text: string
+      }
+    | {
+        type: 'resource'
+        resource: {
+          uri: string
+          mimeType?: string
+          text?: string
+          blob?: string
+        }
+      }
 }
 
 /** prompts/list 响应 */
@@ -72,10 +74,7 @@ export interface PromptsGetResult {
  * @param transport 已连接的 Transport 实例
  * @param timeoutMs 超时时间
  */
-export async function listPrompts(
-  transport: McpTransport,
-  timeoutMs = 15_000,
-): Promise<McpPrompt[]> {
+export async function listPrompts(transport: McpTransport, timeoutMs = 15_000): Promise<McpPrompt[]> {
   const result = (await transport.request('prompts/list', {}, timeoutMs)) as PromptsListResult | null
   if (!result || !Array.isArray(result.prompts)) {
     log.warn('prompts/list returned unexpected result', { result })

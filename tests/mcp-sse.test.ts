@@ -10,7 +10,7 @@
  *   - 测试超时、断线重连等异常场景
  */
 
-import { afterAll, beforeAll, beforeEach, afterEach, describe, expect, it } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import { SseTransport } from '../extension/mcp/transport-sse.js'
 
 // ── Mock SSE Server ─────────────────────────────────────
@@ -19,7 +19,7 @@ let server: { url: string; stop: () => void } | null = null
 let lastPostedBody: string | null = null
 let sseClients: Array<{ send: (event: string, data: string) => void; close: () => void }> = []
 let pendingResponses: Map<number, unknown> = new Map()
-let simulateDisconnect = false
+let _simulateDisconnect = false
 
 /**
  * 创建一个简单的 MCP SSE mock server。
@@ -36,7 +36,7 @@ async function createMockSseServer(): Promise<{ url: string; stop: () => void }>
       // SSE 端点
       if (path === '/sse') {
         let closed = false
-        let sendCallback: ((event: string, data: string) => void) | null = null
+        const _sendCallback: ((event: string, data: string) => void) | null = null
 
         let clientRef: { send: (event: string, data: string) => void; close: () => void } | null = null
 
@@ -52,7 +52,11 @@ async function createMockSseServer(): Promise<{ url: string; stop: () => void }>
             const closeCallback = () => {
               if (!closed) {
                 closed = true
-                try { controller.close() } catch { /* already closed */ }
+                try {
+                  controller.close()
+                } catch {
+                  /* already closed */
+                }
               }
             }
 
@@ -147,7 +151,7 @@ describe('SseTransport', () => {
     pendingResponses = new Map()
     lastPostedBody = null
     sseClients = []
-    simulateDisconnect = false
+    _simulateDisconnect = false
   })
 
   afterEach(() => {
@@ -219,7 +223,10 @@ describe('SseTransport', () => {
     // 模拟服务端推送通知
     await sleep(100) // 等待连接稳定
     for (const client of sseClients) {
-      client.send('message', JSON.stringify({ jsonrpc: '2.0', method: 'notifications/test', params: { hello: 'world' } }))
+      client.send(
+        'message',
+        JSON.stringify({ jsonrpc: '2.0', method: 'notifications/test', params: { hello: 'world' } }),
+      )
     }
 
     await sleep(200)

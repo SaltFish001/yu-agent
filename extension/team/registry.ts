@@ -4,7 +4,7 @@
  * Load and validate team spec files from ~/.yu/teams/{name}/config.json
  */
 
-import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'fs'
+import { mkdirSync } from 'fs'
 import path from 'path'
 import { resolveBaseDir } from './mailbox.js'
 import { type Member, type TeamSpec, TeamSpecSchema } from './types.js'

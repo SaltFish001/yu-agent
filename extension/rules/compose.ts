@@ -18,7 +18,7 @@
  */
 
 import { createLogger } from '../logger.js'
-import type { RuleDef, RuleCapability } from '../types.js'
+import type { RuleCapability, RuleDef } from '../types.js'
 import { getRule } from './registry.js'
 
 const log = createLogger('rules:compose')
@@ -28,22 +28,16 @@ const log = createLogger('rules:compose')
 function mergeCapabilities(parent: RuleCapability, child: RuleCapability): RuleCapability {
   return {
     // Union: parent tools + child tools
-    allowTools: [
-      ...new Set([...(parent.allowTools ?? []), ...(child.allowTools ?? [])]),
-    ],
+    allowTools: [...new Set([...(parent.allowTools ?? []), ...(child.allowTools ?? [])])],
     // Union: parent denies + child denies
-    denyTools: [
-      ...new Set([...(parent.denyTools ?? []), ...(child.denyTools ?? [])]),
-    ],
+    denyTools: [...new Set([...(parent.denyTools ?? []), ...(child.denyTools ?? [])])],
     // Stricter limit: smallest wins
     maxToolCalls:
       parent.maxToolCalls !== undefined && child.maxToolCalls !== undefined
         ? Math.min(parent.maxToolCalls, child.maxToolCalls)
         : (child.maxToolCalls ?? parent.maxToolCalls),
     // Union: parent + child MCP servers
-    allowMcpServers: [
-      ...new Set([...(parent.allowMcpServers ?? []), ...(child.allowMcpServers ?? [])]),
-    ],
+    allowMcpServers: [...new Set([...(parent.allowMcpServers ?? []), ...(child.allowMcpServers ?? [])])],
     // Stricter limit: smallest wins
     maxTokens:
       parent.maxTokens !== undefined && child.maxTokens !== undefined
@@ -63,10 +57,7 @@ function mergeRules(parent: RuleDef, child: RuleDef): RuleDef {
     maxTurns: child.maxTurns ?? parent.maxTurns,
     capabilities:
       child.capabilities || parent.capabilities
-        ? mergeCapabilities(
-            parent.capabilities ?? {},
-            child.capabilities ?? {},
-          )
+        ? mergeCapabilities(parent.capabilities ?? {}, child.capabilities ?? {})
         : undefined,
   }
 }

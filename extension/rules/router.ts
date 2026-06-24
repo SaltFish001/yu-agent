@@ -7,10 +7,10 @@
  */
 
 import { createLogger } from '../logger.js'
-import type { RuleDef, RuleCapability } from '../types.js'
 import { listTools, type ToolDefinition } from '../tools/registry.js'
+import type { RuleDef } from '../types.js'
 
-const log = createLogger('rules:router')
+const _log = createLogger('rules:router')
 
 // ── Tool filtering ─────────────────────────────────────
 
@@ -52,17 +52,14 @@ export function filterToolsForRule(rule: RuleDef): ToolDefinition[] {
  * Check if a specific tool is allowed for a given rule.
  * Returns { allowed: boolean; reason?: string }.
  */
-export function isToolAllowedForRule(
-  toolName: string,
-  rule: RuleDef,
-): { allowed: boolean; reason?: string } {
+export function isToolAllowedForRule(toolName: string, rule: RuleDef): { allowed: boolean; reason?: string } {
   const caps = rule.capabilities
   if (!caps) {
     return { allowed: true }
   }
 
   // denyTools takes precedence
-  if (caps.denyTools && caps.denyTools.includes(toolName)) {
+  if (caps.denyTools?.includes(toolName)) {
     return { allowed: false, reason: `Tool "${toolName}" is denied by rule "${rule.name}"` }
   }
 

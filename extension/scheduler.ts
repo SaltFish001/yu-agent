@@ -261,7 +261,7 @@ export async function handler(
     // Step 1: If --agent was specified, skip classification
     const ctx = sessionContext as SchedulerContext
     if (ctx.agentType) {
-      const { getAgentTypeConfig, AGENT_TYPES } = await import('./config.js')
+      const { getAgentTypeConfig } = await import('./config.js')
       const config = getAgentTypeConfig(ctx.agentType)
       if (!config) {
         return `Unknown agent type: "${ctx.agentType}"`

@@ -9,10 +9,10 @@
  *   yu rule refresh                 Re-scan rules directory
  */
 import { createLogger } from '../logger.js'
-import { scanRules, listRules, getRule, refreshRules } from './registry.js'
-import { resolveRule, composeRules } from './compose.js'
+import { composeRules, resolveRule } from './compose.js'
+import { getRule, listRules, refreshRules } from './registry.js'
 
-const log = createLogger('rule:command')
+const _log = createLogger('rule:command')
 
 export async function ruleCommand(sub: string, args: string[]): Promise<string> {
   switch (sub) {
@@ -61,8 +61,6 @@ export async function ruleCommand(sub: string, args: string[]): Promise<string> 
       const rules = await listRules()
       return `Rules refreshed. ${rules.length} rule(s) loaded.`
     }
-
-    case 'help':
     default:
       return `yu rule — Rule management
 

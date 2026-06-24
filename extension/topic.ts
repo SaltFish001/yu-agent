@@ -12,9 +12,9 @@ import { Database as DatabaseSync } from 'bun:sqlite'
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'fs'
 import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
-import type { ExtendedTopicStatus } from './types.js'
-import { createLogger } from './logger.js'
 import { eventBus } from './events.js'
+import { createLogger } from './logger.js'
+import type { ExtendedTopicStatus } from './types.js'
 
 const log = createLogger('topic')
 
@@ -262,7 +262,9 @@ export function create(name: string, dir: string): Topic {
   // Emit topic.created
   try {
     eventBus.emit('topic.created', { name, dir })
-  } catch { /* non-critical */ }
+  } catch {
+    /* non-critical */
+  }
 
   return {
     id,
@@ -301,7 +303,9 @@ export function switchTopic(name: string): void {
   // Emit topic.switched
   try {
     eventBus.emit('topic.switched', { name, from: topic.status })
-  } catch { /* non-critical */ }
+  } catch {
+    /* non-critical */
+  }
 }
 
 /**
@@ -337,7 +341,9 @@ export function archive(name: string): void {
   // Emit topic.archived
   try {
     eventBus.emit('topic.archived', { name })
-  } catch { /* non-critical */ }
+  } catch {
+    /* non-critical */
+  }
 }
 
 /**

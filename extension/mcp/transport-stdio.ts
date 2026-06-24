@@ -6,8 +6,7 @@
  */
 
 import { createLogger } from '../logger.js'
-import { McpTransport, type JsonRpcMessage } from './transport.js'
-import type { McpTransportConfig } from '../types.js'
+import { type JsonRpcMessage, McpTransport } from './transport.js'
 
 const log = createLogger('mcp:transport-stdio')
 
@@ -31,10 +30,6 @@ export class StdioTransport extends McpTransport {
 
   /** 行读取协程的 abort 控制器 */
   private readAbort: AbortController | null = null
-
-  constructor(config: McpTransportConfig) {
-    super(config)
-  }
 
   override async connect(): Promise<void> {
     if (this._connected) return
@@ -81,7 +76,7 @@ export class StdioTransport extends McpTransport {
     this.ensureConnected()
 
     const id = this.nextId()
-    const body = JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n'
+    const body = `${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`
 
     return new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -101,13 +96,13 @@ export class StdioTransport extends McpTransport {
 
   override async sendNotification(method: string, params?: unknown): Promise<void> {
     this.ensureConnected()
-    const body = JSON.stringify({ jsonrpc: '2.0', method, params }) + '\n'
+    const body = `${JSON.stringify({ jsonrpc: '2.0', method, params })}\n`
     await this.writeToStdin(body)
   }
 
   override async sendRaw(message: JsonRpcMessage): Promise<void> {
     this.ensureConnected()
-    const body = JSON.stringify(message) + '\n'
+    const body = `${JSON.stringify(message)}\n`
     await this.writeToStdin(body)
   }
 
@@ -254,7 +249,7 @@ export class StdioTransport extends McpTransport {
   }
 
   private rejectAllPending(error: Error): void {
-    for (const [id, pending] of this.pending) {
+    for (const [_id, pending] of this.pending) {
       clearTimeout(pending.timer)
       pending.reject(error)
     }

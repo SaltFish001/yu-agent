@@ -37,7 +37,7 @@ registerTool({
 
     try {
       const { readdirSync, statSync } = await import('fs')
-      const { resolve, extname } = await import('path')
+      const { resolve } = await import('path')
 
       let entries = readdirSync(dirPath)
       if (!showAll) {

@@ -29,8 +29,8 @@ import crypto from 'crypto'
 import { existsSync, mkdirSync, readFileSync } from 'fs'
 import { resolve } from 'path'
 import vm from 'vm'
-import { ensureDaemonRunning, getMaxBackground, writeEvent } from './topic.js'
 import { createLogger } from './logger.js'
+import { ensureDaemonRunning, getMaxBackground, writeEvent } from './topic.js'
 
 const log = createLogger('orchestrator')
 
@@ -218,9 +218,7 @@ function actionSpawnChild(topicName: string, promptTemplate: string, eventPayloa
 
     if (currentBg >= maxBg) {
       db.exec('ROLLBACK')
-      log.warn(
-        `Cannot spawn child for "${topicName}": background limit reached (${currentBg}/${maxBg})`,
-      )
+      log.warn(`Cannot spawn child for "${topicName}": background limit reached (${currentBg}/${maxBg})`)
       writeEvent(topicName, 'child_spawn_failed', { reason: 'background_limit', maxBg, currentBg })
       return
     }
@@ -234,9 +232,7 @@ function actionSpawnChild(topicName: string, promptTemplate: string, eventPayloa
       // Already exists — check it's idle before proceeding
       if (topicRow.status !== 'idle') {
         db.exec('ROLLBACK')
-        log.warn(
-          `Cannot spawn child for "${topicName}": topic status is "${topicRow.status}", expected "idle"`,
-        )
+        log.warn(`Cannot spawn child for "${topicName}": topic status is "${topicRow.status}", expected "idle"`)
         writeEvent(topicName, 'child_spawn_failed', { reason: 'topic_not_idle', status: topicRow.status })
         return
       }
@@ -305,9 +301,7 @@ export function checkAndTriggerOrchestrator(
   // P2-22: Circuit breaker — check depth before processing
   const depth = getOrchDepth()
   if (depth >= MAX_ORCH_DEPTH) {
-    log.warn(
-      `Circuit breaker triggered: max orchestration depth (${MAX_ORCH_DEPTH}) reached. Breaking chain.`,
-    )
+    log.warn(`Circuit breaker triggered: max orchestration depth (${MAX_ORCH_DEPTH}) reached. Breaking chain.`)
     resetOrchDepth()
     return
   }

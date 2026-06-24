@@ -105,7 +105,7 @@ async function fallbackGrep(
 ): Promise<ToolResult> {
   try {
     const { readdirSync, readFileSync, statSync } = await import('fs')
-    const { resolve, extname } = await import('path')
+    const { resolve } = await import('path')
     const regex = new RegExp(pattern, ignoreCase ? 'gi' : 'g')
 
     const results: string[] = []

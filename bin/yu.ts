@@ -18,7 +18,7 @@ import { createRequire } from 'module'
 
 const _require = createRequire(import.meta.url)
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { shutdownManager } from '../extension/lifecycle.js'
@@ -247,7 +247,7 @@ async function runDoctor(jsonOutput?: boolean): Promise<void> {
   let dbIntegrityOk = true
   let dbIntegrityDetail = ''
   try {
-    const { getDbPath, closeDb } = await import('../extension/db.js')
+    const { getDbPath } = await import('../extension/db.js')
     const dbPath = getDbPath()
     const dbExists = existsSync(dbPath)
     let dbDetail = dbPath
@@ -781,7 +781,9 @@ async function mainCli(): Promise<void> {
           console.log(`    Schema: <zod validator>`)
         }
         if (tool.enhancement.audit) {
-          console.log(`    Audit hooks: before=${!!tool.enhancement.audit.before}, after=${!!tool.enhancement.audit.after}, error=${!!tool.enhancement.audit.error}`)
+          console.log(
+            `    Audit hooks: before=${!!tool.enhancement.audit.before}, after=${!!tool.enhancement.audit.after}, error=${!!tool.enhancement.audit.error}`,
+          )
         }
       }
       process.exit(0)
@@ -828,11 +830,13 @@ async function mainCli(): Promise<void> {
           const raw = readFileSync(configPath, 'utf-8')
           const config = JSON.parse(raw)
           configured = Object.keys(config.servers || {})
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       }
 
       // Read status
-      let statusMap: Record<string, { status: string; tools?: string[]; error?: string }> = {}
+      const statusMap: Record<string, { status: string; tools?: string[]; error?: string }> = {}
       if (existsSync(statusPath)) {
         try {
           const raw = readFileSync(statusPath, 'utf-8')
@@ -840,7 +844,9 @@ async function mainCli(): Promise<void> {
           for (const s of statusData.servers || []) {
             statusMap[s.name] = s
           }
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       }
 
       if (configured.length === 0 && Object.keys(statusMap).length === 0) {
@@ -880,12 +886,14 @@ async function mainCli(): Promise<void> {
       if (existsSync(configPath)) {
         try {
           config = JSON.parse(readFileSync(configPath, 'utf-8'))
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       }
       if (!config.servers) config.servers = {}
 
       config.servers[name] = { command, args: extraArgs.length > 0 ? extraArgs : undefined }
-      writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf-8')
+      writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8')
       console.log(`MCP server "${name}" added to ${configPath}`)
       console.log('  Restart yu-agent to apply changes.')
       process.exit(0)
@@ -906,14 +914,16 @@ async function mainCli(): Promise<void> {
       if (existsSync(configPath)) {
         try {
           config = JSON.parse(readFileSync(configPath, 'utf-8'))
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       }
-      if (!config.servers || !config.servers[name]) {
+      if (!config.servers?.[name]) {
         console.error(`MCP server "${name}" not found in config.`)
         process.exit(1)
       }
       delete config.servers[name]
-      writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf-8')
+      writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8')
       console.log(`MCP server "${name}" removed from ${configPath}`)
       process.exit(0)
     }
@@ -930,7 +940,7 @@ async function mainCli(): Promise<void> {
   // coding/search/review/etc. Replaces the old hardcoded coding-agent spawn.
   if (args[0] === 'run') {
     const agentIdx = args.indexOf('--agent')
-    const bgIdx = args.indexOf('--bg') !== -1 ? args.indexOf('--bg') : args.indexOf('--background')
+    const _bgIdx = args.indexOf('--bg') !== -1 ? args.indexOf('--bg') : args.indexOf('--background')
     let agentName: string | undefined
     let isBackground = false
     const filtered: string[] = []
@@ -992,7 +1002,16 @@ async function mainCli(): Promise<void> {
         console.log('')
         for (const t of tasks) {
           const dur = t.endTime ? `${((t.endTime - t.startTime) / 1000).toFixed(1)}s` : '-'
-          const icon = t.status === 'completed' ? '✓' : t.status === 'failed' ? '✗' : t.status === 'running' ? '▶' : t.status === 'cancelled' ? '⊘' : '○'
+          const icon =
+            t.status === 'completed'
+              ? '✓'
+              : t.status === 'failed'
+                ? '✗'
+                : t.status === 'running'
+                  ? '▶'
+                  : t.status === 'cancelled'
+                    ? '⊘'
+                    : '○'
           console.log(`  ${icon} ${t.id}`)
           console.log(`     Type: ${t.type}  Status: ${t.status}  Duration: ${dur}`)
           console.log(`     Task: ${t.prompt}`)
@@ -1289,15 +1308,22 @@ async function mainCli(): Promise<void> {
       piArgs.push(`/${command}`)
     }
 
+  // Pi SDK 模块类型（可选依赖）
+  interface PiSdkModule {
+    main: (args: string[], opts: { extensionFactories: unknown[][] }) => Promise<void>
+    subagents?: unknown[]
+    yuAgent?: unknown
+  }
+
     // Dynamic import for Pi SDK (optional dependency)
-    const piMod = await import('@tintinweb/pi-subagents').catch(() => null)
+    const piMod = await import('@tintinweb/pi-subagents').catch(() => null) as PiSdkModule | null
     if (!piMod) {
       console.error('Pi SDK not available, cannot run command:', command)
       process.exit(1)
     }
-    const piMain = (piMod as any).main
-    const piSubagents = (piMod as any).subagents ?? []
-    const piYuAgent = (piMod as any).yuAgent ?? {}
+    const piMain = piMod.main
+    const piSubagents = piMod.subagents ?? []
+    const piYuAgent = (piMod.yuAgent ?? []) as unknown[]
     await piMain(piArgs, {
       extensionFactories: [piSubagents, piYuAgent],
     })
@@ -1382,7 +1408,9 @@ async function mainCli(): Promise<void> {
         const tag = readFileSync(LAST_SESSION_FILE, 'utf-8').trim()
         return tag || null
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     return null
   }
 
@@ -1390,7 +1418,9 @@ async function mainCli(): Promise<void> {
     try {
       mkdirSync(YU_HOME_DIR, { recursive: true })
       writeFileSync(LAST_SESSION_FILE, tag, 'utf-8')
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   // ── --new 标志 ────────────────────────────────────
@@ -1463,7 +1493,10 @@ async function mainCli(): Promise<void> {
         // Save session ID for next continuation (AgentLoop auto-generates one if not provided)
         const sessionsDir = resolve(process.env.HOME || '/home/saltfish', '.yu', 'sessions')
         const sessionFiles = existsSync(sessionsDir)
-          ? readdirSync(sessionsDir).filter((f) => f.endsWith('.json')).sort().reverse()
+          ? readdirSync(sessionsDir)
+              .filter((f) => f.endsWith('.json'))
+              .sort()
+              .reverse()
           : []
         // Use the most recently modified session file
         if (sessionFiles.length > 0) {

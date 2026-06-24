@@ -23,10 +23,10 @@ import { createLogger } from './logger.js'
 
 const log = createLogger('mcp-manager')
 
+import type { McpTransport } from './mcp/transport.js'
+import { StdioTransport } from './mcp/transport-stdio.js'
 import { mergeJsonConfig } from './scope.js'
 import { type MCPServerStatus, writeMCPStatus } from './status.js'
-import { McpTransport } from './mcp/transport.js'
-import { StdioTransport } from './mcp/transport-stdio.js'
 
 // ── 常量 ──────────────────────────────────────────────
 
@@ -469,7 +469,7 @@ export async function startMCPManager(): Promise<void> {
       continue
     }
 
-    const state = _servers.get(name)!
+    const _state = _servers.get(name)!
 
     // 3. init（异步，不阻塞整体启动）
     initServer(name).catch((err) => {

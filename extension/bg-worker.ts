@@ -28,8 +28,15 @@ const __dirname = dirname(__filename)
 
 const log = createLogger('bg-worker')
 
+// Worker globals for Bun's Worker context
+interface WorkerGlobals {
+  postMessage(message: string): void
+  close(): void
+  onmessage: ((event: MessageEvent) => void) | null
+}
+
 // Detect Worker mode
-const isWorkerMode = typeof (globalThis as any).postMessage === 'function'
+const isWorkerMode = typeof (globalThis as unknown as WorkerGlobals).postMessage === 'function'
 
 // ── Open a dedicated DB connection for write operations ──
 const TOPICS_DB_PATH = resolve(process.env.HOME || '/home/saltfish', '.yu', 'topics.db')
@@ -80,7 +87,7 @@ function bgSetSummary(name: string, summary: string): void {
 function gracefulExit(code: number, reason?: string): never {
   if (reason) log.info(`Exiting: ${reason}`)
   if (isWorkerMode) {
-    ;(globalThis as any).close()
+    ;(globalThis as unknown as WorkerGlobals).close()
     // self.close() doesn't stop execution immediately in all Bun versions
     // so we force-stop via throwing
     throw new Error(`exit:${code}`)
@@ -146,8 +153,12 @@ async function main(): Promise<void> {
 
   setupChildIPC(
     {
-      ping: () => { send('pong') },
-      shutdown: () => { gracefulExit(0, 'shutdown') },
+      ping: () => {
+        send('pong')
+      },
+      shutdown: () => {
+        gracefulExit(0, 'shutdown')
+      },
       'parent:shutdown': () => {
         log.info('Received parent:shutdown, cleaning up and exiting')
         bgSetStatus(topicName, 'idle')

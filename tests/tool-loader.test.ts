@@ -11,10 +11,10 @@
  *   - Global audit hook (setGlobalAuditHook)
  */
 
-import { describe, expect, it, afterEach, beforeEach } from 'bun:test'
-import { existsSync, mkdirSync, rmSync, writeFileSync, readdirSync } from 'fs'
-import { resolve } from 'path'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
+import { resolve } from 'path'
 import { z } from 'zod'
 
 // ── Helpers ─────────────────────────────────────────────

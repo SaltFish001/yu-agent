@@ -4,10 +4,10 @@
  * Tests the rule loading, tool filtering, and rule composition logic.
  */
 
-import { describe, expect, it, beforeEach, afterEach } from 'bun:test'
-import { mkdirSync, rmSync, writeFileSync, existsSync } from 'fs'
-import { resolve } from 'path'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
+import { resolve } from 'path'
 
 const RULES_DIR = resolve(homedir(), '.yu', 'rules')
 

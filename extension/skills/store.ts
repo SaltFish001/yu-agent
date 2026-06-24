@@ -13,9 +13,9 @@ import { createLogger } from '../logger.js'
 
 const log = createLogger('skills:store')
 
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs'
-import { resolve } from 'path'
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
+import { resolve } from 'path'
 
 // ── Types ───────────────────────────────────────────────
 
@@ -47,7 +47,7 @@ export function readStoreIndex(): StoreSkillRef[] {
 
 export function writeStoreIndex(skills: StoreSkillRef[]): void {
   try {
-    writeFileSync(STORE_INDEX_PATH, JSON.stringify(skills, null, 2) + '\n', 'utf-8')
+    writeFileSync(STORE_INDEX_PATH, `${JSON.stringify(skills, null, 2)}\n`, 'utf-8')
   } catch (err) {
     log.error('Failed to write skill store index', err)
   }
@@ -59,8 +59,8 @@ export function writeStoreIndex(skills: StoreSkillRef[]): void {
  */
 export function scanInstalledSkills(): StoreSkillRef[] {
   const scopes = [
-    resolve('/etc', 'yu', 'skills'),    // 全局 (root 配置)
-    resolve(YU_HOME, 'skills'),          // 用户作用域
+    resolve('/etc', 'yu', 'skills'), // 全局 (root 配置)
+    resolve(YU_HOME, 'skills'), // 用户作用域
     resolve(process.cwd(), '.yu', 'skills'), // 项目作用域
   ]
 
@@ -150,7 +150,7 @@ export function readRemoteSources(): RemoteSkillSource[] {
 
 export function writeRemoteSources(sources: RemoteSkillSource[]): void {
   try {
-    writeFileSync(REMOTE_SOURCE_PATH, JSON.stringify(sources, null, 2) + '\n', 'utf-8')
+    writeFileSync(REMOTE_SOURCE_PATH, `${JSON.stringify(sources, null, 2)}\n`, 'utf-8')
   } catch (err) {
     log.error('Failed to write remote skill sources', err)
   }

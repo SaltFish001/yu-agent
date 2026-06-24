@@ -7,8 +7,8 @@
  * 注：测试纯函数（parseToolCalls / extractJsonObjects / buildResult）
  * 而非 AgentLoop 类，避免 CI 上类加载问题。
  */
-import { describe, it, expect } from 'bun:test'
-import { parseToolCalls, extractJsonObjects, buildResult } from '../extension/tool-call-parser'
+import { describe, expect, it } from 'bun:test'
+import { buildResult, extractJsonObjects, parseToolCalls } from '../extension/tool-call-parser'
 
 // ── parseToolCalls tests ──
 
@@ -22,7 +22,8 @@ describe('parseToolCalls — JSON block format', () => {
   })
 
   it('handles multiple tool calls in one JSON block', () => {
-    const content = '```json\n[{"function": "read_file", "args": {"path": "a.ts"}}, {"function": "read_file", "args": {"path": "b.ts"}}]\n```'
+    const content =
+      '```json\n[{"function": "read_file", "args": {"path": "a.ts"}}, {"function": "read_file", "args": {"path": "b.ts"}}]\n```'
     const calls = parseToolCalls(content)
     expect(calls.length).toBe(2)
     expect(calls[0].name).toBe('read_file')
@@ -37,7 +38,8 @@ describe('parseToolCalls — JSON block format', () => {
   })
 
   it('handles nested args in JSON block', () => {
-    const content = '```json\n[{"function": "write_file", "args": {"path": "test.ts", "content": "{\\"key\\": \\"value\\"}"}}]\n```'
+    const content =
+      '```json\n[{"function": "write_file", "args": {"path": "test.ts", "content": "{\\"key\\": \\"value\\"}"}}]\n```'
     const calls = parseToolCalls(content)
     expect(calls.length).toBe(1)
     expect(calls[0].name).toBe('write_file')
@@ -71,7 +73,8 @@ describe('parseToolCalls — inline JSON format', () => {
   })
 
   it('handles multiple inline JSON objects', () => {
-    const content = 'First {"function": "bash", "args": {"command": "ls"}} Second {"function": "grep", "args": {"pattern": "test"}}'
+    const content =
+      'First {"function": "bash", "args": {"command": "ls"}} Second {"function": "grep", "args": {"pattern": "test"}}'
     const calls = parseToolCalls(content)
     expect(calls.length).toBe(2)
     expect(calls[0].name).toBe('bash')
@@ -79,7 +82,8 @@ describe('parseToolCalls — inline JSON format', () => {
   })
 
   it('deduplicates calls found by both JSON block and inline parser', () => {
-    const content = '```json\n[{"function": "bash", "args": {"command": "ls"}}]\n```\nAlso {"function": "bash", "args": {"command": "ls"}}'
+    const content =
+      '```json\n[{"function": "bash", "args": {"command": "ls"}}]\n```\nAlso {"function": "bash", "args": {"command": "ls"}}'
     const calls = parseToolCalls(content)
     // Should be deduplicated
     expect(calls.length).toBe(1)
@@ -114,7 +118,8 @@ describe('parseToolCalls — XML format', () => {
 
 describe('parseToolCalls — mixed formats', () => {
   it('handles JSON + XML in the same response', () => {
-    const content = '```json\n[{"function": "bash", "args": {"command": "ls"}}]\n```\n<tool_use><name>grep</name><args>{"pattern": "test"}</args></tool_use>'
+    const content =
+      '```json\n[{"function": "bash", "args": {"command": "ls"}}]\n```\n<tool_use><name>grep</name><args>{"pattern": "test"}</args></tool_use>'
     const calls = parseToolCalls(content)
     // Both should be found, no dedup since names differ
     expect(calls.length).toBe(2)

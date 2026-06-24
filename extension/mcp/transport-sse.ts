@@ -13,8 +13,8 @@
  */
 
 import { createLogger } from '../logger.js'
-import { McpTransport, type JsonRpcMessage } from './transport.js'
 import type { McpTransportConfig } from '../types.js'
+import { type JsonRpcMessage, McpTransport } from './transport.js'
 
 const log = createLogger('mcp:transport-sse')
 
@@ -76,8 +76,6 @@ export class SseTransport extends McpTransport {
   private sseUrl: string
   /** 服务端返回的 POST 端点 URL */
   private postUrl: string | null = null
-  /** SSE 连接的 AbortController（仅用于初始 fetch 阶段） */
-  private sseAbort: AbortController | null = null
   /** SSE 读取协程 promise */
   private sseReadPromise: Promise<void> | null = null
   /** SSE 流 reader 引用，用于在 close() 时直接取消 */
@@ -236,8 +234,9 @@ export class SseTransport extends McpTransport {
    * 读取 SSE 流，解析 events 并分发。
    */
   private async readSseStream(body: ReadableStream<Uint8Array>): Promise<void> {
-   const reader = body.getReader() as any
-   this.sseReader = reader
+    // biome-ignore lint/suspicious/noExplicitAny: Bun's ReadableStreamDefaultReader type requires readMany but Web Streams API doesn't provide it
+    const reader = body.getReader() as any
+    this.sseReader = reader
     const decoder = new TextDecoder()
     let buffer = ''
 
@@ -358,7 +357,7 @@ export class SseTransport extends McpTransport {
     // 这发生在某些 MCP 服务器直接返回结果而不是通过 SSE 推送
     const contentType = resp.headers.get('content-type') ?? ''
     if (contentType.includes('application/json')) {
-      const responseBody = (await resp.json()) as any
+      const responseBody = (await resp.json()) as Record<string, unknown>
       if (responseBody?.id != null || responseBody?.result != null || responseBody?.error != null) {
         this.handleSseEvent({ event: 'message', data: JSON.stringify(responseBody) })
       }

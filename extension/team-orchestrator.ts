@@ -1,5 +1,5 @@
-import { createLogger } from './logger.js'
 import { eventBus } from './events.js'
+import { createLogger } from './logger.js'
 
 const log = createLogger('team-orch')
 
@@ -69,7 +69,9 @@ export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, 
   // Emit team.started
   try {
     eventBus.emit('team.started', { taskId, mode: 'architect-searcher', sharedDir })
-  } catch { /* non-critical */ }
+  } catch {
+    /* non-critical */
+  }
 
   // Phase 1: Architect + Searcher in parallel
   const architectCfg = await resolveRoleConfig('architect', 'plan')
@@ -129,7 +131,9 @@ export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, 
   // Emit team.phase
   try {
     eventBus.emit('team.phase', { taskId, phase: 'plan-ready', sharedDir })
-  } catch { /* non-critical */ }
+  } catch {
+    /* non-critical */
+  }
 
   // Phase 2: Read plan, spawn Coder(s)
   const planContent = readFileSync(planFile, 'utf-8')
@@ -303,8 +307,13 @@ export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, 
 
   // Emit team.completed
   try {
-    eventBus.emit('team.completed', { taskId, conflictedFiles: conflictedFiles.length > 0 ? conflictedFiles : undefined })
-  } catch { /* non-critical */ }
+    eventBus.emit('team.completed', {
+      taskId,
+      conflictedFiles: conflictedFiles.length > 0 ? conflictedFiles : undefined,
+    })
+  } catch {
+    /* non-critical */
+  }
 
   return `Team mode complete (${taskId})${conflictedFiles.length > 0 ? `. Conflicts in: ${conflictedFiles.join(', ')}` : ''}`
 }

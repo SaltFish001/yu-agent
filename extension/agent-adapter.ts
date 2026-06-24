@@ -12,6 +12,7 @@ import { createLogger } from './logger.js'
 const log = createLogger('agent-adapter')
 
 import { AgentLoop, type AgentLoopConfig, type AgentLoopResult } from './agent-loop.js'
+import type { SpawnConfig } from './spawn.js'
 
 // ── 适配器 ──────────────────────────────────────────────
 
@@ -57,7 +58,7 @@ async function spawnPiAgent(options: SpawnAgentOptions): Promise<AgentLoopResult
       maxTurns: options.maxIterations ?? 10,
       task: options.task,
       timeout: 120_000,
-    } as any)
+    } as SpawnConfig)
 
     return {
       success: true,

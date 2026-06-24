@@ -16,7 +16,7 @@
 import { createLogger } from '../logger.js'
 import type { McpTransport } from './transport.js'
 
-const log = createLogger('mcp-stream')
+const _log = createLogger('mcp-stream')
 
 export interface StreamEvent {
   type: 'progress' | 'result' | 'error'
@@ -46,7 +46,7 @@ export async function streamToolCall(
   const events: StreamEvent[] = []
 
   // Register notification listener for progress events
-  const origOnNotification = transport['events']?.onNotification
+  const origOnNotification = transport.events?.onNotification
   transport.setEvents({
     onNotification: (notification) => {
       events.push({
@@ -57,8 +57,8 @@ export async function streamToolCall(
       // Forward to original handler if set
       origOnNotification?.(notification)
     },
-    onClose: transport['events']?.onClose,
-    onError: transport['events']?.onError,
+    onClose: transport.events?.onClose,
+    onError: transport.events?.onError,
   })
 
   try {
@@ -79,8 +79,8 @@ export async function streamToolCall(
     // Restore original notification handler
     transport.setEvents({
       onNotification: origOnNotification || undefined,
-      onClose: transport['events']?.onClose,
-      onError: transport['events']?.onError,
+      onClose: transport.events?.onClose,
+      onError: transport.events?.onError,
     })
   }
 }
@@ -89,10 +89,7 @@ export async function streamToolCall(
  * Execute a streaming resources/read call.
  * Returns a ReadableStream of resource contents for large resources.
  */
-export async function streamResourceRead(
-  transport: McpTransport,
-  uri: string,
-): Promise<ReadableStream<unknown>> {
+export async function streamResourceRead(transport: McpTransport, uri: string): Promise<ReadableStream<unknown>> {
   const result = await transport.request('resources/read', { uri })
   const contents = (result as { contents?: unknown[] })?.contents || []
   return new ReadableStream({

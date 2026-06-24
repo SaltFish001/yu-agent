@@ -11,9 +11,8 @@
  *   const tasks = bg.list()
  */
 
-import { createLogger } from './logger.js'
-import type { BusEvent } from './events.js'
 import { eventBus } from './events.js'
+import { createLogger } from './logger.js'
 
 const log = createLogger('background')
 
@@ -101,7 +100,9 @@ export const bg = {
       // Emit task.started
       try {
         eventBus.emit('task.started', { taskId: id, type: t.type, prompt: t.prompt })
-      } catch { /* non-critical */ }
+      } catch {
+        /* non-critical */
+      }
     }
   },
 
@@ -118,7 +119,9 @@ export const bg = {
       // Emit task.completed
       try {
         eventBus.emit('task.completed', { taskId: id, type: t.type, task: t.prompt, duration: t.endTime - t.startTime })
-      } catch { /* non-critical */ }
+      } catch {
+        /* non-critical */
+      }
     }
   },
 
@@ -135,7 +138,9 @@ export const bg = {
       // Emit task.failed
       try {
         eventBus.emit('task.failed', { taskId: id, type: t.type, error, duration: t.endTime - t.startTime })
-      } catch { /* non-critical */ }
+      } catch {
+        /* non-critical */
+      }
     }
   },
 

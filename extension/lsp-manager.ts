@@ -344,7 +344,7 @@ export class LspManager {
     if (stdin === -1 || typeof stdin === 'number') {
       throw new Error('LSP server stdin closed')
     }
-    const writer = (stdin as any).getWriter?.() as WritableStreamDefaultWriter | undefined
+    const writer = (stdin as { getWriter?: () => WritableStreamDefaultWriter }).getWriter?.() as WritableStreamDefaultWriter | undefined
     if (!writer) {
       throw new Error('LSP server stdin is not a writable stream')
     }

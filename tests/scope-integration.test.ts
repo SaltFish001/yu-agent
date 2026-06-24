@@ -5,10 +5,10 @@
  * all three scope levels (global / user / project) with correct priority.
  */
 
-import { describe, expect, it, beforeEach, afterEach } from 'bun:test'
-import { mkdirSync, rmSync, writeFileSync, existsSync } from 'fs'
-import { resolve } from 'path'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
+import { resolve } from 'path'
 
 const PROJECT_SCOPE = resolve(process.cwd(), '.yu')
 const USER_SCOPE = resolve(homedir(), '.yu')
@@ -152,8 +152,8 @@ describe('Scope + Roles integration', () => {
   })
 
   it('project scope role overrides user scope on name conflict', async () => {
-    writeAt('user', 'rules', 'ops.yaml', roleContent('ops') + '\nsystemPrompt: user-prompt\n')
-    writeAt('project', 'rules', 'ops.yaml', roleContent('ops') + '\nsystemPrompt: project-prompt\n')
+    writeAt('user', 'rules', 'ops.yaml', `${roleContent('ops')}\nsystemPrompt: user-prompt\n`)
+    writeAt('project', 'rules', 'ops.yaml', `${roleContent('ops')}\nsystemPrompt: project-prompt\n`)
     const { scanRules, getRule } = await import('../extension/rules/registry.js')
     await scanRules()
     const role = await getRule('ops')
@@ -215,15 +215,30 @@ describe('Scope + MCP config integration', () => {
 
   it('merges config from all three scopes', async () => {
     if (!canWriteGlobal()) return
-    writeAt('global', '', 'mcp.config.json', JSON.stringify({
-      servers: { base: { command: 'base' } },
-    }))
-    writeAt('user', '', 'mcp.config.json', JSON.stringify({
-      servers: { userSrv: { command: 'user-only' } },
-    }))
-    writeAt('project', '', 'mcp.config.json', JSON.stringify({
-      servers: { projSrv: { command: 'proj-only' } },
-    }))
+    writeAt(
+      'global',
+      '',
+      'mcp.config.json',
+      JSON.stringify({
+        servers: { base: { command: 'base' } },
+      }),
+    )
+    writeAt(
+      'user',
+      '',
+      'mcp.config.json',
+      JSON.stringify({
+        servers: { userSrv: { command: 'user-only' } },
+      }),
+    )
+    writeAt(
+      'project',
+      '',
+      'mcp.config.json',
+      JSON.stringify({
+        servers: { projSrv: { command: 'proj-only' } },
+      }),
+    )
     const { mergeJsonConfig } = await import('../extension/scope.js')
     const result = mergeJsonConfig<{ servers: Record<string, unknown> }>('mcp.config.json')
     const srvs = result.servers as Record<string, unknown>
@@ -234,12 +249,22 @@ describe('Scope + MCP config integration', () => {
   })
 
   it('project config overrides user config for same server', async () => {
-    writeAt('user', '', 'mcp.config.json', JSON.stringify({
-      servers: { s1: { command: 'old-cmd', args: ['--old'] } },
-    }))
-    writeAt('project', '', 'mcp.config.json', JSON.stringify({
-      servers: { s1: { command: 'new-cmd' } },
-    }))
+    writeAt(
+      'user',
+      '',
+      'mcp.config.json',
+      JSON.stringify({
+        servers: { s1: { command: 'old-cmd', args: ['--old'] } },
+      }),
+    )
+    writeAt(
+      'project',
+      '',
+      'mcp.config.json',
+      JSON.stringify({
+        servers: { s1: { command: 'new-cmd' } },
+      }),
+    )
     const { mergeJsonConfig } = await import('../extension/scope.js')
     const result = mergeJsonConfig<{ servers: Record<string, unknown> }>('mcp.config.json')
     const s1 = (result.servers as Record<string, unknown>).s1 as Record<string, unknown>

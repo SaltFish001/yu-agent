@@ -41,8 +41,8 @@ function buildMessage(type: IpcMessageType, payload?: Record<string, unknown>): 
  */
 export function sendToChild(child: Subprocess, type: IpcMessageType, payload?: Record<string, unknown>): boolean {
   try {
-    const buffer = new TextEncoder().encode(JSON.stringify(buildMessage(type, payload)) + '\n')
-    const n = (child.stdin as any)?.write(buffer)
+    const buffer = new TextEncoder().encode(`${JSON.stringify(buildMessage(type, payload))}\n`)
+    const n = (child.stdin as { write(data: Uint8Array): number })?.write(buffer)
     return typeof n === 'number' && n > 0
   } catch {
     return false
@@ -108,10 +108,14 @@ export function waitForMessage(
                 resolve(msg)
                 return
               }
-            } catch { /* malformed line, skip */ }
+            } catch {
+              /* malformed line, skip */
+            }
           }
         }
-      } catch { /* stream error */ }
+      } catch {
+        /* stream error */
+      }
       cleanup()
       reject(new Error('Child stdout closed while waiting'))
     }
@@ -159,7 +163,9 @@ export function waitForWorkerMessage(
         }
         // Pass through to original handler
         origOnMessage?.call(worker, event)
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
   })
 }

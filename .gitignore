@@ -23,3 +23,7 @@ fibonacci.ts
 dedup.ts
 *.tgz
 package-lock.json
+*.db
+*.db-wal
+*.db-shm
+.yu-agent/

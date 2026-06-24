@@ -7,7 +7,7 @@
  */
 
 import { createLogger } from '../logger.js'
-import { McpTransport } from './transport.js'
+import type { McpTransport } from './transport.js'
 
 const log = createLogger('mcp:resources')
 
@@ -56,10 +56,7 @@ export interface ResourcesReadResult {
  * @param transport 已连接的 Transport 实例
  * @param timeoutMs 超时时间
  */
-export async function listResources(
-  transport: McpTransport,
-  timeoutMs = 15_000,
-): Promise<McpResource[]> {
+export async function listResources(transport: McpTransport, timeoutMs = 15_000): Promise<McpResource[]> {
   const result = (await transport.request('resources/list', {}, timeoutMs)) as ResourcesListResult | null
   if (!result || !Array.isArray(result.resources)) {
     log.warn('resources/list returned unexpected result', { result })
@@ -92,10 +89,7 @@ export async function readResource(
  * @param transport 已连接的 Transport 实例
  * @param uri 资源 URI
  */
-export async function subscribeResource(
-  transport: McpTransport,
-  uri: string,
-): Promise<void> {
+export async function subscribeResource(transport: McpTransport, uri: string): Promise<void> {
   await transport.request('resources/subscribe', { uri }, 10_000)
 }
 
@@ -104,10 +98,7 @@ export async function subscribeResource(
  * @param transport 已连接的 Transport 实例
  * @param uri 资源 URI
  */
-export async function unsubscribeResource(
-  transport: McpTransport,
-  uri: string,
-): Promise<void> {
+export async function unsubscribeResource(transport: McpTransport, uri: string): Promise<void> {
   await transport.sendNotification('notifications/resources/unsubscribe', { uri })
 }
 

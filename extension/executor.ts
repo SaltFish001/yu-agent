@@ -11,7 +11,6 @@ const log = createLogger('executor')
 
 import { createInterface } from 'readline'
 import { checkpointGuard } from './checkpoint.js'
-import type { ResourceLimits } from './config.js'
 import type { SpawnResult } from './spawn.js'
 import { type SpawnConfig, spawnAgent } from './spawn.js'
 import { trackAgent } from './tracker.js'

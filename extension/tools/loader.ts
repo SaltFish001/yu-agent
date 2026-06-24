@@ -6,9 +6,9 @@
  */
 
 import { createLogger } from '../logger.js'
-import { registerTool } from './registry.js'
+import { ensureScopeDirs, scanScopeFiles } from '../scope.js'
 import type { ToolDefinition } from './registry.js'
-import { scanScopeFiles, ensureScopeDirs } from '../scope.js'
+import { registerTool } from './registry.js'
 
 const log = createLogger('tool-loader')
 
@@ -29,11 +29,7 @@ export async function loadUserTools(): Promise<number> {
   for (const file of files) {
     try {
       const mod = await import(file.path)
-      const tools: ToolDefinition[] = Array.isArray(mod.default)
-        ? mod.default
-        : mod.default
-          ? [mod.default]
-          : []
+      const tools: ToolDefinition[] = Array.isArray(mod.default) ? mod.default : mod.default ? [mod.default] : []
 
       for (const tool of tools) {
         if (tool?.name) {

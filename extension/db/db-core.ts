@@ -22,7 +22,7 @@
 
 import { createLogger } from '../logger.js'
 
-const log = createLogger('db')
+const _log = createLogger('db')
 
 import { Database as DatabaseSync } from 'bun:sqlite'
 import { existsSync, mkdirSync } from 'fs'
@@ -475,4 +475,3 @@ export function closeDb(): void {
   }
   _dbs.clear()
 }
-

@@ -8,7 +8,7 @@
  * 静态文件拆分 assets/ 目录，零 CDN 依赖。
  */
 
-import { describe, test, expect, beforeAll, afterAll } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { createServer } from '../webui/server'
 
 const PORT = 19876
@@ -29,7 +29,7 @@ afterAll(() => {
 
 describe('GET /', () => {
   test('返回 200 + HTML', async () => {
-    const res = await fetch(BASE + '/')
+    const res = await fetch(`${BASE}/`)
     expect(res.status).toBe(200)
     expect(res.headers.get('Content-Type')).toContain('text/html')
     const html = await res.text()
@@ -38,12 +38,12 @@ describe('GET /', () => {
   })
 
   test('Cache-Control 为 no-cache', async () => {
-    const res = await fetch(BASE + '/')
+    const res = await fetch(`${BASE}/`)
     expect(res.headers.get('Cache-Control')).toContain('no-cache')
   })
 
   test('HTML 无 CDN 外链', async () => {
-    const html = await (await fetch(BASE + '/')).text()
+    const html = await (await fetch(`${BASE}/`)).text()
     expect(html).not.toContain('cdn.')
     expect(html).not.toContain('unpkg.com')
     expect(html).not.toContain('googleapis.com')
@@ -55,7 +55,7 @@ describe('GET /', () => {
 
 describe('GET /assets/* (静态文件)', () => {
   test('/assets/style.css 返回 200 + CSS', async () => {
-    const res = await fetch(BASE + '/assets/style.css')
+    const res = await fetch(`${BASE}/assets/style.css`)
     expect(res.status).toBe(200)
     expect(res.headers.get('Content-Type')).toContain('text/css')
     const css = await res.text()
@@ -64,7 +64,7 @@ describe('GET /assets/* (静态文件)', () => {
   })
 
   test('/assets/client.js 返回 200 + JS', async () => {
-    const res = await fetch(BASE + '/assets/client.js')
+    const res = await fetch(`${BASE}/assets/client.js`)
     expect(res.status).toBe(200)
     expect(res.headers.get('Content-Type')).toContain('javascript')
     const js = await res.text()
@@ -78,11 +78,11 @@ describe('GET /assets/* (静态文件)', () => {
 
 describe('GET /api/status', () => {
   async function getStatus(): Promise<Record<string, unknown>> {
-    return (await fetch(BASE + '/api/status')).json() as Promise<Record<string, unknown>>
+    return (await fetch(`${BASE}/api/status`)).json() as Promise<Record<string, unknown>>
   }
 
   test('返回 200 + JSON', async () => {
-    const res = await fetch(BASE + '/api/status')
+    const res = await fetch(`${BASE}/api/status`)
     expect(res.status).toBe(200)
     expect(res.headers.get('Content-Type')).toContain('application/json')
   })
@@ -118,7 +118,7 @@ describe('GET /api/status', () => {
 
 describe('POST /api/chat', () => {
   test('发送消息返回 200 + JSON', async () => {
-    const res = await fetch(BASE + '/api/chat', {
+    const res = await fetch(`${BASE}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: '说一句"hello"就行了' }),
@@ -128,13 +128,13 @@ describe('POST /api/chat', () => {
   })
 
   test('返回包含 success/output/iterations', async () => {
-    const data = await (
-      await fetch(BASE + '/api/chat', {
+    const data = (await (
+      await fetch(`${BASE}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: '说一句"hello"就行了' }),
       })
-    ).json() as Record<string, unknown>
+    ).json()) as Record<string, unknown>
     expect(data).toHaveProperty('success')
     expect(data).toHaveProperty('output')
     expect(data).toHaveProperty('iterations')
@@ -142,19 +142,19 @@ describe('POST /api/chat', () => {
   })
 
   test('返回包含 output 字段', async () => {
-    const data = await (
-      await fetch(BASE + '/api/chat', {
+    const data = (await (
+      await fetch(`${BASE}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: '说一句"hello"就行了' }),
       })
-    ).json() as Record<string, unknown>
+    ).json()) as Record<string, unknown>
     expect(data).toHaveProperty('output')
     expect(typeof data.output).toBe('string')
   })
 
   test('空消息返回 400', async () => {
-    const res = await fetch(BASE + '/api/chat', {
+    const res = await fetch(`${BASE}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: '' }),
@@ -165,7 +165,7 @@ describe('POST /api/chat', () => {
   })
 
   test('空消息体返回 400', async () => {
-    const res = await fetch(BASE + '/api/chat', {
+    const res = await fetch(`${BASE}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
@@ -174,7 +174,7 @@ describe('POST /api/chat', () => {
   })
 
   test('非法 JSON 返回 400', async () => {
-    const res = await fetch(BASE + '/api/chat', {
+    const res = await fetch(`${BASE}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: '这不是 JSON',
@@ -183,30 +183,30 @@ describe('POST /api/chat', () => {
   })
 
   test('GET /api/chat 返回 404', async () => {
-    const res = await fetch(BASE + '/api/chat')
+    const res = await fetch(`${BASE}/api/chat`)
     expect(res.status).toBe(404)
   })
 
   test('消息为数字时返回 400 + Zod 错误信息', async () => {
-    const res = await fetch(BASE + '/api/chat', {
+    const res = await fetch(`${BASE}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: 123 }),
     })
     expect(res.status).toBe(400)
-    const data = await res.json() as { error?: string }
+    const data = (await res.json()) as { error?: string }
     expect(data).toHaveProperty('error')
     expect(data.error).toContain('参数错误')
   })
 
   test('消息过长返回 400', async () => {
-    const res = await fetch(BASE + '/api/chat', {
+    const res = await fetch(`${BASE}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: 'x'.repeat(10001) }),
     })
     expect(res.status).toBe(400)
-    const data = await res.json() as { error?: string }
+    const data = (await res.json()) as { error?: string }
     expect(data.error).toContain('消息过长')
   })
 })
@@ -215,14 +215,14 @@ describe('POST /api/chat', () => {
 
 describe('GET /events (SSE via ReadableStream)', () => {
   test('返回 200 + text/event-stream', async () => {
-    const res = await fetch(BASE + '/events')
+    const res = await fetch(`${BASE}/events`)
     expect(res.status).toBe(200)
     expect(res.headers.get('Content-Type')).toContain('text/event-stream')
     expect(res.headers.get('Cache-Control')).toContain('no-cache')
   })
 
   test('返回流式数据包含 connected 事件', async () => {
-    const res = await fetch(BASE + '/events')
+    const res = await fetch(`${BASE}/events`)
     const reader = res.body?.getReader()
     expect(reader).toBeDefined()
 
@@ -243,7 +243,9 @@ describe('WebSocket /ws', () => {
   test('WebSocket 连接成功并收到 connected 消息', async () => {
     const ws = new WebSocket(`ws://localhost:${PORT}/ws`)
     const msg = await new Promise<string>((resolve, reject) => {
-      ws.onopen = () => { /* 等待第一条消息 */ }
+      ws.onopen = () => {
+        /* 等待第一条消息 */
+      }
       ws.onmessage = (e) => {
         resolve(e.data as string)
         ws.close()
@@ -322,22 +324,22 @@ describe('WebSocket /ws', () => {
 
 describe('未定义路由', () => {
   test('GET /nonexistent 返回 404', async () => {
-    const res = await fetch(BASE + '/nonexistent')
+    const res = await fetch(`${BASE}/nonexistent`)
     expect(res.status).toBe(404)
   })
 
   test('GET /api/nonexistent 返回 404', async () => {
-    const res = await fetch(BASE + '/api/nonexistent')
+    const res = await fetch(`${BASE}/api/nonexistent`)
     expect(res.status).toBe(404)
   })
 
   test('POST /nonexistent 返回 404', async () => {
-    const res = await fetch(BASE + '/nonexistent', { method: 'POST' })
+    const res = await fetch(`${BASE}/nonexistent`, { method: 'POST' })
     expect(res.status).toBe(404)
   })
 
   test('404 返回 HTML', async () => {
-    const res = await fetch(BASE + '/no-such-page')
+    const res = await fetch(`${BASE}/no-such-page`)
     expect(res.status).toBe(404)
     expect(res.headers.get('Content-Type')).toContain('text/html')
     const html = await res.text()
@@ -350,16 +352,16 @@ describe('未定义路由', () => {
 
 describe('服务器健康', () => {
   test('服务器在正确端口监听', async () => {
-    const res = await fetch(BASE + '/')
+    const res = await fetch(`${BASE}/`)
     expect(res.status).toBe(200)
   })
 
   test('并发请求正常处理', async () => {
     const results = await Promise.all([
-      fetch(BASE + '/'),
-      fetch(BASE + '/api/status'),
-      fetch(BASE + '/api/status'),
-      fetch(BASE + '/'),
+      fetch(`${BASE}/`),
+      fetch(`${BASE}/api/status`),
+      fetch(`${BASE}/api/status`),
+      fetch(`${BASE}/`),
     ])
     for (const res of results) {
       expect(res.status).toBe(200)

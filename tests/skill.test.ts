@@ -4,10 +4,10 @@
  * Tests skill loading, registry scanning, and the SkillRunner.
  */
 
-import { describe, expect, it, beforeEach, afterEach } from 'bun:test'
-import { mkdirSync, rmSync, writeFileSync, existsSync } from 'fs'
-import { resolve } from 'path'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
+import { resolve } from 'path'
 
 const SKILLS_DIR = resolve(homedir(), '.yu', 'skills')
 

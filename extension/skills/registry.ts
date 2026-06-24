@@ -5,12 +5,11 @@
  * 优先级：项目 > 用户 > 全局（同名覆盖）
  */
 
+import { statSync } from 'fs'
 import { createLogger } from '../logger.js'
+import { ensureScopeDirs, scanScopeFiles } from '../scope.js'
 import type { SkillDef } from '../types.js'
 import type { LoadedSkill } from './types.js'
-import { existsSync, statSync } from 'fs'
-import { resolve } from 'path'
-import { scanScopeFiles, ensureScopeDirs } from '../scope.js'
 
 const log = createLogger('skills:registry')
 
@@ -39,7 +38,9 @@ async function loadSkillFromFile(filePath: string): Promise<LoadedSkill | null> 
       _cacheStats.fromCache++
       return cached.skill
     }
-  } catch { /* stat failed — will reload */ }
+  } catch {
+    /* stat failed — will reload */
+  }
 
   try {
     // 使用 URL 查询参数绕过 ESM 模块缓存
@@ -70,7 +71,9 @@ async function loadSkillFromFile(filePath: string): Promise<LoadedSkill | null> 
     try {
       const stat = statSync(filePath)
       _cache.set(filePath, { skill: loaded, mtimeMs: stat.mtimeMs, filePath })
-    } catch { /* stat failed — don't cache */ }
+    } catch {
+      /* stat failed — don't cache */
+    }
 
     return loaded
   } catch (err) {

@@ -12,7 +12,7 @@ import { Database as DatabaseSync } from 'bun:sqlite'
 import { existsSync, readFileSync } from 'fs'
 import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
-import { sendToChild, sendToWorker, waitForMessage, waitForWorkerMessage, type WorkerHandle } from './ipc-main.js'
+import { sendToChild, sendToWorker, type WorkerHandle, waitForMessage, waitForWorkerMessage } from './ipc-main.js'
 import { createLogger } from './logger.js'
 import { checkAndTriggerOrchestrator } from './orchestrator.js'
 import { writeEvent } from './topic.js'
@@ -47,10 +47,7 @@ const DEGRADED_THRESHOLD = 15_000
 const DEAD_THRESHOLD = 30_000
 
 /** Env keys that are filtered from per-child overrides. */
-const SENSITIVE_ENV_PATTERNS = [
-  'DEEPSEEK_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY',
-  'API_KEY', 'SECRET', 'TOKEN',
-]
+const SENSITIVE_ENV_PATTERNS = ['DEEPSEEK_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'API_KEY', 'SECRET', 'TOKEN']
 
 /**
  * Read daemon version from package.json.
@@ -72,6 +69,7 @@ export class Supervisor {
   /** TopicName → ChildProcessInfo (metadata / status). */
   readonly children = new Map<string, ChildProcessInfo>()
   /** TopicName → Subprocess (OS handle). */
+  // biome-ignore lint/suspicious/noExplicitAny: Worker/Subprocess shared type too divergent for strict typing
   private processes = new Map<string, any>()
   private startTime = Date.now()
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
@@ -116,7 +114,10 @@ export class Supervisor {
           this.lastHeartbeat.set(topicName, Date.now())
         }
         const timer = this.spawningTimers.get(topicName)
-        if (timer) { clearTimeout(timer); this.spawningTimers.delete(topicName) }
+        if (timer) {
+          clearTimeout(timer)
+          this.spawningTimers.delete(topicName)
+        }
         this.restartCount.set(topicName, 0)
         existing.restartCount = 0
         break
@@ -142,7 +143,9 @@ export class Supervisor {
    * Build a SpawnConfig from user options with defaults applied and env filtered.
    * Shared by spawnWorker() and spawnChild().
    */
-  private buildSpawnConfig(config?: Partial<ChildSpawnConfig>): ChildSpawnConfig & { filteredEnv: Record<string, string> } {
+  private buildSpawnConfig(
+    config?: Partial<ChildSpawnConfig>,
+  ): ChildSpawnConfig & { filteredEnv: Record<string, string> } {
     const cfg: ChildSpawnConfig = {
       timeout: config?.timeout ?? DEFAULT_SPAWN_TIMEOUT,
       env: config?.env ?? {},
@@ -211,7 +214,11 @@ export class Supervisor {
     log.info(`Worker spawned for topic "${topicName}" (threadId ${worker.threadId})`)
 
     this.safeWriteEvent(topicName, 'child_spawned', { pid: worker.threadId, status: 'spawning', type: 'worker' })
-    this.safeTriggerOrchestrator(topicName, 'child_spawned', { pid: worker.threadId, status: 'spawning', type: 'worker' })
+    this.safeTriggerOrchestrator(topicName, 'child_spawned', {
+      pid: worker.threadId,
+      status: 'spawning',
+      type: 'worker',
+    })
 
     // ── IPC message handler via worker.onmessage ──
     worker.onmessage = (event: { data: string }) => {
@@ -219,7 +226,9 @@ export class Supervisor {
         const msg = JSON.parse(event.data) as { type?: string; payload?: unknown }
         if (!msg?.type) return
         this.handleChildMessage(topicName, msg)
-      } catch { /* malformed message, skip */ }
+      } catch {
+        /* malformed message, skip */
+      }
     }
 
     // ── Exit handler with auto-restart ──
@@ -253,7 +262,11 @@ export class Supervisor {
         const existing = this.children.get(topicName)
         if (existing && existing.status === 'spawning') {
           existing.status = 'spawn_failed'
-          this.safeWriteEvent(topicName, 'child_spawn_failed', { reason: 'ping_timeout', error: msg, pid: existing.pid })
+          this.safeWriteEvent(topicName, 'child_spawn_failed', {
+            reason: 'ping_timeout',
+            error: msg,
+            pid: existing.pid,
+          })
           this.killChild(topicName)
         }
       }
@@ -265,7 +278,11 @@ export class Supervisor {
       if (current && current.status === 'spawning') {
         log.warn(`Worker "${topicName}" spawning timed out after ${cfg.timeout}ms, killing`)
         current.status = 'spawn_failed'
-        this.safeWriteEvent(topicName, 'child_spawn_failed', { reason: 'spawn_timeout', timeout: cfg.timeout, pid: current.pid })
+        this.safeWriteEvent(topicName, 'child_spawn_failed', {
+          reason: 'spawn_timeout',
+          timeout: cfg.timeout,
+          pid: current.pid,
+        })
         this.killChild(topicName)
       }
       this.spawningTimers.delete(topicName)
@@ -340,10 +357,14 @@ export class Supervisor {
                 this.handleChildMessage(topicName, msg)
                 const existing = this.children.get(topicName)
                 if (!existing) continue
-              } catch { /* malformed json line, skip */ }
+              } catch {
+                /* malformed json line, skip */
+              }
             }
           }
-        } catch { /* stream error */ }
+        } catch {
+          /* stream error */
+        }
         log.warn(`Child "${topicName}" stdout closed`)
       })()
     }
@@ -356,7 +377,11 @@ export class Supervisor {
           existing.status = 'dead'
           log.warn(`Child "${topicName}" exited with code ${exitCode}`)
           this.safeWriteEvent(topicName, 'child_crashed', { exitCode, pid: existing.pid })
-          this.safeTriggerOrchestrator(topicName, 'child_crashed', { exitCode, pid: existing.pid, reason: 'non_zero_exit' })
+          this.safeTriggerOrchestrator(topicName, 'child_crashed', {
+            exitCode,
+            pid: existing.pid,
+            reason: 'non_zero_exit',
+          })
         } else {
           if (this.killRequested.has(topicName)) {
             log.info(`Child "${topicName}" exited (code=0) after kill was requested, marking 'stopped'`)
@@ -365,7 +390,11 @@ export class Supervisor {
           existing.status = 'stopped'
           log.info(`Child "${topicName}" exited cleanly (code=0)`)
           this.safeWriteEvent(topicName, 'child_task_done', { exitCode, pid: existing.pid })
-          this.safeTriggerOrchestrator(topicName, 'child_task_done', { exitCode, pid: existing.pid, status: 'completed' })
+          this.safeTriggerOrchestrator(topicName, 'child_task_done', {
+            exitCode,
+            pid: existing.pid,
+            status: 'completed',
+          })
         }
       }
       this.processes.delete(topicName)
@@ -726,11 +755,15 @@ export class Supervisor {
       const proc = this.processes.get(name)
       const pid = info.pid ?? proc?.pid ?? proc?.threadId ?? '?'
       const statusIcon =
-        info.status === 'running' ? '▶'
-        : info.status === 'restarting' ? '🔄'
-        : info.status === 'degraded' ? '⚠'
-        : info.status === 'dead' || info.status === 'spawn_failed' ? '✗'
-        : '○'
+        info.status === 'running'
+          ? '▶'
+          : info.status === 'restarting'
+            ? '🔄'
+            : info.status === 'degraded'
+              ? '⚠'
+              : info.status === 'dead' || info.status === 'spawn_failed'
+                ? '✗'
+                : '○'
       lines.push(`  ${statusIcon} ${name}  [${info.status}]  PID ${pid}  restarts: ${info.restartCount}`)
     }
 

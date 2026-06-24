@@ -25,7 +25,9 @@ export function parseToolCalls(content: string): Array<{ id: string; name: strin
           }
         }
       }
-    } catch { /* skip malformed */ }
+    } catch {
+      /* skip malformed */
+    }
   }
 
   // 格式 2: 内联 JSON 对象 — brace-counting 提取所有顶层 JSON
@@ -41,7 +43,9 @@ export function parseToolCalls(content: string): Array<{ id: string; name: strin
           })
         }
       }
-    } catch { /* not valid JSON, skip */ }
+    } catch {
+      /* not valid JSON, skip */
+    }
   }
 
   // 格式 3: tool_use XML block
@@ -83,6 +87,9 @@ export function extractJsonObjects(text: string): string[] {
 
 // ── buildResult ─────────────────────────────────────────
 
-export function buildResult(output: string, iterations: number): { success: boolean; output: string; iterations: number } {
+export function buildResult(
+  output: string,
+  iterations: number,
+): { success: boolean; output: string; iterations: number } {
   return { success: true, output, iterations }
 }

@@ -5,11 +5,10 @@
  * and writes them into a SQLite database using bun:sqlite.
  */
 
-import { describe, test, expect } from 'bun:test'
-import { mkdtempSync, writeFileSync, existsSync } from 'fs'
-import { resolve } from 'path'
+import { describe, expect, test } from 'bun:test'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
-import { rmSync } from 'fs'
+import { resolve } from 'path'
 
 const SCRIPT = resolve(import.meta.dir, '..', 'scripts', 'migrate-json-to-sqlite.ts')
 
@@ -39,26 +38,33 @@ function runMigration(dir: string): { exitCode: number; stdout: string; stderr: 
 
 /** Read a SQLite DB file as JSON via bun -e, retrying on transient failures */
 function readDbJson(dbPath: string, table: string): unknown[] {
-  const result = Bun.spawnSync([
-    'bun',
-    '-e',
-    `
+  const result = Bun.spawnSync(
+    [
+      'bun',
+      '-e',
+      `
       import { Database } from 'bun:sqlite';
       const db = new Database('${dbPath}');
       const rows = db.query('SELECT * FROM ${table} ORDER BY tag').all();
       db.close();
       console.log(JSON.stringify(rows));
     `,
-  ], {
-    env: { ...process.env },
-  })
+    ],
+    {
+      env: { ...process.env },
+    },
+  )
   if (result.exitCode !== 0) throw new Error(`readDbJson failed: ${result.stderr.toString()}`)
   return JSON.parse(result.stdout.toString())
 }
 
 /** Clean up a temp dir */
 function cleanupDir(dir: string) {
-  try { rmSync(dir, { recursive: true, force: true }) } catch { /* ignore */ }
+  try {
+    rmSync(dir, { recursive: true, force: true })
+  } catch {
+    /* ignore */
+  }
 }
 
 // ── Tests ────────────────────────────────────────────────

@@ -5,11 +5,10 @@
  * 优先级：项目 > 用户 > 全局（同名覆盖）
  */
 
+import { readFileSync } from 'fs'
 import { createLogger } from '../logger.js'
+import { ensureScopeDirs, scanScopeFiles } from '../scope.js'
 import type { RuleDef } from '../types.js'
-import { existsSync, readFileSync } from 'fs'
-import { resolve } from 'path'
-import { scanScopeFiles, ensureScopeDirs } from '../scope.js'
 
 const log = createLogger('rules:registry')
 
