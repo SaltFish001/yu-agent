@@ -177,6 +177,23 @@ export class ContextManager {
     return this.messages
   }
 
+  /** Get the base system prompt. */
+  getSystemPrompt(): string {
+    return this.systemPrompt
+  }
+
+  /** Replace the system prompt (used by SkillRunner for prompt injection). */
+  updateSystemPrompt(prompt: string): void {
+    this.systemPrompt = prompt
+    // Update the system message in the message list
+    const sysIdx = this.messages.findIndex((m) => m.role === 'system')
+    if (sysIdx >= 0) {
+      this.messages[sysIdx].content = prompt
+    } else {
+      this.messages.unshift({ role: 'system', content: prompt })
+    }
+  }
+
   getLastMessage(): ContextMessage | undefined {
     return this.messages[this.messages.length - 1]
   }

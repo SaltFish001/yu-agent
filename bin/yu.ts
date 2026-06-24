@@ -794,7 +794,7 @@ async function mainCli(): Promise<void> {
         process.exit(1)
       }
       const { toggleTool } = await import('../extension/tools/registry.js')
-      const result = toggleTool(name)
+      const result = await toggleTool(name)
       if (result === null) {
         console.error(`Tool not found: ${name}`)
         process.exit(1)
@@ -1136,70 +1136,7 @@ async function mainCli(): Promise<void> {
     process.exit(1)
   }
 
-  // `yu skill <subcommand>` — skill management
-  if (args[0] === 'skill') {
-    const sub = args[1] || 'list'
-
-    if (sub === 'list') {
-      const { listAllSkills, scanInstalledSkills } = await import('../extension/skills/store.js')
-      const all = listAllSkills()
-      if (all.length === 0) {
-        console.log('No skills found.')
-        console.log('  Scan for installed skills: yu skill scan')
-        process.exit(0)
-      }
-      console.log(`Skills (${all.length}):`)
-      for (const s of all) {
-        const src = s.source === 'local' && s.path ? `local` : s.source
-        console.log(`  ${s.name} v${s.version}`)
-        console.log(`    Description: ${s.description || '(no description)'}`)
-        console.log(`    Source: ${src}`)
-        console.log('')
-      }
-      process.exit(0)
-    }
-
-    if (sub === 'inspect') {
-      const name = args[2]
-      if (!name) {
-        console.error('Usage: yu skill inspect <name>')
-        process.exit(1)
-      }
-      const { listAllSkills } = await import('../extension/skills/store.js')
-      const all = listAllSkills()
-      const skill = all.find((s) => s.name === name)
-      if (!skill) {
-        console.error(`Skill not found: ${name}`)
-        process.exit(1)
-      }
-      console.log(`Skill: ${skill.name}`)
-      console.log(`  Version: ${skill.version}`)
-      console.log(`  Description: ${skill.description || '(none)'}`)
-      console.log(`  Source: ${skill.source}`)
-      if (skill.path) console.log(`  Path: ${skill.path}`)
-      process.exit(0)
-    }
-
-    if (sub === 'scan') {
-      const { scanInstalledSkills } = await import('../extension/skills/store.js')
-      const found = scanInstalledSkills()
-      if (found.length === 0) {
-        console.log('No skill files found in scope directories.')
-      } else {
-        console.log(`Found ${found.length} skill(s):`)
-        for (const s of found) {
-          console.log(`  ${s.name} v${s.version} — ${s.path}`)
-        }
-      }
-      process.exit(0)
-    }
-
-    console.error('Usage:')
-    console.error('  yu skill list              — list all available skills')
-    console.error('  yu skill inspect <name>    — show skill details')
-    console.error('  yu skill scan              — re-scan scope directories')
-    process.exit(1)
-  }
+  // `yu role <subcommand>` — role management
   if (args[0] === 'role') {
     const sub = args[1] || 'help'
     const roleArgs = args.slice(2)
@@ -1209,7 +1146,7 @@ async function mainCli(): Promise<void> {
     process.exit(0)
   }
 
-  // `yu skill <subcommand>` — skill management
+  // `yu skill <subcommand>` — skill management (delegates to extension/skills/index.ts)
   if (args[0] === 'skill') {
     const sub = args[1] || 'help'
     const skillArgs = args.slice(2)

@@ -89,7 +89,8 @@ export async function skillCommand(sub: string, args: string[]): Promise<string>
       return `Active skills (${active.length}):\n${lines.join('\n')}`
     }
 
-    case 'refresh': {
+    case 'refresh':
+    case 'scan': {
       await refreshSkills()
       const skills = await listSkills()
       return `Skills refreshed. ${skills.length} skill(s) loaded.`

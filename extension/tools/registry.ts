@@ -7,6 +7,8 @@
 
 import { createLogger } from '../logger.js'
 import type { ToolAuditHook, ToolEnhancement } from '../types.js'
+import { checkAuth, denyReason, type AuthConfig } from './auth.js'
+import { isToolEnabled } from './toggle.js'
 
 const log = createLogger('registry')
 
@@ -41,6 +43,7 @@ export interface ToolResult {
 // ── Registry ────────────────────────────────────────────
 
 const _tools = new Map<string, ToolDefinition>()
+let _globalAuditHook: ToolAuditHook | null = null
 
 export function registerTool(tool: ToolDefinition): void {
   if (_tools.has(tool.name)) {
@@ -81,23 +84,19 @@ export async function executeTool(
     return { success: false, output: '', error: `Unknown tool: ${name}` }
   }
 
-  // ── Enabled check ────────────────────────────────────
-  if (tool.enabled === false) {
+  // ── Enabled check (in-memory + persisted state) ──
+  if (tool.enabled === false || !isToolEnabled(name)) {
     return { success: false, output: '', error: `Tool "${name}" is disabled` }
   }
 
   const enhancement = tool.enhancement
-  const auth = enhancement?.auth
   const role = context?.role
 
-  // ── Auth check ──────────────────────────────────────
-  if (auth && role) {
-    if (auth.denyRoles?.includes(role)) {
-      return { success: false, output: '', error: `Role "${role}" is denied from using tool "${name}"` }
-    }
-    if (auth.requiredRoles?.length && !auth.requiredRoles.includes(role)) {
-      return { success: false, output: '', error: `Tool "${name}" requires role(s): ${auth.requiredRoles.join(', ')}` }
-    }
+  // ── Auth check (delegated to auth.ts) ──
+  const authConfig = enhancement?.auth as AuthConfig | undefined
+  const authResult = checkAuth(authConfig, { role, toolName: name, args: params })
+  if (authResult === 'deny') {
+    return { success: false, output: '', error: denyReason(authConfig, { role, toolName: name, args: params }) }
   }
 
   // ── Schema validation ───────────────────────────────
@@ -110,7 +109,7 @@ export async function executeTool(
 
   // ── Execute with audit + timeout ────────────────────
   const start = performance.now()
-  const audit = enhancement?.audit
+  const audit = _globalAuditHook ?? enhancement?.audit
 
   try {
     audit?.before?.({ name, args: params, role })
@@ -138,16 +137,12 @@ export async function executeTool(
 
 /** 注册审计钩子到所有已注册工具 */
 export function setGlobalAuditHook(hook: ToolAuditHook): void {
-  for (const tool of _tools.values()) {
-    tool.enhancement = { ...tool.enhancement, audit: hook }
-  }
+  _globalAuditHook = hook
 }
 
-/** 切换工具的启用/禁用状态。返回切换后的状态。 */
-export function toggleTool(name: string): boolean | null {
-  const tool = _tools.get(name)
-  if (!tool) return null
-  tool.enabled = !(tool.enabled ?? true)
-  log.info(`Tool "${name}" is now ${tool.enabled ? 'enabled' : 'disabled'}`)
-  return tool.enabled
+/** 切换工具的启用/禁用状态（委托给 toggle.ts）。返回切换后的状态。 */
+export async function toggleTool(name: string): Promise<boolean | null> {
+  const { toggleTool: toggle } = await import('./toggle.js')
+  const toolNames = Array.from(_tools.keys())
+  return toggle(name, toolNames)
 }

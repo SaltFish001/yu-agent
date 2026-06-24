@@ -42,7 +42,8 @@ async function loadSkillFromFile(filePath: string): Promise<LoadedSkill | null> 
   } catch { /* stat failed — will reload */ }
 
   try {
-    const mod = await import(filePath)
+    // 使用 URL 查询参数绕过 ESM 模块缓存
+    const mod = await import(`${filePath}?update=${Date.now()}`)
     const exported = mod.default || mod
 
     if (!exported) return null

@@ -17,6 +17,7 @@ import type { LoadedSkill, SkillExecutionContext, SkillRunResult } from './types
 import { eventBus } from '../events.js'
 import { listTools } from '../tools/registry.js'
 import { listSkills } from './registry.js'
+import { AgentLoop } from '../agent-loop.js'
 
 const log = createLogger('skills:runner')
 
@@ -180,6 +181,42 @@ export class SkillRunner {
       output: ctx.systemPrompt, // Placeholder — actual execution is in AgentLoop
       skillsUsed,
     }
+  }
+
+  /**
+   * Mount this SkillRunner onto an AgentLoop instance.
+   * Injects combined skill system prompts and wraps iteration hooks.
+   * Returns the same AgentLoop for chaining.
+   */
+  mountToAgentLoop(agent: AgentLoop): AgentLoop {
+    // Combine system prompts
+    const ctx = agent.getContext()
+    const basePrompt = ctx.getSystemPrompt()
+    const combined = this.getCombinedSystemPrompt(basePrompt)
+    ctx.updateSystemPrompt(combined)
+
+    // Wrap the run() method to inject before/after iteration hooks
+    const origRun = agent.run.bind(agent)
+    const self = this
+    agent.run = async (task: string) => {
+      const hookCtx: SkillExecutionContext = {
+        messages: [{ role: 'user', content: task }],
+        systemPrompt: combined,
+        shared: self.shared,
+      }
+
+      await self.runBeforeIteration(hookCtx)
+
+      const result = await origRun(task)
+
+      hookCtx.messages = ctx.getMessages() as any
+      await self.runAfterIteration(hookCtx)
+
+      return result
+    }
+
+    log.info(`SkillRunner mounted to AgentLoop with ${this.activeSkills.length} active skill(s)`)
+    return agent
   }
 
   /**
