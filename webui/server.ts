@@ -916,7 +916,7 @@ export async function createServer(port?: number): Promise<ReturnType<typeof Bun
     })
     // Clean up on server shutdown
     const origStop: (() => void) | undefined = server.stop?.bind(server)
-    ;(server as Record<string, unknown>).stop = () => {
+    ;(server as unknown as Record<string, unknown>).stop = () => {
       unsubCompleted()
       unsubFailed()
       unsubStarted()
