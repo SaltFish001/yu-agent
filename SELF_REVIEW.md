@@ -20,7 +20,7 @@
 | typecheck | 零错误 | ✅ 本次修复 |
 | lint | 零错误 / 26 警告 | ✅ 本次修复 |
 | `node:*` 前缀 | 0 处 | ✅ |
-| `child_process` 运行时 | 1 处 (`supervisor.ts fork`) | 🟡 已知限制 |
+| `child_process` 运行时 | 0 处 | ✅ 全部替换为 Worker/Bun.spawn |
 | `@ts-ignore`/`@ts-expect-error` | 0 处 | ✅ |
 | TODO/FIXME/HACK | 0 处 | ✅ |
 | `any` 类型 (生产代码) | ≤4 处 | ✅ 低水位 |
@@ -43,7 +43,7 @@
 | `lsp-manager.ts` | `spawn` 事件监听 | → `Bun.spawn` stream 模型 | ✅ |
 | `topic.ts` | `spawn` daemon | → `Bun.spawn` stream 日志 | ✅ |
 | `ipc-main.ts` | `type ChildProcess` 导入 | → 运行时零开销 | 🟢 已最优 |
-| `supervisor.ts` | `fork` IPC | → Bun 无等价物 | ❌ 保留 |
+| `supervisor.ts` | `fork` IPC | → `new Worker()` 线程 + postMessage | ✅ Worker 模式 |
 
 ### 类型系统修复 (~200→0)
 
@@ -99,7 +99,7 @@
 |------|------|------|------|
 | `db.ts` | 1,189 | 🟡 | 被 db.test.ts (18 测试) 部分覆盖 |
 | `topic.ts` | 1,039 | 🟡 | 被 topic-crud + topic.test (39 测试) 覆盖 |
-| `supervisor.ts` | 816 | 🔴 | 进程管理，需 mock 基础设施 |
+| `supervisor.ts` | 857 | 🟡 | 已换 Worker 模式，可 mock Worker 测试 |
 | `mcp-manager.ts` | 472 | 🟡 | 需 MCP server 实例 |
 | `lsp-manager.ts` | 452 | 🟡 | 需 LSP server 实例 |
 | `context-manager.ts` | 451 | 🟢 | 已有 18 测试 |
@@ -133,7 +133,7 @@
 
 | 问题 | 文件 | 说明 |
 |------|------|------|
-| `supervisor.ts` `fork` | `extension/supervisor.ts:12` | Bun 无 `fork` 等价物，IPC 通道不可替代 |
+| `supervisor.ts` 已换 Worker | `extension/supervisor.ts` | Bun.Worker + postMessage IPC 替代进程 spawn，零 child_process 残留 |
 | 测试缺口 | `extension/supervisor.ts` (816 行) | 进程管理模块零直接测试 |
 | 生产代码 `console.log` | 107 处 | 大部分是 CLI 输出 (`bin/yu.ts`)，但部分在 `extension/` 内部模块中未走 logger |
 
@@ -150,10 +150,9 @@
 
 ## 六、建议
 
-1. **supervisor.ts 重写**: 当前 fork IPC 是唯一残留的 child_process 运行时调用。可考虑用 Bun 的 `Bun.spawn` + socket/file-based IPC 替代，或接受此限制并添加测试。
-2. **db.ts 拆分**: 1,189 行的大文件，schema 定义和 CRUD 操作可拆分到独立文件。
-3. **logger 统一**: 内部模块中的 `console.log`/`console.error` 应统一走 `createLogger`，便于 DB 持久化和级别过滤。
-4. **console.log 替换**: 107 处中约 40% 在 `bin/yu.ts` (CLI 输出，合理)，其余 60% 在 `extension/` 内部模块中，应逐步替换为 `logger.info/warn/error`。
+1. **db.ts 拆分**: 1,189 行的大文件，schema 定义和 CRUD 操作可拆分到独立文件。
+2. **logger 统一**: 内部模块中的 `console.log`/`console.error` 应统一走 `createLogger`，便于 DB 持久化和级别过滤。
+3. **console.log 替换**: 107 处中约 40% 在 `bin/yu.ts` (CLI 输出，合理)，其余 60% 在 `extension/` 内部模块中，应逐步替换为 `logger.info/warn/error`。
 
 ---
 
@@ -165,4 +164,4 @@
 - ✅ 98% 的 child_process 调用已清理 (11→1)
 - ✅ 零 `@ts-ignore` / 零 TODO / 零 FIXME
 - ✅ 测试从 155→187 (↑21%)
-- 🔴 唯一未解决: `supervisor.ts` fork IPC (Bun 限制)
+- 🟢 唯一遗留 child_process 问题已解决: `supervisor.ts` 改用 Worker 线程模式
