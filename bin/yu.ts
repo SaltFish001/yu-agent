@@ -517,14 +517,27 @@ async function mainCli(): Promise<void> {
     process.exit(0)
   }
 
-  // `yu team <subcommand>` — handled directly, no Pi session needed
+  // `yu team` — 团队自检（默认）或管理子命令
   if (args[0] === 'team') {
-    const subcommand = args[1] || 'help'
-    const teamArgs = args.slice(2)
-    const { teamCommand } = await import('../extension/team/index.js')
-    const result = await teamCommand(subcommand, teamArgs)
+    const subcommand = args[1]
+    // 管理子命令走旧的 teamCommand
+    if (subcommand && ['create', 'list', 'status', 'send', 'task', 'shutdown', 'delete', 'specs'].includes(subcommand)) {
+      const teamArgs = args.slice(2)
+      const { teamCommand } = await import('../extension/team/index.js')
+      const result = await teamCommand(subcommand, teamArgs)
+      console.log(result)
+      process.exit(0)
+    }
+    // 默认：团队自检模式
+    args.shift() // remove 'team'
+    const task = args.join(' ')
+    const { runTeamMode } = await import('../extension/team-orchestrator.js')
+    const result = await runTeamMode(
+      { intent: 'team', reasoning: `CLI dispatch: ${task || 'self-check'}` },
+      { task, project_root: PROJECT_ROOT },
+    )
     console.log(result)
-    process.exit(0)
+    return
   }
 
   // `yu knowledge <subcommand>` — RAG knowledge base
@@ -1294,19 +1307,6 @@ async function mainCli(): Promise<void> {
     await createServer()
     // Keep process alive
     await new Promise(() => {})
-    return
-  }
-
-  // `yu team` — 使用内置 team orchestrator（不走 Pi SDK）
-  if (args[0] === 'team') {
-    args.shift() // remove 'team'
-    const task = args.join(' ')
-    const { runTeamMode } = await import('../extension/team-orchestrator.js')
-    const result = await runTeamMode(
-      { intent: 'team', reasoning: `CLI dispatch: ${task || 'self-check'}` },
-      { task, project_root: PROJECT_ROOT },
-    )
-    console.log(result)
     return
   }
 

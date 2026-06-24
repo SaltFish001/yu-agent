@@ -47,8 +47,7 @@ export async function executePlan(
     // ── Pass-through: dispatch to chat agent ──
     if (plan.pass_through) {
       try {
-        // Try Pi SDK spawn first (has tool access). Add hard timeout to
-        // prevent hanging when provider is misconfigured.
+        // 使用 AgentLoop 处理聊天（内置执行，无外部依赖）
         const chatResult = await Promise.race([
           spawnAgentWithTimeout(
             {
@@ -59,11 +58,11 @@ export async function executePlan(
             },
             {},
           ),
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Pi spawn timeout')), 30_000)),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Chat agent timeout')), 30_000)),
         ])
         return chatResult?.response || ''
       } catch (err) {
-        log.warn('Chat agent via Pi failed, falling back to direct API', err)
+        log.warn('Chat agent via AgentLoop failed, falling back to direct API', err)
         // Fallback: direct DeepSeek API (no Pi dependency)
         try {
           const { chatCompletion } = await import('./deepseek.js')
