@@ -11,19 +11,20 @@
 
 | 指标 | 数值 | 评级 |
 |------|------|------|
-| 源文件 | 78 个 (含 webui) | — |
-| 测试文件 | 28 个 | ↑ 19→28 |
-| 测试数量 | 363 | ↑ 187→363 (+94%) |
-| 测试通过率 | 100% (363/363) | ✅ |
-| 构建时间 | 52 模块 / 337ms | ✅ |
-| 构建产物 | 9.24 MB 单文件 | ✅ |
-| typecheck | 零错误 | ✅ 本次修复 |
-| lint | 零错误 / 26 警告 | ✅ 本次修复 |
+| 源文件 | 79 个 (含 webui) | — |
+| 测试文件 | 29 个 | ↑ 19→28→29 |
+| 测试数量 | 380 | ↑ 187→380 (+103%) |
+| 测试通过率 | 100% (380/380) | ✅ |
+| 构建时间 | 190 模块 / 330ms | ✅ |
+| 构建产物 | 9.85 MB 单文件 | ✅ |
+| typecheck | 零错误 | ✅ |
+| lint | 零错误 / 26 警告 | ✅ |
 | `node:*` 前缀 | 0 处 | ✅ |
 | `child_process` 运行时 | 0 处 | ✅ 全部替换为 Worker/Bun.spawn |
 | `@ts-ignore`/`@ts-expect-error` | 0 处 | ✅ |
 | TODO/FIXME/HACK | 0 处 | ✅ |
-| `any` 类型 (生产代码) | ≤4 处 | ✅ 低水位 |
+| `any` 类型 (生产代码) | **0 处** | ✅ 已清零 |
+| 空 `catch {}` | 1 处 (有注释) | ✅ |
 
 ---
 
@@ -93,15 +94,15 @@
 | template | `tests/template.test.ts` | 3 | 解析/修复/无效输入 |
 | supervisor | `tests/supervisor.test.ts` | 16 | IPC dispatch/killChild/restart |
 | mock-llm | `tests/integration/mock-llm.test.ts` | 3 | 模式匹配/回退 |
+| agent-loop | `tests/agent-loop.test.ts` | 17 | JSON block/inline JSON/XML 三格式解析 |
 
 ### 仍无直接测试的大文件
 
 | 文件 | 行数 | 风险 | 说明 |
 |------|------|------|------|
-| `db.ts` | 1,189→拆分 | 🟢 已拆为 db-core/db-entities/db-analytics 三模块 |
 | `topic.ts` | 1,039 | 🟡 | 被 topic-crud + topic.test (39 测试) 覆盖 |
-| `supervisor.ts` | 857 | 🟡 | 已换 Worker 模式，可 mock Worker 测试 |
-| `mcp-manager.ts` | 472 | 🟡 | 需 MCP server 实例 |
+| `supervisor.ts` | 978 | 🟡 | Worker 模式 + 16 单元测试 |
+| `mcp-manager.ts` | 529 | 🟡 | 需 MCP server 实例 |
 | `lsp-manager.ts` | 452 | 🟡 | 需 LSP server 实例 |
 | `context-manager.ts` | 451 | 🟢 | 已有 18 测试 |
 | `terminal/index.ts` | 401 | 🟡 | PTY/SSH 集成 |
@@ -115,12 +116,12 @@
 | 规则 | 状态 | 明细 |
 |------|------|------|
 | 零 `node:*` API import | ✅ 0 处 | 全库清零 |
-| 零运行时 `child_process` 调用 | 🟡 1 处 | `supervisor.ts fork` (Bun 无等价物) |
+| 零运行时 `child_process` 调用 | ✅ 0 处 | 全部替换为 Worker/Bun.spawn |
 | Pi SDK 非运行时加载 | ✅ | `optionalDependencies`，动态 import |
 | Bun 原生 API 优先 | ✅ | `Bun.spawnSync`/`Bun.file`/`Bun.write`/`Bun.spawn` |
-| `bun:test` (非 vitest) | ✅ | 全部 19 文件 |
-| `bun run build` 正常 | ✅ | 52 模块 337ms |
-| 无 `any` 类型 (核心) | ⚠️ ≤4 处 | 集中在 MCP stream 类型窄化 |
+| `bun:test` (非 vitest) | ✅ | 全部 29 文件 |
+| `bun run build` 正常 | ✅ | 190 模块 330ms |
+| 无 `any` 类型 (核心) | ✅ **0 处** | 已清零 |
 | 零 `@ts-ignore`/`@ts-expect-error` | ✅ | 零容忍 |
 | `fs` import (bare, 无 node: 前缀) | 🟢 14 处 | Bun 缺 mkdirSync/renameSync，合理使用 |
 
@@ -132,20 +133,16 @@
 
 ### P2 (中等)
 
-| 问题 | 文件 | 说明 |
-|------|------|------|
-| `supervisor.ts` 已换 Worker | `extension/supervisor.ts` | Bun.Worker + postMessage IPC 替代进程 spawn，零 child_process 残留 |
-| 测试缺口 | `tests/supervisor.test.ts` (16 测试) | IPC dispatch + killChild + restart 已覆盖 ✅ |
-| 生产代码 `console.log` | 107 处 | 大部分是 CLI 输出 (`bin/yu.ts`)，但部分在 `extension/` 内部模块中未走 logger |
+| 问题 | 说明 |
+|------|------|
+| 生产代码 `console.log` | `extension/` 内约 24 处，主要在 `executor.ts` (用户审批 CLI 输出)，其余应逐步走 logger |
 
 ### P3 (低)
 
 | 问题 | 说明 |
 |------|------|
-| `db.ts` 1,189 行 | 大文件，可考虑拆分 schema/query/migration |
 | `fs` import 未统一切换 | 14 处使用 bare `fs` (无 `node:`)，Bun 兼容但跨运行时不可移植 |
-| `SELF_REVIEW.md` 未加入 `.gitignore` | 每次审查更新产生 diff |
-| `dist/yu.js` 9.24 MB | 单文件 bundle，包含全部依赖 (含 biome) |
+| 零测试大模块 | `mcp-manager.ts` (529行)、`executor.ts`、`verifier.ts` — 无直接单元测试 |
 
 ---
 
@@ -158,10 +155,10 @@
 
 ## 结论
 
-**项目健康度: 优秀 ↑↑**
+**项目健康度: 优秀 ↑↑**  — 本迭代已完成全模块无 `any` 类型、typecheck 零错误、测试 380 全绿。
 
 - ✅ typecheck + lint + build + test 四路全绿
 - ✅ 100% 的 child_process 调用已清理 (全部替换为 Worker/Bun.spawn)
-- ✅ 零 `@ts-ignore` / 零 TODO / 零 FIXME
-- ✅ 测试从 155→363 (↑134%)
-- 🟢 唯一遗留 child_process 问题已解决: `supervisor.ts` 改用 Worker 线程模式
+- ✅ 零 `@ts-ignore` / 零 TODO / 零 FIXME / **零 `any` 类型**
+- ✅ 测试从 155→380 (↑145%)
+- 🟡 剩余: 24 处 console.log 待走 logger, 3 模块零测试

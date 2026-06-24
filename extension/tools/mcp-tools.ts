@@ -14,7 +14,7 @@ import { createLogger } from '../logger.js'
 const log = createLogger('mcp-tools')
 
 import { _getServers, getTransport, jsonRpcCall } from '../mcp-manager.js'
-import { registerTool, type ToolDefinition, type ToolResult } from './registry.js'
+import { registerTool, type ToolDefinition, type ToolParameter, type ToolResult } from './registry.js'
 
 // ── 常量 ────────────────────────────────────────────────
 
@@ -37,7 +37,7 @@ interface McpToolInfo {
  * 向 MCP server 发送初始化握手。
  * 必须先完成握手才能发送任何请求。
  */
-async function initializeServer(name: string, proc: any): Promise<boolean> {
+async function initializeServer(name: string, proc: Bun.Subprocess): Promise<boolean> {
   try {
     const result = (await jsonRpcCall(
       proc,
@@ -48,7 +48,7 @@ async function initializeServer(name: string, proc: any): Promise<boolean> {
         clientInfo: { name: 'yu-agent', version: '0.1' },
       },
       INIT_TIMEOUT,
-    )) as any
+    )) as Record<string, unknown>
 
     if (!result) return false
 
@@ -76,10 +76,11 @@ async function initializeServer(name: string, proc: any): Promise<boolean> {
 const _toolCache = new Map<string, McpToolInfo[]>()
 const _lastRefresh = new Map<string, number>()
 
-async function listServerTools(name: string, proc: any): Promise<McpToolInfo[]> {
+async function listServerTools(name: string, proc: Bun.Subprocess): Promise<McpToolInfo[]> {
   try {
-    const result = (await jsonRpcCall(proc, 'tools/list', {}, CALL_TOOL_TIMEOUT)) as any
-    const tools: McpToolInfo[] = result?.tools ?? []
+    const raw = (await jsonRpcCall(proc, 'tools/list', {}, CALL_TOOL_TIMEOUT)) as Record<string, unknown> | undefined
+    if (!raw) return _toolCache.get(name) ?? []
+    const tools = (raw.tools ?? []) as McpToolInfo[]
     _toolCache.set(name, tools)
     _lastRefresh.set(name, Date.now())
     return tools
@@ -102,8 +103,8 @@ function buildToolDef(_name: string, info: McpToolInfo, serverName: string): Too
     description: `[${serverName}] ${info.description ?? info.name}`,
     parameters: (info.inputSchema ?? {
       type: 'object',
-      properties: {} as Record<string, unknown>,
-    }) as any,
+      properties: {},
+    }) as unknown as ToolParameter,
     async execute(params): Promise<ToolResult> {
       const servers = _getServers()
       const server = servers.get(serverName)
@@ -111,17 +112,19 @@ function buildToolDef(_name: string, info: McpToolInfo, serverName: string): Too
         return { success: false, output: '', error: `MCP server '${serverName}' not running` }
       }
       try {
-        const result = (await jsonRpcCall(
+        const raw = (await jsonRpcCall(
           server.proc,
           'tools/call',
           { name: info.name, arguments: params },
           CALL_TOOL_TIMEOUT,
-        )) as any
+        )) as Record<string, unknown> | undefined
 
-        const content = result?.content ?? []
-        const isError = result?.isError ?? false
+        if (!raw) return { success: false, output: '', error: 'Empty response from MCP server' }
+        const contentArr = raw.content
+        const content: Array<{ text?: string }> = Array.isArray(contentArr) ? contentArr : []
+        const isError = raw.isError === true
         const text = content
-          .map((c: any) => c.text ?? JSON.stringify(c))
+          .map((c: { text?: string; [key: string]: unknown }) => c.text ?? JSON.stringify(c))
           .filter(Boolean)
           .join('\n')
 

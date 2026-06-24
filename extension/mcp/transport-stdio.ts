@@ -213,17 +213,18 @@ export class StdioTransport extends McpTransport {
     readLoop()
   }
 
-  private handleMessage(msg: any): void {
-    // 有 id → 请求响应
-    if (msg.id != null) {
-      const pending = this.pending.get(msg.id)
+  private handleMessage(msg: JsonRpcMessage): void {
+    // 有 id → 响应（success 或 error）
+    if ('id' in msg && msg.id != null) {
+      const id = msg.id
+      const pending = this.pending.get(id)
       if (pending) {
         clearTimeout(pending.timer)
-        this.pending.delete(msg.id)
+        this.pending.delete(id)
 
-        if (msg.error) {
+        if ('error' in msg) {
           pending.reject(new Error(msg.error.message || 'JSON-RPC error'))
-        } else {
+        } else if ('result' in msg) {
           pending.resolve(msg.result)
         }
       }
@@ -231,8 +232,8 @@ export class StdioTransport extends McpTransport {
     }
 
     // 无 id → 服务端推送的通知
-    if (msg.method) {
-      this.events.onNotification?.(msg as any)
+    if ('method' in msg) {
+      this.events.onNotification?.(msg)
     }
   }
 

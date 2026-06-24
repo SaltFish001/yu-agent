@@ -279,7 +279,7 @@ export class Supervisor {
    * Legacy: Spawn a child process for the given topic (Bun stdio IPC).
    * Falls back to this if Worker is unavailable.
    */
-  spawnChild(topicName: string, config?: Partial<ChildSpawnConfig>): any | undefined {
+  spawnChild(topicName: string, config?: Partial<ChildSpawnConfig>): Bun.Subprocess | undefined {
     const { filteredEnv, ...cfg } = this.buildSpawnConfig(config)
 
     if (!existsSync(CHILD_ENTRY)) {

@@ -363,7 +363,9 @@ async function initServer(name: string): Promise<MCPServerStatus> {
     // 关掉失败的进程
     try {
       state.process?.kill()
-    } catch {}
+    } catch {
+      // process already dead, nothing to clean up
+    }
     state.process = null
   }
 

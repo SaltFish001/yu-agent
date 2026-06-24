@@ -10,7 +10,7 @@ let AgentLoop: any
 let agent: any
 
 beforeEach(async () => {
-  const mod = await import('../extension/agent-loop.js')
+  const mod = await import('../extension/agent-loop')
   AgentLoop = mod.AgentLoop
   agent = new AgentLoop({ autoPersist: false })
 })
