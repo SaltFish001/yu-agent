@@ -1,18 +1,25 @@
 /**
- * yu-agent — IPC parent-side helpers (Bun stdio IPC).
+ * yu-agent — IPC parent-side helpers (Bun stdio IPC + Worker mode).
  *
  * Functions for the Supervisor/parent side to communicate
- * with spawned child processes over stdin/stdout JSON-line protocol.
+ * with spawned child processes or workers.
  *
- * Bun has no fork()+IPC equivalent; we use JSON lines over stdio:
- *   Parent → Child: writes JSON to child's stdin
- *   Child → Parent: writes JSON to its stdout, parent reads
- *
- * Phase 1: Minimal IPC layer — ping/pong, task results, status updates.
+ * Two modes:
+ *   - Process mode: JSON lines over stdin/stdout (legacy Bun.spawn)
+ *   - Worker mode:  postMessage/onmessage (Bun.Worker, preferred)
  */
 
 import type { Subprocess } from 'bun'
 import type { IpcMessage, IpcMessageType } from './types.js'
+
+// Worker 没有 Subprocess 类型，用通用接口
+export interface WorkerHandle {
+  postMessage(msg: string): void
+  onmessage?: ((event: { data: string }) => void) | undefined
+  onerror?: ((err: ErrorEvent) => void) | undefined
+  terminate(): void
+  readonly threadId?: number
+}
 
 // Shared message counter for seq generation
 let msgSeq = 0
@@ -31,12 +38,10 @@ function buildMessage(type: IpcMessageType, payload?: Record<string, unknown>): 
 
 /**
  * Send a JSON message to a child process via stdin.
- * Returns true if written, false if stdin is closed.
  */
 export function sendToChild(child: Subprocess, type: IpcMessageType, payload?: Record<string, unknown>): boolean {
   try {
     const buffer = new TextEncoder().encode(JSON.stringify(buildMessage(type, payload)) + '\n')
-    // Bun's Subprocess stdin pipe has a synchronous write() method
     const n = (child.stdin as any)?.write(buffer)
     return typeof n === 'number' && n > 0
   } catch {
@@ -45,8 +50,19 @@ export function sendToChild(child: Subprocess, type: IpcMessageType, payload?: R
 }
 
 /**
- * Wait for the child to send a specific message type via stdout.
- * Reads from child's stdout as JSON lines.
+ * Send a JSON message to a Worker via postMessage.
+ */
+export function sendToWorker(worker: WorkerHandle, type: IpcMessageType, payload?: Record<string, unknown>): boolean {
+  try {
+    worker.postMessage(JSON.stringify(buildMessage(type, payload)))
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Wait for a child process to send a specific message type via stdout.
  */
 export function waitForMessage(
   child: Subprocess,
@@ -80,11 +96,9 @@ export function waitForMessage(
         while (!done) {
           const { value, done: streamDone } = await reader.read()
           if (streamDone) break
-
           buffer += decoder.decode(value, { stream: true })
           const lines = buffer.split('\n')
           buffer = lines.pop() ?? ''
-
           for (const line of lines) {
             if (!line.trim()) continue
             try {
@@ -94,24 +108,58 @@ export function waitForMessage(
                 resolve(msg)
                 return
               }
-            } catch {
-              // malformed line, skip
-            }
+            } catch { /* malformed line, skip */ }
           }
         }
-      } catch {
-        // stream error
-      }
+      } catch { /* stream error */ }
       cleanup()
       reject(new Error('Child stdout closed while waiting'))
     }
 
     readLoop()
-
-    // Also clean up if the child exits
     child.exited.then((exitCode) => {
       cleanup()
       reject(new Error(`Child exited (code=${exitCode}) while waiting for '${expectedType}'`))
     })
+  })
+}
+
+/**
+ * Wait for a Worker to send a specific message type via postMessage.
+ * Uses a wrapper around the Worker's onmessage to intercept the expected type.
+ */
+export function waitForWorkerMessage(
+  worker: WorkerHandle,
+  expectedType: IpcMessageType,
+  timeoutMs: number,
+): Promise<IpcMessage> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup()
+      reject(new Error(`Timeout waiting for '${expectedType}' after ${timeoutMs}ms`))
+    }, timeoutMs)
+
+    const origOnMessage = worker.onmessage
+    let done = false
+
+    function cleanup() {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      worker.onmessage = origOnMessage ?? undefined
+    }
+
+    worker.onmessage = (event: { data: string }) => {
+      try {
+        const msg = JSON.parse(event.data) as IpcMessage
+        if (msg.type === expectedType) {
+          cleanup()
+          resolve(msg)
+          return
+        }
+        // Pass through to original handler
+        origOnMessage?.call(worker, event)
+      } catch { /* skip */ }
+    }
   })
 }

@@ -4,7 +4,7 @@
  * yu-agent — Supervisor Daemon entry point.
  *
  * Independent process that manages background topic execution.
- * Spawned by `cmdBg()` via `child_process.spawn(detached)` when
+ * Spawned by `cmdBg()` via `Bun.spawn([process.execPath, ...])` when
  * no supervisor daemon is currently running.
  *
  * Phase 0:

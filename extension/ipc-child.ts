@@ -1,14 +1,12 @@
 /**
- * yu-agent — IPC child-side helpers (Bun stdio IPC).
+ * yu-agent — IPC child-side helpers (Bun stdio IPC + Worker mode).
  *
- * Functions for the bg-worker child process to communicate
- * with the parent Supervisor over stdin/stdout JSON-line protocol.
+ * Functions for the bg-worker to communicate with the parent Supervisor.
+ * Supports two modes:
+ *   - Process mode: JSON lines over stdin/stdout (legacy Bun.spawn)
+ *   - Worker mode:  postMessage/onmessage (Bun.Worker, preferred)
  *
- * Bun has no fork()+IPC equivalent; we use JSON lines over stdio:
- *   Child → Parent: writes JSON to stdout
- *   Parent → Child: writes to stdin, child reads
- *
- * Phase 1: Minimal IPC layer — respond to pings, report results.
+ * Auto-detects based on runtime context.
  */
 
 import { createLogger } from './logger.js'
@@ -21,7 +19,11 @@ let msgSeq = 0
 
 type MessageHandler = (payload: unknown) => void | Promise<void>
 
-// Readline buffer for stdin
+// Detect if running inside a Bun Worker context
+// In Workers, globalThis has postMessage but process.stdout may not be available
+const isWorkerMode = typeof (globalThis as any).postMessage === 'function'
+
+// Readline buffer for stdin (process mode only)
 let stdinBuffer = ''
 const stdinDecoder = new TextDecoder()
 
@@ -38,10 +40,16 @@ function buildMessage(type: IpcMessageType, payload?: Record<string, unknown>): 
 }
 
 /**
- * Send a JSON message to the parent process via stdout.
+ * Send a JSON message to the parent process.
+ * - Worker mode: uses self.postMessage
+ * - Process mode: writes JSON line to stdout
  */
 export function send(type: IpcMessageType, payload?: Record<string, unknown>): boolean {
   try {
+    if (isWorkerMode) {
+    ;(globalThis as any).postMessage(JSON.stringify(buildMessage(type, payload)))
+      return true
+    }
     const buffer = new TextEncoder().encode(JSON.stringify(buildMessage(type, payload)) + '\n')
     return process.stdout.write(buffer) as unknown as boolean
   } catch {
@@ -50,7 +58,7 @@ export function send(type: IpcMessageType, payload?: Record<string, unknown>): b
 }
 
 /**
- * Process one line of JSON input from stdin.
+ * Process one line of JSON input.
  */
 function processLine(line: string, handlers: Record<string, MessageHandler>): void {
   if (!line.trim()) return
@@ -81,10 +89,35 @@ function processLine(line: string, handlers: Record<string, MessageHandler>): vo
 }
 
 /**
- * Set up IPC message handlers for the child process.
+ * Set up IPC in Worker mode via self.onmessage.
+ */
+function setupWorkerIPC(
+  handlers: Record<string, MessageHandler>,
+): void {
+  ;(globalThis as any).onmessage = (event: MessageEvent) => {
+    try {
+      const raw = typeof event.data === 'string' ? event.data : new TextDecoder().decode(event.data)
+      const msg = JSON.parse(raw) as IpcMessage
+      const handler = handlers[msg.type]
+      if (handler) {
+        const result = handler(msg.payload)
+        if (result instanceof Promise) {
+          result.catch((err: unknown) => {
+            log.error(`Worker IPC handler for '${msg.type}' threw async error`, err)
+          })
+        }
+      }
+    } catch {
+      // skip malformed
+    }
+  }
+}
+
+/**
+ * Set up IPC message handlers.
  *
- * Uses stdin (Bun.ReadableStream) instead of process.on('message').
- * Prints messages to stdout (Bun.write) instead of process.send().
+ * Process mode: listens on stdin (Bun.ReadableStream).
+ * Worker mode:  listens via self.onmessage.
  *
  * @param handlers  Map of message types to handler functions.
  * @param currentTaskRef  Optional reference to a promise that resolves when
@@ -94,7 +127,12 @@ export function setupChildIPC(
   handlers: Record<string, MessageHandler>,
   currentTaskRef?: { current: Promise<unknown> | null },
 ): void {
-  // Listen for messages from parent via stdin
+  if (isWorkerMode) {
+    setupWorkerIPC(handlers)
+    return
+  }
+
+  // ── Process mode: stdin reader ──
   ;(async () => {
     try {
       const stdin = process.stdin as unknown as ReadableStream
@@ -117,8 +155,6 @@ export function setupChildIPC(
     }
     // stdin closed = parent disconnected
     log.warn('Parent process stdin closed, exiting')
-
-    // If a task is currently running, give it a brief moment to finish
     if (currentTaskRef?.current) {
       log.info('Task still running on disconnect, waiting up to 2s before exit')
       const taskPromise = currentTaskRef.current
@@ -127,7 +163,7 @@ export function setupChildIPC(
     process.exit(0)
   })()
 
-  // ── OS signal handlers (P1-05) ──
+  // ── OS signal handlers ──
   function handleSignal(signal: string): void {
     log.info(`Received ${signal}, exiting gracefully`)
     process.exit(0)

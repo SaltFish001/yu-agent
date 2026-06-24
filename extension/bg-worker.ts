@@ -1,19 +1,20 @@
 #!/usr/bin/env node
 
 /**
- * yu-agent — Background worker entry point (fork target).
+ * yu-agent — Background worker entry point.
  *
- * This module is the entry point for child processes forked by the Supervisor.
- * It imports and calls the scheduler handler for a given topic.
+ * This module is the entry point for child processes/workers spawned by
+ * the Supervisor. It imports and calls the scheduler handler for a given topic.
+ *
+ * Supports two modes:
+ *   - Bun.Worker (preferred): spawned via new Worker(), IPC via postMessage
+ *   - Bun.spawn (legacy): spawned as subprocess, IPC via stdin/stdout JSON lines
  *
  * Phase 1: IPC protocol (ping/pong, shutdown, task results),
  *          dedicated DB connection with busy_timeout=5000.
  *
  * Phase 2: Resident mode — after task completes, enters wait loop
  *          for `parent:new_task` or `parent:shutdown` messages.
- *
- * Usage (called by Supervisor.spawnChild):
- *   node dist/extension/bg-worker.js --topic-name=frontend
  */
 
 import { Database as DatabaseSync } from 'bun:sqlite'
@@ -27,9 +28,10 @@ const __dirname = dirname(__filename)
 
 const log = createLogger('bg-worker')
 
+// Detect Worker mode
+const isWorkerMode = typeof (globalThis as any).postMessage === 'function'
+
 // ── Open a dedicated DB connection for write operations ──
-// Use a longer busy_timeout (5000ms) to avoid contention with the
-// supervisor daemon which also writes to topics.db.
 const TOPICS_DB_PATH = resolve(process.env.HOME || '/home/saltfish', '.yu', 'topics.db')
 const TASK_TIMEOUT = 300_000 // 5 minutes — default timeout for handler() calls
 let _bgDb: DatabaseSync | null = null
@@ -44,7 +46,6 @@ function getBgDb(): DatabaseSync {
 
 /**
  * Update topic status using our dedicated DB connection.
- * Same logic as topic.ts setStatus() but with longer busy_timeout.
  */
 function bgSetStatus(name: string, status: string): void {
   const db = getBgDb()
@@ -74,17 +75,28 @@ function bgSetSummary(name: string, summary: string): void {
 }
 
 /**
+ * Graceful exit — process.exit() in process mode, self.close() in Worker mode.
+ */
+function gracefulExit(code: number, reason?: string): never {
+  if (reason) log.info(`Exiting: ${reason}`)
+  if (isWorkerMode) {
+    ;(globalThis as any).close()
+    // self.close() doesn't stop execution immediately in all Bun versions
+    // so we force-stop via throwing
+    throw new Error(`exit:${code}`)
+  }
+  process.exit(code)
+}
+
+/**
  * Execute a single task for the given topic.
- * Shared between initial execution and parent:new_task.
  */
 async function executeTask(topicName: string, prompt: string): Promise<boolean> {
   log.info(`Executing: ${prompt.substring(0, 200)}`)
 
   try {
-    // Import and call scheduler
     const { handler } = await import('./scheduler.js')
 
-    // Wrap handler call in a timeout to prevent hanging indefinitely
     const result = (await Promise.race([
       handler(prompt, { source: 'topic_bg', topic: topicName }),
       new Promise<string | null>((_, reject) =>
@@ -93,24 +105,17 @@ async function executeTask(topicName: string, prompt: string): Promise<boolean> 
     ])) as string | null | undefined
 
     if (result) {
-      // P2-04: Store full result in IPC payload, truncation only for DB storage
       const dbSummary = result.substring(0, 500)
       bgSetSummary(topicName, `Completed: ${prompt}\n\n${dbSummary}`)
       log.info(`Task completed for "${topicName}"`)
 
-      // Send full result via IPC (no truncation)
       const sent = send('task_result', { topicName, status: 'completed', result })
-      if (!sent) {
-        log.warn('Failed to send task_result IPC message — channel may be closed')
-      }
+      if (!sent) log.warn('Failed to send task_result IPC message — channel may be closed')
     } else {
       bgSetSummary(topicName, `Completed: ${prompt}\n\n(no output)`)
       log.info(`Task completed (empty result) for "${topicName}"`)
-
       const sent = send('task_result', { topicName, status: 'completed' })
-      if (!sent) {
-        log.warn('Failed to send task_result IPC message — channel may be closed')
-      }
+      if (!sent) log.warn('Failed to send task_result IPC message — channel may be closed')
     }
 
     return true
@@ -118,23 +123,18 @@ async function executeTask(topicName: string, prompt: string): Promise<boolean> 
     const msg = err instanceof Error ? err.message : String(err)
     bgSetSummary(topicName, `Failed: ${prompt}\n\n${msg}`)
     log.error(`Task failed for "${topicName}": ${msg}`)
-
-    // Send error via IPC
     const sent = send('error', { topicName, error: msg })
-    if (!sent) {
-      log.warn('Failed to send error IPC message — channel may be closed')
-    }
+    if (!sent) log.warn('Failed to send error IPC message — channel may be closed')
     return false
   }
 }
 
 async function main(): Promise<void> {
-  // Parse --topic-name argument
-  const topicName = process.argv.find((a) => a.startsWith('--topic-name='))?.split('=', 2)[1]
-
+  // Get topic name from env (works in both Worker and process mode)
+  const topicName = process.env.YU_TOPIC_NAME
   if (!topicName) {
-    log.error('Missing --topic-name argument')
-    process.exit(1)
+    log.error('Missing YU_TOPIC_NAME environment variable')
+    gracefulExit(1, 'missing YU_TOPIC_NAME')
   }
 
   log.info(`Background worker starting for topic "${topicName}"`)
@@ -142,27 +142,20 @@ async function main(): Promise<void> {
   // ── Set up IPC handlers ──
   let residentMode = false
   let currentTaskPromise: Promise<boolean> | null = null
-
-  // Create a ref object so setupChildIPC can check mid-task state (P2-08)
   const currentTaskRef = { current: currentTaskPromise as Promise<unknown> | null }
 
   setupChildIPC(
     {
-      ping: () => {
-        send('pong')
-      },
-      shutdown: () => {
-        log.info('Received shutdown from parent, exiting')
-        process.exit(0)
-      },
+      ping: () => { send('pong') },
+      shutdown: () => { gracefulExit(0, 'shutdown') },
       'parent:shutdown': () => {
         log.info('Received parent:shutdown, cleaning up and exiting')
         bgSetStatus(topicName, 'idle')
-        process.exit(0)
+        gracefulExit(0, 'parent:shutdown')
       },
       'parent:die': () => {
         log.info('Received parent:die, exiting immediately')
-        process.exit(0)
+        gracefulExit(0, 'parent:die')
       },
       'parent:new_task': (payload: unknown) => {
         if (!residentMode) {
@@ -174,12 +167,10 @@ async function main(): Promise<void> {
           log.warn('Received parent:new_task without prompt')
           return
         }
-        // If a task is already running, reject/drop the second one (P1-07)
         if (currentTaskPromise !== null) {
           log.warn('Received parent:new_task while a task is already running, dropping')
           return
         }
-        // Execute the new task
         currentTaskPromise = executeTask(topicName, data.prompt).finally(() => {
           currentTaskPromise = null
           currentTaskRef.current = null
@@ -194,19 +185,16 @@ async function main(): Promise<void> {
   send('pong')
   log.info('Sent pong to parent')
 
-  // Dynamically import topic module for get() only (we use our own DB for writes)
   const { get } = await import('./topic.js')
-
   const topic = get(topicName)
   if (!topic) {
     log.error(`Topic "${topicName}" not found`)
-    process.exit(1)
+    gracefulExit(1, 'topic not found')
   }
 
   const prompt = topic.summary.replace(/^Running: /, '')
 
-  // Start heartbeat interval BEFORE first task (P1-04)
-  // This ensures the parent sees heartbeats during long-running first tasks
+  // Start heartbeat interval
   const _heartbeatInterval = setInterval(() => {
     send('heartbeat', { topicName })
   }, 5_000)
@@ -218,22 +206,17 @@ async function main(): Promise<void> {
   bgSetStatus(topicName, 'idle')
   residentMode = true
   log.info(`Entering resident mode for topic "${topicName}"`)
-
-  // Report status to parent
   send('status_update', { topicName, status: 'resident' })
 
   // Wait for parent:shutdown or parent:die to trigger exit
-  // The handlers are already registered via setupChildIPC above.
-  // We keep the process alive by waiting indefinitely.
   await new Promise<void>(() => {
     // This promise never resolves on its own.
-    // The 'parent:shutdown' or 'parent:die' handler calls process.exit(0).
-    // The 'shutdown' handler also calls process.exit(0).
-    // We just need to keep the event loop alive.
+    // Handlers call gracefulExit() above.
+    // We just keep the event loop alive.
   })
 }
 
 main().catch((err) => {
   log.error('Fatal worker error:', err instanceof Error ? err.message : String(err))
-  process.exit(1)
+  gracefulExit(1, 'fatal error')
 })

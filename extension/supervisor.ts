@@ -12,7 +12,7 @@ import { Database as DatabaseSync } from 'bun:sqlite'
 import { existsSync, readFileSync } from 'fs'
 import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
-import { sendToChild, waitForMessage } from './ipc-main.js'
+import { sendToChild, sendToWorker, waitForMessage, waitForWorkerMessage, type WorkerHandle } from './ipc-main.js'
 import { createLogger } from './logger.js'
 import { checkAndTriggerOrchestrator } from './orchestrator.js'
 import { writeEvent } from './topic.js'
@@ -96,10 +96,166 @@ export class Supervisor {
   }
 
   /**
-   * Spawn a child process for the given topic (Bun stdio IPC).
-   * The child process runs bg-worker.ts (via bun) to execute scheduler logic.
-   * After spawning, sends a 'ping' and waits for 'pong' to confirm the child is alive.
-   * Communication is via JSON-line protocol over stdin/stdout.
+   * Spawn a child Worker thread (preferred over process spawn).
+   * Uses Bun.Worker for lightweight threading with postMessage IPC.
+   */
+  spawnWorker(topicName: string, config?: Partial<ChildSpawnConfig>): WorkerHandle | undefined {
+    const cfg: ChildSpawnConfig = {
+      timeout: config?.timeout ?? DEFAULT_SPAWN_TIMEOUT,
+      env: config?.env ?? {},
+      spawning_timeout: config?.spawning_timeout ?? 30_000,
+      resident: config?.resident ?? true,
+      autoRetry: config?.autoRetry ?? true,
+      maxRetries: config?.maxRetries ?? DEFAULT_MAX_RESTARTS,
+    }
+
+    // Use source .ts path for Workers (Bun compiles on the fly)
+    const workerPath = resolve(__dirname, 'bg-worker.ts')
+
+    // Verify the source file exists (not the compiled output)
+    const sourcePath = existsSync(workerPath) ? workerPath : CHILD_ENTRY
+    if (!existsSync(sourcePath)) {
+      log.error(`Worker entry not found: ${sourcePath}. Build the project first.`)
+      return undefined
+    }
+
+    const worker = new Worker(sourcePath, {
+      env: {
+        ...process.env,
+        YU_TOPIC_NAME: topicName,
+        YU_CHILD_MODE: '1',
+        YU_SESSION_TAG: `bg:${topicName}`,
+        DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY ?? '',
+        DEEPSEEK_BASE_URL: process.env.DEEPSEEK_BASE_URL ?? '',
+        ...Object.fromEntries(
+          Object.entries(cfg.env).filter(([key]) => {
+            const sensitivePatterns = [
+              'DEEPSEEK_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY',
+              'API_KEY', 'SECRET', 'TOKEN',
+            ]
+            const isSensitive = sensitivePatterns.some((p) => key.toUpperCase().includes(p))
+            if (isSensitive) log.warn(`Filtering sensitive env key "${key}" from cfg.env override`)
+            return !isSensitive
+          }),
+        ),
+      },
+    }) as unknown as WorkerHandle
+
+    const info: ChildProcessInfo = {
+      pid: worker.threadId ?? 0,
+      topicName,
+      status: 'spawning',
+      startedAt: Date.now(),
+      lastHeartbeat: Date.now(),
+      restartCount: 0,
+      resident: cfg.resident,
+    }
+
+    this.children.set(topicName, info)
+    this.processes.set(topicName, worker)
+
+    log.info(`Worker spawned for topic "${topicName}" (threadId ${worker.threadId})`)
+
+    this.safeWriteEvent(topicName, 'child_spawned', { pid: worker.threadId, status: 'spawning', type: 'worker' })
+    this.safeTriggerOrchestrator(topicName, 'child_spawned', { pid: worker.threadId, status: 'spawning', type: 'worker' })
+
+    // ── IPC message handler via worker.onmessage ──
+    worker.onmessage = (event: { data: string }) => {
+      try {
+        const msg = JSON.parse(event.data) as { type?: string; payload?: unknown }
+        if (!msg?.type) return
+        const existing = this.children.get(topicName)
+        if (!existing) return
+
+        switch (msg.type) {
+          case 'pong': {
+            if (existing.status === 'spawning') {
+              existing.status = 'running'
+              this.lastHeartbeat.set(topicName, Date.now())
+              log.info(`Worker "${topicName}" is alive (pong received)`)
+            }
+            const timer = this.spawningTimers.get(topicName)
+            if (timer) { clearTimeout(timer); this.spawningTimers.delete(topicName) }
+            this.restartCount.set(topicName, 0)
+            existing.restartCount = 0
+            break
+          }
+          case 'heartbeat':
+            this.lastHeartbeat.set(topicName, Date.now())
+            existing.lastHeartbeat = Date.now()
+            if (existing.status === 'spawning' || existing.status === 'degraded') existing.status = 'running'
+            break
+          case 'task_result':
+            if (!existing.resident) existing.status = 'stopped'
+            log.info(`Worker "${topicName}" completed task`)
+            break
+          case 'error':
+            existing.status = 'degraded'
+            log.error(`Worker "${topicName}" reported error:`, msg.payload as Record<string, unknown> | undefined)
+            break
+          case 'status_update':
+            log.debug(`Worker "${topicName}" status:`, msg.payload as Record<string, unknown> | undefined)
+            break
+        }
+      } catch { /* malformed message, skip */ }
+    }
+
+    // ── Exit handler with auto-restart ──
+    worker.onerror = (err: ErrorEvent) => {
+      const existing = this.children.get(topicName)
+      if (existing) {
+        existing.status = 'dead'
+        log.warn(`Worker "${topicName}" crashed: ${err.message}`)
+        this.safeWriteEvent(topicName, 'child_crashed', { error: err.message, pid: existing.pid })
+        this.safeTriggerOrchestrator(topicName, 'child_crashed', { error: err.message, pid: existing.pid })
+      }
+      this.processes.delete(topicName)
+      if (!this.shuttingDown && !this.killRequested.has(topicName)) {
+        this.scheduleRestart(topicName)
+      }
+    }
+
+    // ── Ping worker to confirm it's alive ──
+    setTimeout(async () => {
+      try {
+        sendToWorker(worker, 'ping')
+        await waitForWorkerMessage(worker, 'pong', cfg.spawning_timeout ?? 30_000)
+        const existing = this.children.get(topicName)
+        if (existing && existing.status === 'spawning') {
+          existing.status = 'running'
+          log.info(`Worker "${topicName}" confirmed alive via ping/pong`)
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err)
+        log.warn(`Worker "${topicName}" ping/pong failed: ${msg}`)
+        const existing = this.children.get(topicName)
+        if (existing && existing.status === 'spawning') {
+          existing.status = 'spawn_failed'
+          this.safeWriteEvent(topicName, 'child_spawn_failed', { reason: 'ping_timeout', error: msg, pid: existing.pid })
+          this.killChild(topicName)
+        }
+      }
+    })
+
+    // ── Spawning timeout ──
+    const spawnTimer = setTimeout(() => {
+      const current = this.children.get(topicName)
+      if (current && current.status === 'spawning') {
+        log.warn(`Worker "${topicName}" spawning timed out after ${cfg.timeout}ms, killing`)
+        current.status = 'spawn_failed'
+        this.safeWriteEvent(topicName, 'child_spawn_failed', { reason: 'spawn_timeout', timeout: cfg.timeout, pid: current.pid })
+        this.killChild(topicName)
+      }
+      this.spawningTimers.delete(topicName)
+    }, cfg.timeout)
+    this.spawningTimers.set(topicName, spawnTimer)
+
+    return worker
+  }
+
+  /**
+   * Legacy: Spawn a child process for the given topic (Bun stdio IPC).
+   * Falls back to this if Worker is unavailable.
    */
   spawnChild(topicName: string, config?: Partial<ChildSpawnConfig>): any | undefined {
     const cfg: ChildSpawnConfig = {
@@ -300,8 +456,9 @@ export class Supervisor {
   }
 
   /**
-   * Gracefully kill a child process.
-   * Sends SIGTERM first, then SIGKILL after 5 seconds if still alive.
+   * Gracefully kill a child process or worker thread.
+   * Process mode: SIGTERM → SIGKILL after SIGKILL_DELAY.
+   * Worker mode:  terminate() directly.
    */
   killChild(topicName: string): void {
     const child = this.processes.get(topicName)
@@ -312,19 +469,28 @@ export class Supervisor {
       info.status = 'stopped'
     }
 
-    // P1-03: Mark that kill was requested so exit handler doesn't restart
     this.killRequested.add(topicName)
 
-    log.info(`Killing child for topic "${topicName}" (PID ${child.pid})`)
+    // Check if it's a Worker (has terminate method)
+    if (typeof child.terminate === 'function') {
+      log.info(`Terminating worker for topic "${topicName}" (threadId ${child.threadId ?? '?'})`)
+      try {
+        child.terminate()
+      } catch {
+        // Worker may already be dead
+      }
+      this.processes.delete(topicName)
+      return
+    }
 
-    // SIGTERM — allow graceful shutdown
+    // ── Process mode: SIGTERM + SIGKILL fallback ──
+    log.info(`Killing child for topic "${topicName}" (PID ${child.pid})`)
     try {
       child.kill('SIGTERM')
     } catch {
       // Process may already be dead
     }
 
-    // Force SIGKILL after delay
     setTimeout(() => {
       try {
         if (child.exitCode === null && !child.killed) {
@@ -453,7 +619,11 @@ export class Supervisor {
     setTimeout(() => {
       this.restarting.delete(topicName)
       if (this.shuttingDown) return
-      this.spawnChild(topicName, { resident: info?.resident ?? true })
+      // Prefer Worker mode
+      const worker = this.spawnWorker(topicName, { resident: info?.resident ?? true })
+      if (!worker) {
+        this.spawnChild(topicName, { resident: info?.resident ?? true })
+      }
     }, delay)
   }
 
