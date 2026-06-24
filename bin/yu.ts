@@ -1310,37 +1310,28 @@ async function mainCli(): Promise<void> {
     return
   }
 
-  // Subcommand dispatch (Pi-managed commands)
-  if (args[0] && COMMANDS.has(args[0])) {
+  // 通用 subcommand dispatch — 使用内置 executePlan 替代 Pi SDK
+  if (args[0] && COMMANDS.has(args[0]) && args[0] !== 'memory') {
     const command = args.shift()!
-    const rest = args.join(' ')
-    const piArgs = ['--print']
-    if (rest) {
-      piArgs.push(`/${command} ${rest}`)
-    } else {
-      piArgs.push(`/${command}`)
-    }
-
-  // Pi SDK 模块类型（可选依赖）
-  interface PiSdkModule {
-    main: (args: string[], opts: { extensionFactories: unknown[][] }) => Promise<void>
-    subagents?: unknown[]
-    yuAgent?: unknown
-  }
-
-    // Dynamic import for Pi SDK (optional dependency)
-    const piMod = await import('@tintinweb/pi-subagents').catch(() => null) as PiSdkModule | null
-    if (!piMod) {
-      console.error('Pi SDK not available, cannot run command:', command)
-      process.exit(1)
-    }
-    const piMain = piMod.main
-    const piSubagents = piMod.subagents ?? []
-    const piYuAgent = (piMod.yuAgent ?? []) as unknown[]
-    await piMain(piArgs, {
-      extensionFactories: [piSubagents, piYuAgent],
-    })
-    await printCacheStats()
+    const task = args.join(' ')
+    const agentId = `cli-${command}-${Date.now()}`
+    const { executePlan } = await import('../extension/scheduler.js')
+    const result = await executePlan(
+      {
+        intent: command,
+        reasoning: `CLI dispatch: ${command}`,
+        agents: [{
+          type: command,
+          model: 'v4-flash',
+          id: agentId,
+          task: task || `Execute ${command} task`,
+        }],
+        parallel_groups: [[agentId]],
+      },
+      task || `Execute ${command} task`,
+      { project_root: PROJECT_ROOT },
+    )
+    if (result) console.log(result)
     return
   }
 
@@ -1359,8 +1350,7 @@ async function mainCli(): Promise<void> {
     }
 
     if (slashCmd === 'memory' || slashCmd === 'mem') {
-      // /memory falls through to Pi's subagent system
-      // (no direct handler — Pi manages session memory)
+      // /memory falls through to generic subcommand dispatch above
     }
 
     // Unknown slash — fall through to Pi
