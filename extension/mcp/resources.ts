@@ -96,7 +96,7 @@ export async function subscribeResource(
   transport: McpTransport,
   uri: string,
 ): Promise<void> {
-  await transport.sendNotification('notifications/resources/subscribe', { uri })
+  await transport.request('resources/subscribe', { uri }, 10_000)
 }
 
 /**

@@ -32,6 +32,8 @@ export interface AgentLoopConfig {
   agentType?: string
   sessionId?: string
   autoPersist?: boolean
+  /** 可选的 AbortSignal，用于超时/取消 (spawn/background 传入) */
+  abortSignal?: AbortSignal
 }
 
 export interface AgentLoopResult {
@@ -69,6 +71,7 @@ export class AgentLoop {
   private apiClient: ApiClient
   private maxIterations: number
   private totalTokensUsed = 0
+  private abortSignal?: AbortSignal
 
   constructor(config: AgentLoopConfig = {}) {
     this.context = new ContextManager({
@@ -79,6 +82,7 @@ export class AgentLoop {
     })
     this.apiClient = config.apiClient ?? { chatCompletion }
     this.maxIterations = config.maxIterations ?? 30
+    this.abortSignal = config.abortSignal
   }
 
   /** 获取底层的 ContextManager（用于外部访问消息/状态） */
@@ -90,6 +94,18 @@ export class AgentLoop {
     this.context.addMessage({ role: 'user', content: task })
 
     for (let i = 0; i < this.maxIterations; i++) {
+      // Check abort signal
+      if (this.abortSignal?.aborted) {
+        const lastMsg = this.context.getLastMessage()
+        return {
+          success: false,
+          output: lastMsg?.content ?? '(cancelled)',
+          iterations: i + 1,
+          totalTokens: this.totalTokensUsed,
+          error: `AgentLoop cancelled: ${this.abortSignal.reason?.toString() ?? 'unknown'}`,
+        }
+      }
+
       log.info(`AgentLoop iteration ${i + 1}/${this.maxIterations}`)
 
       // Phase 2: LLM-based 压缩（>75% 自动触发）
@@ -143,21 +159,19 @@ export class AgentLoop {
             }
           }
 
+          // ── Tool retry: executeTool 内部已做 retry — 这里只汇报 ──
           const result = await executeTool(tc.name, parsedArgs)
           this.context.addToolResult(
             tc.id ?? `call_${i}_0`,
             result.success ? result.output : `Error: ${result.error ?? 'Unknown error'}`,
           )
         }
-      } else {
-        // 无 tool calls → 最终回复
+      } else if (finishReason === 'stop' || finishReason === 'end_turn' || finishReason === 'end_call') {
+        // 无 tool calls 且 LLM 表示完成 → 最终回复
         this.context.addMessage({ role: 'assistant', content })
-
-        if (finishReason === 'stop' || finishReason === 'end_turn') {
-          return this.buildResult(content, i + 1)
-        }
         return this.buildResult(content, i + 1)
       }
+      // 无 tool calls 但 finishReason 不是终止信号 → 继续循环
     }
 
     // 超迭代次数
@@ -205,29 +219,79 @@ export class AgentLoop {
   private parseToolCalls(content: string): Array<{ id: string; name: string; args: string }> {
     const calls: Array<{ id: string; name: string; args: string }> = []
 
-    // 格式 1: native function calling
-    // {"function": "bash", "args": {"command": "ls"}}
-    const nativePattern = /\{[^{]*"function"\s*:\s*"([^"]+)"[^}]*"args"\s*:\s*(\{[^}]+\})[^}]*\}/g
-    for (const match of content.matchAll(nativePattern)) {
-      calls.push({
-        id: `call_${calls.length}`,
-        name: match[1],
-        args: match[2],
-      })
+    // 格式 1: code block JSON — ```json [...] ```
+    const jsonBlockPattern = /```(?:json)?\s*(\[[\s\S]*?\])\s*```/g
+    for (const match of content.matchAll(jsonBlockPattern)) {
+      try {
+        const parsed = JSON.parse(match[1])
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            if (item.function && item.args !== undefined) {
+              calls.push({
+                id: item.id ?? `call_${calls.length}`,
+                name: item.function,
+                args: typeof item.args === 'string' ? item.args : JSON.stringify(item.args),
+              })
+            }
+          }
+        }
+      } catch { /* skip malformed */ }
     }
 
-    // 格式 2: tool_use XML block
-    // <tool_use><name>bash</name><args>{"command": "ls"}</args></tool_use>
+    // 格式 2: 内联 JSON 对象 — brace-counting 提取所有顶层 JSON
+    for (const maybeJson of this.extractJsonObjects(content)) {
+      try {
+        const parsed = JSON.parse(maybeJson)
+        if (parsed.function && parsed.args !== undefined) {
+          // Deduplicate: skip if already found via JSON block
+          if (!calls.some((c) => c.name === parsed.function)) {
+            calls.push({
+              id: parsed.id ?? `call_${calls.length}`,
+              name: parsed.function,
+              args: typeof parsed.args === 'string' ? parsed.args : JSON.stringify(parsed.args),
+            })
+          }
+        }
+      } catch { /* not valid JSON, skip */ }
+    }
+
+    // 格式 3: tool_use XML block
     const xmlPattern = /<tool_use>[\s\S]*?<name>([^<]+)<\/name>[\s\S]*?<args>([\s\S]*?)<\/args>[\s\S]*?<\/tool_use>/g
     for (const match of content.matchAll(xmlPattern)) {
-      calls.push({
-        id: `call_${calls.length}`,
-        name: match[1].trim(),
-        args: match[2].trim(),
-      })
+      if (!calls.some((c) => c.name === match[1].trim())) {
+        calls.push({
+          id: `call_${calls.length}`,
+          name: match[1].trim(),
+          args: match[2].trim(),
+        })
+      }
     }
 
     return calls
+  }
+
+  /**
+   * Brace-counting JSON 对象提取器。
+   * 从文本中提取所有顶级 {…} 对象，支持任意深度嵌套。
+   */
+  private extractJsonObjects(text: string): string[] {
+    const results: string[] = []
+    let depth = 0
+    let start = -1
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i]
+      if (ch === '{') {
+        if (depth === 0) start = i
+        depth++
+      } else if (ch === '}') {
+        depth--
+        if (depth === 0 && start >= 0) {
+          results.push(text.slice(start, i + 1))
+          start = -1
+        }
+      }
+    }
+    return results
   }
 }
 

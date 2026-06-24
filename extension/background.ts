@@ -30,7 +30,11 @@ export interface BgTask {
   error?: string
 }
 
-// ── Registry (in-memory) ───────────────────────────────
+// ── AbortController registry ────────────────────────────
+
+const abortControllers = new Map<string, AbortController>()
+
+// ── Internal state ──────────────────────────────────────
 
 const tasks = new Map<string, BgTask>()
 const MAX_TASKS = 100
@@ -41,16 +45,21 @@ export const bg = {
   /**
    * Register a new background task and return its ID.
    */
-  register(opts: { type: string; prompt: string }): string {
+  register(opts: { type: string; prompt: string; timeout?: number }): string {
     // Clean up old tasks if at capacity
     if (tasks.size >= MAX_TASKS) {
       const oldest = [...tasks.entries()]
         .sort(([, a], [, b]) => a.startTime - b.startTime)
         .slice(0, Math.floor(MAX_TASKS / 2))
-      for (const [id] of oldest) tasks.delete(id)
+      for (const [id] of oldest) {
+        tasks.delete(id)
+        abortControllers.delete(id)
+      }
     }
 
     const id = `bg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+    const ctrl = new AbortController()
+    abortControllers.set(id, ctrl)
     tasks.set(id, {
       id,
       type: opts.type,
@@ -58,8 +67,27 @@ export const bg = {
       status: 'pending',
       startTime: Date.now(),
     })
+
+    // Auto-cancel on timeout
+    if (opts.timeout && opts.timeout > 0) {
+      setTimeout(() => {
+        const t = tasks.get(id)
+        if (t && (t.status === 'pending' || t.status === 'running')) {
+          ctrl.abort('timeout')
+          this.cancel(id, 'timeout')
+        }
+      }, opts.timeout)
+    }
+
     log.info(`Background task registered: ${id} (${opts.type})`)
     return id
+  },
+
+  /**
+   * Get the AbortSignal for a task (so callers can wire it up).
+   */
+  getSignal(id: string): AbortSignal | undefined {
+    return abortControllers.get(id)?.signal
   },
 
   /**
@@ -114,13 +142,17 @@ export const bg = {
   /**
    * Cancel a pending/running task.
    */
-  cancel(id: string): boolean {
+  cancel(id: string, reason?: string): boolean {
     const t = tasks.get(id)
     if (!t) return false
     if (t.status === 'pending' || t.status === 'running') {
       t.status = 'cancelled'
       t.endTime = Date.now()
-      log.info(`Background task cancelled: ${id}`)
+      if (reason) t.error = reason.slice(0, 1000)
+      // Abort the running process
+      abortControllers.get(id)?.abort(reason)
+      abortControllers.delete(id)
+      log.info(`Background task cancelled: ${id}${reason ? ` — ${reason}` : ''}`)
       return true
     }
     return false
@@ -159,10 +191,27 @@ export const bg = {
    * Run a task function in background and track its lifecycle.
    * Returns immediately with the task ID.
    */
-  run(id: string, fn: () => Promise<string>): void {
+  run(id: string, fn: (signal?: AbortSignal) => Promise<string>, timeout?: number): void {
+    // If a timeout was specified, register with timeout
+    if (timeout && timeout > 0) {
+      const ctrl = new AbortController()
+      abortControllers.set(id, ctrl)
+      setTimeout(() => {
+        const t = tasks.get(id)
+        if (t && (t.status === 'pending' || t.status === 'running')) {
+          ctrl.abort('timeout')
+          this.cancel(id, 'timeout')
+        }
+      }, timeout)
+    }
     this.markRunning(id)
-    fn()
+    fn(abortControllers.get(id)?.signal)
       .then((result) => this.markCompleted(id, result))
-      .catch((err) => this.markFailed(id, err instanceof Error ? err.message : String(err)))
+      .catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err)
+        // Don't emit 'cancelled' as error if aborted
+        if (tasks.get(id)?.status === 'cancelled') return
+        this.markFailed(id, msg)
+      })
   },
 }

@@ -107,32 +107,42 @@ export async function executeTool(
     }
   }
 
-  // ── Execute with audit + timeout ────────────────────
+  // ── Execute with audit + timeout + retry ──────────────
   const start = performance.now()
   const audit = _globalAuditHook ?? enhancement?.audit
+  const retryCount = enhancement?.retryCount ?? 0
 
-  try {
-    audit?.before?.({ name, args: params, role })
+  let lastError: Error | null = null
+  for (let attempt = 0; attempt <= retryCount; attempt++) {
+    try {
+      audit?.before?.({ name, args: params, role })
 
-    const timeout = enhancement?.timeout ?? 60_000
-    const result = await Promise.race([
-      tool.execute(params),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Tool "${name}" timed out after ${timeout}ms`)), timeout),
-      ),
-    ])
+      const timeout = enhancement?.timeout ?? 60_000
+      const result = await Promise.race([
+        tool.execute(params),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`Tool "${name}" timed out after ${timeout}ms`)), timeout),
+        ),
+      ])
 
-    const duration = performance.now() - start
-    audit?.after?.({ name, args: params, result, durationMs: duration, role })
-    log.info(`Tool ${name} completed in ${duration.toFixed(0)}ms`)
-    return result
-  } catch (err) {
-    const duration = performance.now() - start
-    const error = err instanceof Error ? err : new Error(String(err))
-    audit?.error?.({ name, args: params, error, role })
-    log.error(`Tool ${name} failed after ${duration.toFixed(0)}ms`, { error: error.message })
-    return { success: false, output: '', error: error.message }
+      const duration = performance.now() - start
+      audit?.after?.({ name, args: params, result, durationMs: duration, role })
+      log.info(`Tool ${name} completed in ${duration.toFixed(0)}ms`)
+      return result
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err))
+      if (attempt < retryCount) {
+        log.warn(`Tool ${name} failed on attempt ${attempt + 1}/${retryCount + 1}, retrying...`, { error: lastError.message })
+        continue
+      }
+      break
+    }
   }
+  const duration = performance.now() - start
+  const finalError = lastError ?? new Error(`Tool "${name}" failed`)
+  audit?.error?.({ name, args: params, error: finalError, role })
+  log.error(`Tool ${name} failed after ${duration.toFixed(0)}ms`, { error: finalError.message })
+  return { success: false, output: '', error: finalError.message }
 }
 
 /** 注册审计钩子到所有已注册工具 */

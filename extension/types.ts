@@ -134,6 +134,8 @@ export interface ToolEnhancement {
   audit?: ToolAuditHook
   timeout?: number
   sandbox?: boolean
+  /** 失败重试次数 (默认 0) */
+  retryCount?: number
 }
 
 // ── MCP 传输 ─────────────────────────────────────────────

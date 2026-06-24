@@ -59,8 +59,9 @@ export function writeStoreIndex(skills: StoreSkillRef[]): void {
  */
 export function scanInstalledSkills(): StoreSkillRef[] {
   const scopes = [
-    resolve(YU_HOME, 'skills'),
-    resolve(process.cwd(), '.yu', 'skills'),
+    resolve('/etc', 'yu', 'skills'),    // 全局 (root 配置)
+    resolve(YU_HOME, 'skills'),          // 用户作用域
+    resolve(process.cwd(), '.yu', 'skills'), // 项目作用域
   ]
 
   const installed: StoreSkillRef[] = []
@@ -123,4 +124,70 @@ export function listAllSkills(): StoreSkillRef[] {
   for (const s of installed) byName.set(s.name, s)
 
   return Array.from(byName.values())
+}
+
+// ── Remote source ───────────────────────────────────────
+
+export interface RemoteSkillSource {
+  name: string
+  url: string
+  /** 最后同步时间戳 */
+  lastSync?: number
+}
+
+/** 远程源索引路径 */
+const REMOTE_SOURCE_PATH = resolve(YU_HOME, 'skills', '.remote-sources.json')
+
+export function readRemoteSources(): RemoteSkillSource[] {
+  if (!existsSync(REMOTE_SOURCE_PATH)) return []
+  try {
+    return JSON.parse(readFileSync(REMOTE_SOURCE_PATH, 'utf-8'))
+  } catch {
+    log.warn('Failed to read remote skill sources')
+    return []
+  }
+}
+
+export function writeRemoteSources(sources: RemoteSkillSource[]): void {
+  try {
+    writeFileSync(REMOTE_SOURCE_PATH, JSON.stringify(sources, null, 2) + '\n', 'utf-8')
+  } catch (err) {
+    log.error('Failed to write remote skill sources', err)
+  }
+}
+
+export async function fetchRemoteIndex(source: RemoteSkillSource): Promise<StoreSkillRef[]> {
+  try {
+    const res = await fetch(source.url)
+    if (!res.ok) {
+      log.warn(`Remote source ${source.name} returned ${res.status}`)
+      return []
+    }
+    const data = (await res.json()) as { skills: StoreSkillRef[] }
+    if (!Array.isArray(data.skills)) return []
+    return data.skills.map((s) => ({ ...s, source: 'remote' as const }))
+  } catch (err) {
+    log.error(`Failed to fetch remote source: ${source.name}`, err)
+    return []
+  }
+}
+
+export async function syncRemoteSources(): Promise<number> {
+  const sources = readRemoteSources()
+  let total = 0
+  for (const source of sources) {
+    const skills = await fetchRemoteIndex(source)
+    if (skills.length > 0) {
+      const existing = readStoreIndex()
+      const byName = new Map<string, StoreSkillRef>()
+      for (const s of existing) byName.set(s.name, s)
+      for (const s of skills) byName.set(s.name, s)
+      writeStoreIndex(Array.from(byName.values()))
+      source.lastSync = Date.now()
+      total += skills.length
+    }
+  }
+  writeRemoteSources(sources)
+  log.info(`Synced ${total} skills from ${sources.length} remote sources`)
+  return total
 }
