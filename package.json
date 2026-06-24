@@ -25,7 +25,7 @@
     "yu": "./dist/bin/yu.js"
   },
   "scripts": {
-    "build": "bun build ./bin/yu.ts --outdir ./dist --target bun --external @biomejs/js-api --external @biomejs/biome --external '@earendil-works/*'",
+    "build": "bun build ./bin/yu.ts --outdir ./dist --target bun --external @biomejs/js-api --external @biomejs/biome",
     "build:web": "bun build ./webui/assets/client.ts --outdir ./webui/assets --target browser --minify",
     "postbuild": "bun -e \"import { cpSync, existsSync, mkdirSync } from 'fs'; import { resolve } from 'path'; import { homedir } from 'os'; const src = resolve(import.meta.dir, 'prompts'); const dst = resolve(homedir(), '.yu', 'prompts'); if (!existsSync(dst)) mkdirSync(dst, { recursive: true }); cpSync(src, dst, { recursive: true, force: true }); console.log('Prompts synced to ' + dst);\"",
     "typecheck": "tsc --noEmit --project tsconfig.typecheck.json",
