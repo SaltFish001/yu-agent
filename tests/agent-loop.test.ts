@@ -8,7 +8,7 @@
  * 而非 AgentLoop 类，避免 CI 上类加载问题。
  */
 import { describe, it, expect } from 'bun:test'
-import { parseToolCalls, extractJsonObjects, buildResult } from '../extension/agent-loop'
+import { parseToolCalls, extractJsonObjects, buildResult } from '../extension/tool-call-parser'
 
 // ── parseToolCalls tests ──
 
