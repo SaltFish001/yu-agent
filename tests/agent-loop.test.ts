@@ -11,7 +11,10 @@ let agent: any
 
 beforeEach(async () => {
   const mod = await import('../extension/agent-loop')
-  AgentLoop = mod.AgentLoop
+  AgentLoop = (mod as any).AgentLoop
+  if (typeof AgentLoop !== 'function') {
+    throw new Error(`AgentLoop is ${typeof AgentLoop}, keys: ${Object.keys(mod).join(',')}`)
+  }
   agent = new AgentLoop({ autoPersist: false })
 })
 
