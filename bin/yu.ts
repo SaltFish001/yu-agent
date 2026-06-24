@@ -1297,6 +1297,19 @@ async function mainCli(): Promise<void> {
     return
   }
 
+  // `yu team` — 使用内置 team orchestrator（不走 Pi SDK）
+  if (args[0] === 'team') {
+    args.shift() // remove 'team'
+    const task = args.join(' ')
+    const { runTeamMode } = await import('../extension/team-orchestrator.js')
+    const result = await runTeamMode(
+      { intent: 'team', reasoning: `CLI dispatch: ${task || 'self-check'}` },
+      { task, project_root: PROJECT_ROOT },
+    )
+    console.log(result)
+    return
+  }
+
   // Subcommand dispatch (Pi-managed commands)
   if (args[0] && COMMANDS.has(args[0])) {
     const command = args.shift()!
