@@ -98,7 +98,7 @@
 
 | 文件 | 行数 | 风险 | 说明 |
 |------|------|------|------|
-| `db.ts` | 1,189 | 🟡 | 被 db.test.ts (18 测试) 部分覆盖 |
+| `db.ts` | 1,189→拆分 | 🟢 已拆为 db-core/db-entities/db-analytics 三模块 |
 | `topic.ts` | 1,039 | 🟡 | 被 topic-crud + topic.test (39 测试) 覆盖 |
 | `supervisor.ts` | 857 | 🟡 | 已换 Worker 模式，可 mock Worker 测试 |
 | `mcp-manager.ts` | 472 | 🟡 | 需 MCP server 实例 |
@@ -151,9 +151,8 @@
 
 ## 六、建议
 
-1. **db.ts 拆分**: 1,189 行的大文件，schema 定义和 CRUD 操作可拆分到独立文件。
-2. **logger 统一**: 内部模块中的 `console.log`/`console.error` 应统一走 `createLogger`，便于 DB 持久化和级别过滤。
-3. **console.log 替换**: 107 处中约 40% 在 `bin/yu.ts` (CLI 输出，合理)，其余 60% 在 `extension/` 内部模块中，应逐步替换为 `logger.info/warn/error`。
+1. **logger 统一**: 内部模块中的 `console.log`/`console.error` 应统一走 `createLogger`，便于 DB 持久化和级别过滤。
+2. **console.log 替换**: 107 处中约 40% 在 `bin/yu.ts` (CLI 输出，合理)，其余 60% 在 `extension/` 内部模块中，应逐步替换为 `logger.info/warn/error`。
 
 ---
 
