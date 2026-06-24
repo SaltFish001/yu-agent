@@ -96,6 +96,43 @@ export class Supervisor {
   }
 
   /**
+   * Handle an IPC message from a child process or worker.
+   * Shared by spawnWorker() and spawnChild().
+   */
+  private handleChildMessage(topicName: string, msg: { type?: string; payload?: unknown }): void {
+    const existing = this.children.get(topicName)
+    if (!existing) return
+
+    switch (msg.type) {
+      case 'pong': {
+        if (existing.status === 'spawning') {
+          existing.status = 'running'
+          this.lastHeartbeat.set(topicName, Date.now())
+        }
+        const timer = this.spawningTimers.get(topicName)
+        if (timer) { clearTimeout(timer); this.spawningTimers.delete(topicName) }
+        this.restartCount.set(topicName, 0)
+        existing.restartCount = 0
+        break
+      }
+      case 'heartbeat':
+        this.lastHeartbeat.set(topicName, Date.now())
+        existing.lastHeartbeat = Date.now()
+        if (existing.status === 'spawning' || existing.status === 'degraded') existing.status = 'running'
+        break
+      case 'task_result':
+        if (!existing.resident) existing.status = 'stopped'
+        break
+      case 'error':
+        existing.status = 'degraded'
+        break
+      case 'status_update':
+        // no-op for status display
+        break
+    }
+  }
+
+  /**
    * Spawn a child Worker thread (preferred over process spawn).
    * Uses Bun.Worker for lightweight threading with postMessage IPC.
    */
@@ -164,39 +201,7 @@ export class Supervisor {
       try {
         const msg = JSON.parse(event.data) as { type?: string; payload?: unknown }
         if (!msg?.type) return
-        const existing = this.children.get(topicName)
-        if (!existing) return
-
-        switch (msg.type) {
-          case 'pong': {
-            if (existing.status === 'spawning') {
-              existing.status = 'running'
-              this.lastHeartbeat.set(topicName, Date.now())
-              log.info(`Worker "${topicName}" is alive (pong received)`)
-            }
-            const timer = this.spawningTimers.get(topicName)
-            if (timer) { clearTimeout(timer); this.spawningTimers.delete(topicName) }
-            this.restartCount.set(topicName, 0)
-            existing.restartCount = 0
-            break
-          }
-          case 'heartbeat':
-            this.lastHeartbeat.set(topicName, Date.now())
-            existing.lastHeartbeat = Date.now()
-            if (existing.status === 'spawning' || existing.status === 'degraded') existing.status = 'running'
-            break
-          case 'task_result':
-            if (!existing.resident) existing.status = 'stopped'
-            log.info(`Worker "${topicName}" completed task`)
-            break
-          case 'error':
-            existing.status = 'degraded'
-            log.error(`Worker "${topicName}" reported error:`, msg.payload as Record<string, unknown> | undefined)
-            break
-          case 'status_update':
-            log.debug(`Worker "${topicName}" status:`, msg.payload as Record<string, unknown> | undefined)
-            break
-        }
+        this.handleChildMessage(topicName, msg)
       } catch { /* malformed message, skip */ }
     }
 
@@ -338,40 +343,9 @@ export class Supervisor {
               try {
                 const msg = JSON.parse(line) as { type?: string; payload?: unknown }
                 if (!msg?.type) continue
+                this.handleChildMessage(topicName, msg)
                 const existing = this.children.get(topicName)
                 if (!existing) continue
-                switch (msg.type) {
-                  case 'pong': {
-                    if (existing.status === 'spawning') {
-                      existing.status = 'running'
-                      this.lastHeartbeat.set(topicName, Date.now())
-                      log.info(`Child "${topicName}" is alive (pong received)`)
-                    }
-                    const timer = this.spawningTimers.get(topicName)
-                    if (timer) { clearTimeout(timer); this.spawningTimers.delete(topicName) }
-                    this.restartCount.set(topicName, 0)
-                    existing.restartCount = 0
-                    break
-                  }
-                  case 'heartbeat':
-                    this.lastHeartbeat.set(topicName, Date.now())
-                    existing.lastHeartbeat = Date.now()
-                    if (existing.status === 'spawning' || existing.status === 'degraded') existing.status = 'running'
-                    break
-                  case 'task_result':
-                    if (!existing.resident) existing.status = 'stopped'
-                    log.info(`Child "${topicName}" completed task`)
-                    break
-                  case 'error':
-                    existing.status = 'degraded'
-                    log.error(`Child "${topicName}" reported error:`, msg.payload as Record<string, unknown> | undefined)
-                    this.safeWriteEvent(topicName, 'child_degraded', { reason: 'child_error', error: msg.payload, pid: existing.pid })
-                    this.safeTriggerOrchestrator(topicName, 'child_degraded', { reason: 'child_error', error: msg.payload, pid: existing.pid })
-                    break
-                  case 'status_update':
-                    log.debug(`Child "${topicName}" status:`, msg.payload as Record<string, unknown> | undefined)
-                    break
-                }
               } catch { /* malformed json line, skip */ }
             }
           }

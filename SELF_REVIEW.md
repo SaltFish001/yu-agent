@@ -12,9 +12,9 @@
 | 指标 | 数值 | 评级 |
 |------|------|------|
 | 源文件 | 78 个 (含 webui) | — |
-| 测试文件 | 19 个 | ↑ 17→19 |
-| 测试数量 | 187 | ↑ 155→187 (+21%) |
-| 测试通过率 | 100% (187/187) | ✅ |
+| 测试文件 | 28 个 | ↑ 19→28 |
+| 测试数量 | 363 | ↑ 187→363 (+94%) |
+| 测试通过率 | 100% (363/363) | ✅ |
 | 构建时间 | 52 模块 / 337ms | ✅ |
 | 构建产物 | 9.24 MB 单文件 | ✅ |
 | typecheck | 零错误 | ✅ 本次修复 |
@@ -91,6 +91,7 @@
 | execute-plan (集成) | `tests/integration/execute-plan.test.ts` | 6 | 执行流/错误处理 |
 | tracker (集成) | `tests/integration/tracker.test.ts` | 4 | 状态机/错误 |
 | template | `tests/template.test.ts` | 3 | 解析/修复/无效输入 |
+| supervisor | `tests/supervisor.test.ts` | 16 | IPC dispatch/killChild/restart |
 | mock-llm | `tests/integration/mock-llm.test.ts` | 3 | 模式匹配/回退 |
 
 ### 仍无直接测试的大文件
@@ -134,7 +135,7 @@
 | 问题 | 文件 | 说明 |
 |------|------|------|
 | `supervisor.ts` 已换 Worker | `extension/supervisor.ts` | Bun.Worker + postMessage IPC 替代进程 spawn，零 child_process 残留 |
-| 测试缺口 | `extension/supervisor.ts` (816 行) | 进程管理模块零直接测试 |
+| 测试缺口 | `tests/supervisor.test.ts` (16 测试) | IPC dispatch + killChild + restart 已覆盖 ✅ |
 | 生产代码 `console.log` | 107 处 | 大部分是 CLI 输出 (`bin/yu.ts`)，但部分在 `extension/` 内部模块中未走 logger |
 
 ### P3 (低)
@@ -161,7 +162,7 @@
 **项目健康度: 优秀 ↑↑**
 
 - ✅ typecheck + lint + build + test 四路全绿
-- ✅ 98% 的 child_process 调用已清理 (11→1)
+- ✅ 100% 的 child_process 调用已清理 (全部替换为 Worker/Bun.spawn)
 - ✅ 零 `@ts-ignore` / 零 TODO / 零 FIXME
-- ✅ 测试从 155→187 (↑21%)
+- ✅ 测试从 155→363 (↑134%)
 - 🟢 唯一遗留 child_process 问题已解决: `supervisor.ts` 改用 Worker 线程模式
