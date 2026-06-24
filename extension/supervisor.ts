@@ -46,6 +46,12 @@ const DEGRADED_THRESHOLD = 15_000
 /** Milliseconds without heartbeat before marking dead. */
 const DEAD_THRESHOLD = 30_000
 
+/** Env keys that are filtered from per-child overrides. */
+const SENSITIVE_ENV_PATTERNS = [
+  'DEEPSEEK_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY',
+  'API_KEY', 'SECRET', 'TOKEN',
+]
+
 /**
  * Read daemon version from package.json.
  * Cached after first read.
@@ -133,10 +139,10 @@ export class Supervisor {
   }
 
   /**
-   * Spawn a child Worker thread (preferred over process spawn).
-   * Uses Bun.Worker for lightweight threading with postMessage IPC.
+   * Build a SpawnConfig from user options with defaults applied and env filtered.
+   * Shared by spawnWorker() and spawnChild().
    */
-  spawnWorker(topicName: string, config?: Partial<ChildSpawnConfig>): WorkerHandle | undefined {
+  private buildSpawnConfig(config?: Partial<ChildSpawnConfig>): ChildSpawnConfig & { filteredEnv: Record<string, string> } {
     const cfg: ChildSpawnConfig = {
       timeout: config?.timeout ?? DEFAULT_SPAWN_TIMEOUT,
       env: config?.env ?? {},
@@ -145,6 +151,27 @@ export class Supervisor {
       autoRetry: config?.autoRetry ?? true,
       maxRetries: config?.maxRetries ?? DEFAULT_MAX_RESTARTS,
     }
+
+    // Filter sensitive keys from per-child env overrides
+    const filteredEnv: Record<string, string> = {}
+    for (const [key, val] of Object.entries(cfg.env)) {
+      const isSensitive = SENSITIVE_ENV_PATTERNS.some((p) => key.toUpperCase().includes(p))
+      if (isSensitive) {
+        log.warn(`Filtering sensitive env key "${key}" from cfg.env override`)
+      } else {
+        filteredEnv[key] = val
+      }
+    }
+
+    return { ...cfg, filteredEnv }
+  }
+
+  /**
+   * Spawn a child Worker thread (preferred over process spawn).
+   * Uses Bun.Worker for lightweight threading with postMessage IPC.
+   */
+  spawnWorker(topicName: string, config?: Partial<ChildSpawnConfig>): WorkerHandle | undefined {
+    const { filteredEnv, ...cfg } = this.buildSpawnConfig(config)
 
     // Use source .ts path for Workers (Bun compiles on the fly)
     const workerPath = resolve(__dirname, 'bg-worker.ts')
@@ -164,17 +191,7 @@ export class Supervisor {
         YU_SESSION_TAG: `bg:${topicName}`,
         DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY ?? '',
         DEEPSEEK_BASE_URL: process.env.DEEPSEEK_BASE_URL ?? '',
-        ...Object.fromEntries(
-          Object.entries(cfg.env).filter(([key]) => {
-            const sensitivePatterns = [
-              'DEEPSEEK_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY',
-              'API_KEY', 'SECRET', 'TOKEN',
-            ]
-            const isSensitive = sensitivePatterns.some((p) => key.toUpperCase().includes(p))
-            if (isSensitive) log.warn(`Filtering sensitive env key "${key}" from cfg.env override`)
-            return !isSensitive
-          }),
-        ),
+        ...filteredEnv,
       },
     }) as unknown as WorkerHandle
 
@@ -263,14 +280,7 @@ export class Supervisor {
    * Falls back to this if Worker is unavailable.
    */
   spawnChild(topicName: string, config?: Partial<ChildSpawnConfig>): any | undefined {
-    const cfg: ChildSpawnConfig = {
-      timeout: config?.timeout ?? DEFAULT_SPAWN_TIMEOUT,
-      env: config?.env ?? {},
-      spawning_timeout: config?.spawning_timeout ?? 30_000,
-      resident: config?.resident ?? true,
-      autoRetry: config?.autoRetry ?? true,
-      maxRetries: config?.maxRetries ?? DEFAULT_MAX_RESTARTS,
-    }
+    const { filteredEnv, ...cfg } = this.buildSpawnConfig(config)
 
     if (!existsSync(CHILD_ENTRY)) {
       log.error(`Child entry not found: ${CHILD_ENTRY}. Build the project first (npx tsc).`)
@@ -284,23 +294,7 @@ export class Supervisor {
         ...process.env,
         DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY ?? '',
         DEEPSEEK_BASE_URL: process.env.DEEPSEEK_BASE_URL ?? '',
-        ...Object.fromEntries(
-          Object.entries(cfg.env).filter(([key]) => {
-            const sensitivePatterns = [
-              'DEEPSEEK_API_KEY',
-              'OPENAI_API_KEY',
-              'ANTHROPIC_API_KEY',
-              'API_KEY',
-              'SECRET',
-              'TOKEN',
-            ]
-            const isSensitive = sensitivePatterns.some((p) => key.toUpperCase().includes(p))
-            if (isSensitive) {
-              log.warn(`Filtering sensitive env key "${key}" from cfg.env override`)
-            }
-            return !isSensitive
-          }),
-        ),
+        ...filteredEnv,
         YU_CHILD_MODE: '1',
         YU_SESSION_TAG: `bg:${topicName}`,
       },
@@ -708,6 +702,54 @@ export class Supervisor {
       log.debug(`Heartbeat: ${alive} alive / ${this.children.size} total children`)
     }
   }
+
+  /**
+   * Generate a human-readable status report using in-memory state.
+   * Replaces the old cmdSupervisorStatus that read from SQLite directly.
+   */
+  statusText(topicFilter?: string): string {
+    const lines: string[] = []
+    lines.push('Supervisor Children:')
+    lines.push('')
+
+    const entries = Array.from(this.children.entries())
+      .filter(([name]) => !topicFilter || name === topicFilter)
+      .sort(([, a], [, b]) => a.startedAt - b.startedAt)
+
+    if (entries.length === 0) {
+      lines.push('  No child processes registered.')
+      lines.push('')
+      return lines.join('\n')
+    }
+
+    for (const [name, info] of entries) {
+      const proc = this.processes.get(name)
+      const pid = info.pid ?? proc?.pid ?? proc?.threadId ?? '?'
+      const statusIcon =
+        info.status === 'running' ? '▶'
+        : info.status === 'restarting' ? '🔄'
+        : info.status === 'degraded' ? '⚠'
+        : info.status === 'dead' || info.status === 'spawn_failed' ? '✗'
+        : '○'
+      lines.push(`  ${statusIcon} ${name}  [${info.status}]  PID ${pid}  restarts: ${info.restartCount}`)
+    }
+
+    lines.push('')
+    lines.push(`Total: ${entries.length} child process(es)`)
+    return lines.join('\n')
+  }
+
+  /**
+   * Stop a child by topic name using in-memory state.
+   * Falls back to SIGTERM if the Worker/process is not tracked.
+   */
+  stopChild(topicName: string): string {
+    const existing = this.children.get(topicName)
+    if (!existing) return `No child process found for topic "${topicName}".`
+
+    this.killChild(topicName)
+    return `Sent stop signal to child "${topicName}" (PID ${existing.pid ?? '?'}).`
+  }
 }
 
 // ── Supervisor CLI command handler ─────────────────────────
@@ -717,9 +759,14 @@ const SUPERVISOR_LOG_PATH = resolve(YU_HOME, 'logs', 'supervisor.log')
 
 /**
  * Handle `yu supervisor <subcommand>` CLI commands.
- * Reads from the child_processes DB table and sends signals directly.
  *
- * P3-09: Add explicit 'help' case alongside default.
+ * NOTE: CLI runs in a separate process from the supervisor daemon, so it cannot
+ * access a live Supervisor instance's in-memory state. All state reads/writes
+ * go through the shared child_processes DB table. This creates a potential
+ * drift window between daemon in-memory state and DB state (C4 — known limitation).
+ *
+ * For in-process use (supervisor-daemon.ts), use Supervisor.statusText() and
+ * Supervisor.stopChild() instead, which operate on in-memory state directly.
  */
 export function supervisorCommand(subcommand: string, args: string[]): string {
   switch (subcommand) {

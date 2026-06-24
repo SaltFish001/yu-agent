@@ -8,7 +8,7 @@
 
 // ── Local imports (used by teamCommand) ────────────────
 
-const { randomUUID } = crypto
+import crypto from 'crypto'
 
 import { sendMessage } from './mailbox.js'
 import { buildInlineSpec, listTeamSpecs, saveTeamSpec } from './registry.js'
@@ -134,7 +134,7 @@ export async function teamCommand(subcommand: string, args: string[]): Promise<s
       const msg = await sendMessage(
         {
           version: 1,
-          messageId: randomUUID(),
+          messageId: crypto.randomUUID(),
           from: 'cli',
           to,
           kind: 'message',

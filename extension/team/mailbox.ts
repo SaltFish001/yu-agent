@@ -13,7 +13,7 @@
  *   pollAndInject()   → check inbox, claim messages, return injection content
  */
 
-const { randomUUID } = crypto
+import crypto from 'crypto'
 
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'fs/promises'
 import path from 'path'
@@ -179,7 +179,7 @@ let _processLockToken: string | undefined
 
 function getProcessLockToken(): string {
   if (!_processLockToken) {
-    _processLockToken = randomUUID()
+    _processLockToken = crypto.randomUUID()
   }
   return _processLockToken
 }

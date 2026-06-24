@@ -21,48 +21,6 @@ import { trackAgent } from './tracker.js'
 const MAX_CONCURRENCY = 4
 export const AGENT_TIMEOUT_MS = 120_000
 
-// ── Concurrency limiter ───────────────────────────────
-
-const activeAgents = new Set<string>()
-const activeByType = new Map<string, number>()
-
-/**
- * Acquire a concurrency slot for agent execution.
- * Blocks until the global and per-type limits allow a new agent.
- */
-export async function acquireConcurrencySlot(
-  type: string,
-  sessionTag: string,
-  limits: ResourceLimits = {},
-): Promise<void> {
-  const maxGlobal = limits.maxConcurrentAgents ?? 8
-  const maxPerType = limits.maxPerPool ?? 4
-
-  while (activeAgents.size >= maxGlobal || (activeByType.get(type) ?? 0) >= maxPerType) {
-    await new Promise<void>((r) => setTimeout(r, 50))
-  }
-
-  const id = `${type}-${sessionTag}-${Date.now()}`
-  activeAgents.add(id)
-  activeByType.set(type, (activeByType.get(type) ?? 0) + 1)
-}
-
-/**
- * Release a concurrency slot after agent execution completes.
- */
-export function releaseConcurrencySlot(type: string): void {
-  const count = activeByType.get(type) ?? 1
-  if (count <= 1) activeByType.delete(type)
-  else activeByType.set(type, count - 1)
-  // Remove first matching entry from activeAgents
-  for (const id of activeAgents) {
-    if (id.startsWith(type)) {
-      activeAgents.delete(id)
-      break
-    }
-  }
-}
-
 // ── Types ──────────────────────────────────────────────
 
 export interface AgentTask {

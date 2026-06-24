@@ -9,7 +9,7 @@
  */
 
 import { Database as DatabaseSync } from 'bun:sqlite'
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'fs'
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'fs'
 import { dirname, resolve } from 'path'
 import { fileURLToPath } from 'url'
 import type { ExtendedTopicStatus } from './types.js'
@@ -573,16 +573,15 @@ const DAEMON_LOGS_DIR = resolve(process.env.HOME || '/home/saltfish', '.yu', 'lo
  * up the newly created background task.
  */
 export function ensureDaemonRunning(): void {
-  // Acquire lock to prevent concurrent daemon spawning
+  // Acquire lock to prevent concurrent daemon spawning (P0-03)
+  // Use openSync with 'wx' (write exclusive) — atomic on POSIX.
+  // Only one process can create/open the file exclusively at a time.
   let lockFd: number | null = null
   try {
-    // Create the lock file if it doesn't exist
-    if (!existsSync(DAEMON_LOCK_PATH)) {
-      writeFileSync(DAEMON_LOCK_PATH, '', 'utf-8')
-    }
-    lockFd = openSync(DAEMON_LOCK_PATH, 'r')
+    lockFd = openSync(DAEMON_LOCK_PATH, 'wx')
   } catch {
-    // If we can't acquire the lock, proceed without it
+    // Lock already held by another process — skip spawning
+    return
   }
 
   try {
@@ -682,6 +681,10 @@ export function ensureDaemonRunning(): void {
     if (lockFd !== null) {
       try {
         closeSync(lockFd)
+        // Remove the lock file so future spawns can acquire it
+        if (existsSync(DAEMON_LOCK_PATH)) {
+          unlinkSync(DAEMON_LOCK_PATH)
+        }
       } catch {
         // Best-effort
       }

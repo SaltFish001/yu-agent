@@ -5,7 +5,7 @@
  * Runtime state stored at ~/.yu/runtime/{teamRunId}/state.json
  */
 
-const { randomUUID } = crypto
+import crypto from 'crypto'
 
 import { mkdir, readdir, readFile, rename, rm, writeFile } from 'fs/promises'
 import path from 'path'
@@ -102,7 +102,7 @@ export interface TeamCreateOptions {
 
 export async function createTeamRun(options: TeamCreateOptions): Promise<RuntimeState> {
   const baseDir = resolveBaseDir()
-  const teamRunId = randomUUID()
+  const teamRunId = crypto.randomUUID()
 
   await ensureDirs(baseDir, teamRunId)
 

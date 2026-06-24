@@ -5,7 +5,7 @@
  * Files stored at ~/.yu/runtime/{teamRunId}/tasks/{id}.json
  */
 
-const { randomUUID } = crypto
+import crypto from 'crypto'
 import { mkdirSync, readdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'fs'
 import path from 'path'
 import { getTasksDir, resolveBaseDir } from './mailbox.js'
@@ -90,7 +90,7 @@ export async function createTask(
   const now = Date.now()
   const task: Task = {
     version: 1,
-    id: `${randomUUID().slice(0, 8)}`,
+    id: `${crypto.randomUUID().slice(0, 8)}`,
     subject: input.subject,
     description: input.description,
     status: 'pending',

@@ -27,15 +27,27 @@ export function updateSessionSummary(
 ): void {
   const db = getDb()
   const mode = opts?.mode ?? 'accumulate'
-  const op = mode === 'accumulate' ? '+' : ''
-  db.prepare(`
-    UPDATE sessions SET
-      summary_files = summary_files ${op} ?,
-      summary_additions = summary_additions ${op} ?,
-      summary_deletions = summary_deletions ${op} ?,
-      updated_at = ?
-    WHERE tag = ?
-  `).run(data.files ?? 0, data.additions ?? 0, data.deletions ?? 0, Date.now(), tag)
+  const useAccumulate = mode === 'accumulate'
+
+  if (useAccumulate) {
+    db.prepare(`
+      UPDATE sessions SET
+        summary_files = summary_files + ?,
+        summary_additions = summary_additions + ?,
+        summary_deletions = summary_deletions + ?,
+        updated_at = ?
+      WHERE tag = ?
+    `).run(data.files ?? 0, data.additions ?? 0, data.deletions ?? 0, Date.now(), tag)
+  } else {
+    db.prepare(`
+      UPDATE sessions SET
+        summary_files = ?,
+        summary_additions = ?,
+        summary_deletions = ?,
+        updated_at = ?
+      WHERE tag = ?
+    `).run(data.files ?? 0, data.additions ?? 0, data.deletions ?? 0, Date.now(), tag)
+  }
 }
 
 /** @deprecated Use updateSessionSummary with { mode: 'replace' } instead. */
