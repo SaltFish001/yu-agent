@@ -19,7 +19,6 @@ jobs:
         run: |
           mkdir -p ~/.yu
           echo "{\"apiKeys\":{\"deepseek\":\"${{ secrets.DEEPSEEK_API_KEY }}\"}}" > ~/.yu/config.json
-      - run: rm -rf dist
       - run: bun test
 
   publish:
