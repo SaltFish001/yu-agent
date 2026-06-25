@@ -29,8 +29,7 @@
 
 ~~yu-agent 是 Pi 的一个 extension~~
 
-**现状:** yu-agent 是完全独立的项目。Pi SDK 位于 `optionalDependencies`，运行时零加载。
-所有原 Pi 能力已被自有实现替代：
+**现状:** yu-agent 是完全独立的项目。所有原 Pi 能力已被自有实现替代：
 
 | 能力 | 当前实现 |
 |------|---------|
