@@ -53,7 +53,7 @@ scheduler.ts — 执行计划 (executePlan)
 │                        bin/yu.ts (CLI entry)                     │
 │         ┌────────────┬───────────┬──────────┬───────────┐       │
 │         │ yu <prompt>│ yu doctor │ yu team  │ yu session│       │
-│         │ yu review  │ yu memory │ yu git   │ yu sandbox│       │
+│         │ yu review  │ yu git   │ yu sandbox│       │
 │         └─────┬──────┴─────┬─────┴────┬─────┴─────┬─────┘       │
 │               │            │          │           │             │
 │               ▼            ▼          ▼           ▼             │
@@ -636,24 +636,12 @@ Current behavior: processes exit immediately on signal, potentially losing in-fl
 | **LSP Manager** | `lsp-manager.ts` | LSP 3.17 server lifecycle: spawn → initialize → didOpen → publishDiagnostics → shutdown. Heartbeat interval: 15s. |
 | **MCP Manager** | `mcp-manager.ts` | MCP stdio JSON-RPC server lifecycle: config validation → spawn → initialize → tools/list → heartbeat. Security: env var whitelist + blocked keys. |
 | **Monitor** | `monitor.ts` | TUI monitor widget (`@earendil-works/pi-tui` Text component). Polls SQLite every 500ms. Shows agent status, MCP connections, cache stats. |
-| **Identity** | `identity.ts` | Personality/identity injection. Reads `~/.yu/personality.json`, injects name/tone/rules as system prompt override via `before_agent_start` hook. |
 | **Session Store** | `session-store.ts` | Session metadata + message persistence. Captures first user prompt as session name. Saves user/assistant messages to SQLite. |
 | **Resumer** | `resumer.ts` | Session resume context injection. Reads `resume_context.json` (written by `yu session resume`), injects historical messages as `<history>` XML. |
 | **Session Cmd** | `session-cmd.ts` | `/session` Pi slash command handler. Dispatches to `session-cli.ts`. |
 | **Session CLI** | `session-cli.ts` | Full session management CLI: `list`, `show`, `resume`, `archive`, `unarchive`, `fork`, `todo`, `info`, `backup`, `restore`, `clean`. |
 | **Session Context** | `session-context.ts` | Per-process session identity. `getSessionTag()` / `setSessionTag()`, project directory detection, status directory resolution. |
 | **DB** | `db.ts` | SQLite database abstraction (800+ lines). 10 tables, all operations synchronous (`bun:sqlite` Database API). |
-| **Memory Plugin** | `memory-plugin.ts` | Memory subsystem lifecycle hooks. `before_agent_start` → inject ring buffer, `turn_end` → auto-save, `before_agent_start` → inject facts/scene. |
-| **Memory CLI** | `memory-cli.ts` | `yu memory` CLI commands: `stats`, `recent`, `facts`, `scene`, `health`. |
-
-### Memory Subsystem (`extension/memory/`)
-
-| Module | File | Description |
-|--------|------|-------------|
-| **Ring Buffer** | `ring.ts` | SQLite-backed capped ring buffer. Default 5000 entries. Overflow strategies: `delete_oldest`, `sliding_window`. Methods: `append`, `recent`, `search`, `stats`, `health`. |
-| **Facts Store** | `facts.ts` | JSON-file-backed key-value store with categories, TTL-based expiry. Methods: `get`, `set`, `increment`, `delete`, `list`, `cleanup`, `stats`, `health`. |
-| **Scene Manager** | `scene.ts` | Agent scene state: location, mood, clothing, temporal tags with auto-expiry. Methods: `get`, `set`, `setClothing`, `temporalAdd`, `temporalList`, `switch`, `reset`, `health`. |
-| **Index** | `index.ts` | Module index, re-exports, aggregate `memoryHealth()` check. |
 
 ### Team Mode (`extension/team/`)
 
@@ -764,7 +752,6 @@ OpenCode 的 `.jsonl` session 文件格式和 SessionManager API 是 yu-agent se
 |------|------|------|
 | AST 重构 | [Biome](https://biomejs.dev) | renameSymbol / extractInterface 直接调 Biome CLI |
 | 沙箱 | Docker 容器模式 | 通用模式，无直接参考项目 |
-| 人格系统 | 予鱼（quite_fish）角色 | 原创 personality.json + identity.ts 驱动 |
 | Structured Output | OMO + Claude Code | 每种 agent type 独立 JSON schema，调度器严格校验 |
 
 ---

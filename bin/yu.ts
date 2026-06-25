@@ -115,14 +115,13 @@ const COMMANDS = new Set([
   'lsp',
   'run',
   'monitor',
-  'memory',
   'refactor',
 ])
 
 // ── Factory function ───────────────────────────────────
 
 /**
- * Create a yu-agent application with memory lifecycle managed.
+ * Create a yu-agent application.
  * Returns an object with run() for starting the CLI.
  *
  * This is the factory function for programmatic use.
@@ -186,7 +185,7 @@ async function printStartupSummary(): Promise<void> {
 
 /**
  * One-click health diagnosis.
- * Checks all subsystems: memory, config, MCP, session DB.
+ * Checks all subsystems: config, MCP, session DB.
  */
 async function runDoctor(jsonOutput?: boolean): Promise<void> {
   const results: Array<{ name: string; ok: boolean; detail: string }> = []
@@ -1336,7 +1335,7 @@ async function mainCli(): Promise<void> {
   }
 
   // ── Slash 路由 ────────────────────────────────────────
-  // 直接解析 /topic、/memory 等命令，不经过 Pi 或 classifier
+  // 直接解析 /topic 等命令，不经过 Pi 或 classifier
   if (args[0]?.startsWith('/')) {
     const slashCmd = args[0].slice(1)
     const slashArgs = args.slice(1)
@@ -1347,10 +1346,6 @@ async function mainCli(): Promise<void> {
       const out = topicCommand(sub, slashArgs.slice(1))
       console.log(out)
       return
-    }
-
-    if (slashCmd === 'memory' || slashCmd === 'mem') {
-      // /memory falls through to generic subcommand dispatch above
     }
 
     // Unknown slash — fall through to Pi

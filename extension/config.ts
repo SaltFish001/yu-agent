@@ -133,10 +133,6 @@ export interface ResourceLimits {
  * Full application configuration read from ~/.yu/config.json.
  */
 export interface AppConfig {
-  identity?: {
-    /** @deprecated Personality is removed — yu-agent is a professional assistant. */
-    personalityPath?: string
-  }
   /**
    * Resource limits for agent execution.
    */

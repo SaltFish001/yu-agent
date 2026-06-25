@@ -12,12 +12,9 @@
 - [Main Configuration (~/.yu/config.json)](#main-configuration-yuconfigjson)
 - [Agent Type Configuration](#agent-type-configuration)
 - [MCP Configuration (~/.yu/mcp.config.json)](#mcp-configuration-yumcpconfigjson)
-- [Personality Configuration (~/.yu/personality.json)](#personality-configuration-yupersonalityjson)
 - [Prompt Files](#prompt-files)
 - [Session Configuration](#session-configuration)
-- [Memory Subsystem Configuration](#memory-subsystem-configuration)
 - [Resource Limits](#resource-limits)
-- [Pi Extension List](#pi-extension-list)
 - [Health Diagnosis](#health-diagnosis)
 
 ---
@@ -50,12 +47,8 @@ All yu-agent data is stored under `~/.yu/`. The directory is auto-created on fir
 ~/.yu/
 ├── config.json                    # Optional top-level configuration
 ├── mcp.config.json                # MCP server definitions
-├── personality.json               # Agent identity & tone
 ├── sessions.db                    # SQLite session database (IPC bus)
 ├── knowledge.db                   # SQLite FTS5 knowledge index (RAG)
-├── ring_memory.db                 # Ring buffer SQLite database
-├── facts.json                     # Long-term key-value memory
-├── scene_state.json               # Agent scene state (location, mood, etc.)
 ├── resume_context.json            # Temp file for session resume
 ├── agent/                         # Pi coding-agent runtime (internal)
 ├── prompts/                       # Agent system prompt files (.md)
@@ -120,15 +113,6 @@ Optional top-level configuration file. If the file doesn't exist, all options us
 
 ```json
 {
-  "identity": {
-    "personalityPath": "personality.json"
-  },
-  "memory": {
-    "overflowStrategy": "delete_oldest",
-    "ringMaxEntries": 5000,
-    "autoSave": true,
-    "sceneTracking": true
-  }
 }
 ```
 
@@ -136,11 +120,6 @@ Optional top-level configuration file. If the file doesn't exist, all options us
 
 | JSON Path | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `identity.personalityPath` | `string` | `"personality.json"` | Path to personality file, resolved relative to `~/.yu/`. |
-| `memory.overflowStrategy` | `"delete_oldest"` \| `"sliding_window"` | `"delete_oldest"` | Ring buffer overflow strategy. `delete_oldest` bulk-deletes expired entries; `sliding_window` removes one entry at a time. |
-| `memory.ringMaxEntries` | `number` | `5000` | Maximum entries in the ring buffer before overflow triggers. |
-| `memory.autoSave` | `boolean` | `true` | Automatically save user/assistant messages to the ring buffer on each turn. |
-| `memory.sceneTracking` | `boolean` | `true` | Enable scene state tracking (location, mood, clothing, temporal tags). |
 
 ---
 
@@ -284,59 +263,6 @@ On process exit:
 
 ---
 
-## Personality Configuration (~/.yu/personality.json)
-
-Defines the agent's identity, style, and behavioral rules. Injected into the system prompt via `extension/identity.ts`.
-
-### Configuration Structure
-
-```json
-{
-  "name": "予鱼",
-  "aliases": ["yu", "yu-agent", "quite_fish", "咸鱼"],
-  "identity": "你叫予鱼，一条小咸鱼变的编程助手。你不是Pi，你是yu-agent。",
-  "style": {
-    "tone": "慵懒从容、干脆不废话、偶尔毒舌但靠谱",
-    "first_person": "本鱼",
-    "second_person": "你",
-    "rules": [
-      "本鱼会说人话，不说套话。",
-      "本鱼不列清单不复述。",
-      "本鱼说得出做得到，做不到就说做不到。"
-    ]
-  },
-  "capabilities": {
-    "agent_types": ["coding", "review", "plan", "search", "commit", "lsp", "doc", "general-purpose"],
-    "description": "你会写代码、改bug、审查代码、出方案、搜代码、生成文档，还能派单给专门的小agent干活。"
-  },
-  "memory": {
-    "ring_cap": 5000,
-    "auto_save": true,
-    "scene_tracking": true
-  }
-}
-```
-
-### Field Reference
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | `string` | Agent name. Injected at the top of the system prompt. |
-| `aliases` | `string[]` | Alternative names the agent responds to. |
-| `identity` | `string` | Core identity description injected into the system prompt. |
-| `style.tone` | `string` | Tone of voice description. |
-| `style.first_person` | `string` | First-person pronoun (e.g., "本鱼", "我"). |
-| `style.second_person` | `string` | Second-person pronoun (e.g., "你", "您"). |
-| `style.rules` | `string[]` | Behavioral rules prepended to the system prompt as a numbered list. |
-| `capabilities.agent_types` | `string[]` | List of supported agent types (for the agent's self-awareness). |
-| `capabilities.description` | `string` | Capability description for the system prompt. |
-| `memory.ring_cap` | `number` | Ring buffer capacity (same as `memory.ringMaxEntries` in config.json). |
-| `memory.auto_save` | `boolean` | Auto-save messages to ring buffer. |
-| `memory.scene_tracking` | `boolean` | Enable scene state tracking. |
-
-If the file doesn't exist, hardcoded defaults are used (English, neutral tone).
-
----
 
 ## Prompt Files
 
@@ -471,68 +397,6 @@ yu session restore /path/to/backup.db
 
 ---
 
-## Memory Subsystem Configuration
-
-The memory subsystem consists of three components:
-
-### Ring Buffer (`~/.yu/ring_memory.db`)
-
-SQLite-backed capped ring buffer for conversation history.
-
-| Property | Default | Configurable Via |
-|----------|---------|-----------------|
-| Max entries | 5000 | `config.json::memory.ringMaxEntries` |
-| Overflow strategy | `delete_oldest` | `config.json::memory.overflowStrategy` |
-| Auto-save | `true` | `config.json::memory.autoSave` |
-| Storage | SQLite (WAL mode) | `~/.yu/ring_memory.db` |
-
-```bash
-# CLI access
-yu memory recent     # Show last 10 entries
-yu memory recent 50  # Show last 50 entries
-yu memory stats      # Show ring buffer stats
-```
-
-### Facts Store (`~/.yu/facts.json`)
-
-JSON file-based key-value store for long-term memory. No hard capacity limit.
-
-| Feature | Description |
-|---------|-------------|
-| Categories | User preferences, counters, milestones, secrets, custom |
-| TTL expiry | Optional per-entry TTL (in days) |
-| Cleanup | `factCleanup()` removes expired entries |
-
-```bash
-yu memory facts              # List all facts by category
-yu memory facts preferences  # List facts in a specific category
-```
-
-### Scene State (`~/.yu/scene_state.json`)
-
-Tracks the agent's current scene: location, mood, clothing, temporal tags.
-
-| Feature | Description |
-|---------|-------------|
-| Location | Current workspace/directory |
-| Mood | Agent mood state |
-| Clothing | Wearable items (for role-play) |
-| Temporal tags | Auto-expiring annotations |
-| Presets | `home`, `office`, `reset` |
-
-```bash
-yu memory scene              # Show current scene state
-yu memory scene --health     # Run scene health check
-```
-
-### Aggregate Health Check
-
-```bash
-yu memory health
-# Reports ring buffer, facts store, and scene state health
-```
-
----
 
 ## Resource Limits
 
@@ -585,39 +449,7 @@ yu memory health
 
 ---
 
-## Pi Extension List
 
-In `package.json`, yu-agent registers its extension modules:
-
-```json
-{
-  "pi": {
-    "extensions": [
-      "./extension/identity.ts",
-      "./extension/session-store.ts",
-      "./extension/resumer.ts",
-      "./extension/session-cmd.ts",
-      "./extension/monitor.ts",
-      "./extension/memory-plugin.ts",
-      "./extension/index.ts"
-    ]
-  }
-}
-```
-
-Each extension module registers specific hooks:
-
-| Extension File | Hooks Registered | Purpose |
-|----------------|------------------|---------|
-| `identity.ts` | `before_agent_start` | Personality/identity injection |
-| `session-store.ts` | `before_agent_start`, `turn_end` | Session metadata + message persistence |
-| `resumer.ts` | `before_agent_start` | Session resume context injection |
-| `session-cmd.ts` | `/session` slash command | Session management from Pi chat |
-| `monitor.ts` | TUI widget | `@earendil-works/pi-tui` Text widget for live status |
-| `memory-plugin.ts` | `before_agent_start`, `turn_end` | Memory subsystem lifecycle hooks |
-| `index.ts` | `before_chat` (main hook) | Scheduler, agent spawning, LSP, tests |
-
----
 
 ## Health Diagnosis
 

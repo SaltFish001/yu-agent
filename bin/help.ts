@@ -56,12 +56,6 @@ Knowledge Base (RAG):
   yu knowledge index [dir]     Index/reindex project files
   yu knowledge status          Show knowledge base stats
 
-Memory (Conversation Context):
-  yu memory stats              Show memory usage stats
-  yu memory recent             Show recent conversation items
-  yu memory facts              Show stored facts from memory
-  yu memory scene              Show current scene/context
-  yu memory health             Check memory subsystem health
 
 Terminal Integration:
   yu terminal list             List current user's terminal processes
