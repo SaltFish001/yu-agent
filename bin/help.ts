@@ -29,134 +29,64 @@ export function getVersion(): string {
 export const HELP_TEXT = `yu-agent — AI-powered programming agent  (v${getVersion()})
 
 Usage:
-  yu <prompt>                  One-shot programming task (automatic dispatch)
-  yu chat                      Interactive REPL (Pi interactive mode)
+  yu <prompt>                  One-shot task (auto dispatch)
+  yu chat                      Interactive REPL
 
-Agent Commands:
-  yu coding <prompt>           Start a coding task
+Coding:
+  yu coding <prompt>           Write or modify code
   yu review <path>             Review code (read-only)
-  yu plan <task>               Generate implementation plan
+  yu plan <task>               Generate an implementation plan
+  yu lsp <path>                LSP type check & fix
   yu commit <msg>              Generate commit message
   yu doc <task>                Generate documentation
-  yu lsp <path>                LSP type check & fix
 
-Refactoring:
-  yu refactor rename <from> <to> [files...]  Rename a symbol (AST-safe)
-  yu refactor extract <type> <file>          Extract inline type to interface
-
-Diagnostics:
-  yu doctor                    One-click health diagnosis
-
-Scheduler & Monitor:
-  yu run <prompt>              Spawn coding agent directly
-  yu monitor [--once]          Live status dashboard (--once for single snapshot)
-
-Knowledge Base (RAG):
-  yu knowledge search <query>  Full-text search across project files (FTS5)
-  yu knowledge index [dir]     Index/reindex project files
-  yu knowledge status          Show knowledge base stats
-
-
-Terminal Integration:
-  yu terminal list             List current user's terminal processes
-  yu terminal attach <pid>     Read process stdout buffer (one-shot)
-  yu terminal watch <pid>      Live-tail process stdout (Linux only)
-
-Sandbox Execution:
-  yu sandbox <command>         Run command in isolated Docker container
-  yu sandbox status            Check sandbox availability
-
-Code Search (CodeGraph):
-  yu search <query>            Semantic code search across the project
-  yu graph <symbol>            Show callers/callees for a symbol
+Code Search & Refactor:
+  yu search <query>            Semantic code search
+  yu graph <symbol>            Show callers/callees
   yu context <task>            Build context for a task
+  yu refactor rename <from> <to> [files...]
+  yu refactor extract <type> <file>
 
-Tool Registry:
-  yu tool list                 List all registered tools
-  yu tool inspect <name>       Inspect a specific tool's schema, auth, and hooks
-
-Rule Management (Orchestrator):
-  yu rule list                 List all active rules from orchestrator
+Team & Rules:
+  yu team create <name> [member:role ...]   Create a multi-agent team
+  yu team list/status/send/task/shutdown/delete
+  yu rule list                 List orchestrator rules
   yu rule inspect <name>       Show rule details
 
-Legacy (use \`yu rule\` instead):
-  yu role list                 List all loaded roles (deprecated)
+Knowledge Base:
+  yu knowledge search <query>  FTS5 full-text search
+  yu knowledge index [dir]     Index/reindex files
+  yu knowledge status          Show index stats
 
-Skill Management:
-  yu skill list                List all loaded skills
-  yu skill get <name>          Show skill details
-  yu skill activate <name>     Activate a skill for the session
-  yu skill deactivate <name>   Deactivate a skill
-  yu skill active              Show currently active skills
+Skills & Tools:
+  yu skill list/get/activate/deactivate/active
+  yu tool list                 List registered tools
+  yu tool inspect <name>       Inspect a tool's schema
 
-Team Mode:
-  yu team create <name> ...    Create a team for multi-agent work
-  yu team list                 List active teams
-  yu team status <runId>       Show team status
-  yu team send <runId> <to>    Send message to team member
-  yu team task <runId> <act>   Manage shared task board
-  yu team shutdown <runId>     Request team shutdown
-  yu team delete <runId>       Delete team run
-  yu team specs                List saved team specs
+System:
+  yu doctor                    Health diagnosis
+  yu run <prompt>              Direct scheduler invocation
+  yu monitor [--once]          Live dashboard
+  yu supervisor status         Show child process statuses
+  yu supervisor stop/restart/logs <topic>
 
-Git Integration:
-  yu git pr create [branch]    Create PR from current branch (needs gh CLI)
-  yu git pr list               List open PRs
-  yu git branch <name>         Create and switch to branch
-  yu git merge <branch>        Merge branch with conflict detection
+Topics:
+  yu topic list/switch/new/rename/archive/bg/status
 
-Package Management:
-  yu install <pkg>             Install MCP server package
-  yu update                    Self-update
-  yu uninstall                 Remove yu-agent
+Git:
+  yu git pr create/list        Pull requests
+  yu git branch/merge          Branch & merge with conflict detection
 
-Topic Management:
-  yu topic list                List all topics
-  yu topic switch <name>       Switch to a topic
-  yu topic new <name> <dir>    Create a new topic
-  yu topic rename <old> <new>  Rename a topic
-  yu topic archive <name>      Archive a topic (soft-delete)
-  yu topic bg <name> <prompt>  Start a background task on a topic
-  yu topic status              Show background task progress
-
-Supervisor:
-  yu supervisor status [<topic>]  Show child process statuses
-  yu supervisor stop <topic>      Stop a child process
-  yu supervisor restart <topic>   Restart a child process
-  yu supervisor logs <topic> [n]  Show last n lines of child log
+Terminal & Sandbox:
+  yu terminal list/attach/watch
+  yu sandbox <command>         Run in Docker container
 
 General:
-  yu help [command]            Show this help, or help for a specific command
-  yu --help / -h               Same as "yu help"
-  yu --version / -v            Show version
+  yu help [command] / --help / -h
+  yu --version / -v
 
-Environment:
-  YU_SESSION_ID                Session tag (auto-generated, or set manually)
-  YU_PROJECT_DIR               Project directory (default: process.cwd())
-
-Data Directory:  ~/.yu/
-  ~/.yu/prompts/               Agent type system prompts
-  ~/.yu/mcp.config.json        MCP server configuration
-  ~/.yu/runtime/{runId}/       Team runtime data (mailboxes, state)
-  ~/.yu/teams/{name}/          Saved team specs
-  ~/.yu/topics.db              SQLite topic database
-
-Agent Types (auto-dispatched by scheduler):
-  coding    — 编写和修改代码
-  review    — 审查代码，只读不改
-  plan      — 出技术方案，只读不改
-  search    — 代码库搜索 + 网页搜索
-  commit    — git commit 信息生成
-  lsp       — LSP 诊断与自动修复
-  doc       — 文档生成
-  general-purpose — 通用意图识别与任务分发
-
-Team Examples:
-  yu team create my-team                           Single-member team
-  yu team create squad lead:plan coder:coding reviewer:review
-  yu team task <runId> create "Fix login bug"
-  yu team send <runId> coder "Check task #abc123"
-`
+Data:  ~/.yu/
+  prompts/  mcp.config.json  runtime/{runId}/  teams/{name}/  topics.db`
 
 export function showHelpForCommand(command: string): string {
   switch (command) {
@@ -170,7 +100,6 @@ Checks all yu-agent subsystems:
   - Data directory (~/.yu/)
   - MCP configuration file
   - Prompt files
-  - Memory subsystem (ring buffer)
   - Session database (integrity check)
   - Token usage statistics
   - Agent run statistics
@@ -232,13 +161,8 @@ The scheduler automatically routes to the ${command} agent type.`
     case 'run':
       return `yu run <prompt> — Direct scheduler invocation
 
-Bypasses Pi's command routing and calls the yu-agent scheduler directly.
-Useful for testing or when Pi's dispatch doesn't match your intent.`
-
-    case 'install':
-      return `yu install <package> — Install an MCP server package
-
-Installs a new MCP server and adds it to ~/.yu/mcp.config.json.`
+Bypasses intent classification and calls the scheduler directly.
+Useful for testing or when auto-dispatch doesn't match your intent.`
 
     case 'supervisor':
       return `yu supervisor — Supervisor management
@@ -275,12 +199,6 @@ Background limits:
   Default: 3 concurrent background tasks
 
 Data stored in ~/.yu/topics.db (SQLite).`
-
-    case 'update':
-      return 'yu update — Self-update yu-agent to the latest version.'
-
-    case 'uninstall':
-      return 'yu uninstall — Remove yu-agent from the system.'
 
     case 'rule':
       return `yu rule — Rule (orchestrator) management

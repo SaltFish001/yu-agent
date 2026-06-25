@@ -504,10 +504,9 @@ async function mainCli(): Promise<void> {
     process.exit(0)
   }
 
-  // Use yu-specific config directory (separate from pi)
-  process.env.PI_CODING_AGENT_DIR = resolve(process.env.HOME || '/home/saltfish', '.yu', 'agent')
-  // Suppress Pi's version check — yu-agent manages its own updates
-  process.env.PI_SKIP_VERSION_CHECK = '1'
+  // Environment defaults
+  process.env.YU_HOME ??= resolve(process.env.HOME || '/home/saltfish', '.yu')
+  process.env.YU_PROJECT_DIR ??= process.cwd()
 
   // `yu doctor` — one-click health diagnosis
   if (args[0] === 'doctor') {
