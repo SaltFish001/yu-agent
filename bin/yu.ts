@@ -1334,7 +1334,7 @@ async function mainCli(): Promise<void> {
   }
 
   // ── Slash 路由 ────────────────────────────────────────
-  // 直接解析 /topic 等命令，不经过 Pi 或 classifier
+  // 直接解析 /topic 等命令
   if (args[0]?.startsWith('/')) {
     const slashCmd = args[0].slice(1)
     const slashArgs = args.slice(1)
@@ -1347,7 +1347,23 @@ async function mainCli(): Promise<void> {
       return
     }
 
-    // Unknown slash — fall through to Pi
+    // Unknown slash — skip
+  }
+
+  // `yu chat` — 通用对话
+  if (args[0] === 'chat') {
+    args.shift()
+    const query = args.join(' ')
+    if (!query) {
+      console.log(`yu-agent — AI-powered programming agent  (v${getVersion()})`)
+      console.log('')
+      console.log('Usage:  yu chat <prompt>')
+      console.log('        yu <prompt>')
+      console.log('')
+      console.log('Run "yu help" for all commands.')
+      return
+    }
+    // 有 query 时走通用 chat 流程
   }
 
   // Default: check if non-coding → use chat agent directly
@@ -1389,7 +1405,7 @@ async function mainCli(): Promise<void> {
         }
       }
     } catch {
-      // Scheduler classification failed — fall through to Pi
+      // Scheduler classification failed — fall through to AgentLoop
     }
   }
 

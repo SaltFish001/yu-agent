@@ -30,7 +30,7 @@ export const HELP_TEXT = `yu-agent — AI-powered programming agent  (v${getVers
 
 Usage:
   yu <prompt>                  One-shot task (auto dispatch)
-  yu chat                      Interactive REPL
+  yu chat <prompt>             General-purpose chat
 
 Coding:
   yu coding <prompt>           Write or modify code
@@ -67,6 +67,7 @@ System:
   yu doctor                    Health diagnosis
   yu run <prompt>              Direct scheduler invocation
   yu monitor [--once]          Live dashboard
+  yu ui                        Launch Web UI dashboard
   yu supervisor status         Show child process statuses
   yu supervisor stop/restart/logs <topic>
 
@@ -163,6 +164,13 @@ The scheduler automatically routes to the ${command} agent type.`
 
 Bypasses intent classification and calls the scheduler directly.
 Useful for testing or when auto-dispatch doesn't match your intent.`
+
+    case 'ui':
+      return `yu ui — Launch Web UI dashboard
+
+Starts the yu-agent Web UI server on http://localhost:3000.
+Shows agent status, live logs, and team mode activity.
+Press Ctrl+C to stop.`
 
     case 'supervisor':
       return `yu supervisor — Supervisor management

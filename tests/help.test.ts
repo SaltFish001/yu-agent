@@ -20,6 +20,7 @@ describe('HELP_TEXT', () => {
     expect(HELP_TEXT).toContain('yu team')
     expect(HELP_TEXT).toContain('yu doctor')
     expect(HELP_TEXT).toContain('yu help')
+    expect(HELP_TEXT).toContain('yu ui')
   })
 
   it('HELP_TEXT mentions ~/.yu/ directories', async () => {
@@ -68,6 +69,13 @@ describe('showHelpForCommand', () => {
     const help = showHelpForCommand('supervisor')
     expect(help).toContain('yu supervisor')
     expect(help).toContain('child process')
+  })
+
+  it('returns help for "ui" command', async () => {
+    const { showHelpForCommand } = await import('../bin/help.js')
+    const help = showHelpForCommand('ui')
+    expect(help).toContain('yu ui')
+    expect(help).toContain('Web UI')
   })
 })
 
