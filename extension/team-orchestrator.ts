@@ -206,11 +206,10 @@ export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, 
   } catch {
     /* non-critical */
   }
-  log.info(`📋 Team [${taskId}] plan.md 就绪 (${planContent.length} chars, ${modules.length} 个模块)`)
-
 
   // Phase 2: Read plan, spawn Coder(s)
   const planContent = readFileSync(planFile, 'utf-8')
+  log.info(`📋 Team [${taskId}] plan.md 就绪 (${planContent.length} chars)`)
 
   // Parse modules from plan
   const modules = parseModulesFromPlan(planContent)
