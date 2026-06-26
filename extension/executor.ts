@@ -19,6 +19,7 @@ import { trackAgent } from './tracker.js'
 
 const MAX_CONCURRENCY = 4
 export const AGENT_TIMEOUT_MS = 120_000
+const CODING_TIMEOUT_MS = 300_000 // 5 分钟 — coding 需要更多时间迭代
 
 // ── Types ──────────────────────────────────────────────
 
@@ -56,11 +57,11 @@ export async function spawnAgentWithTimeout(
         type: task.type,
         model: task.model,
         thinking: 'max',
-        maxTurns: 50,
+        maxTurns: task.type === 'coding' ? 50 : 30,
         task: task.task || task.files?.join(', ') || '',
         files: task.files,
         context: extraContext,
-        timeout: AGENT_TIMEOUT_MS,
+        timeout: task.type === 'coding' ? CODING_TIMEOUT_MS : AGENT_TIMEOUT_MS,
         teamRunId: extraContext.teamRunId as string | undefined,
         memberName: extraContext.memberName as string | undefined,
         background: task.background ?? false,

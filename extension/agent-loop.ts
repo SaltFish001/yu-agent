@@ -20,7 +20,10 @@ import {
   type ProviderRequest,
   type ProviderResponse,
 } from './provider.js'
-import { executeTool } from './tools/registry.js'
+import { executeTool, listTools } from './tools/registry.js'
+import './tools/aliases.js'
+import { registerAliases } from './tools/aliases.js'
+registerAliases() // 注册工具别名（write_file→write 等）
 
 // ── Types ───────────────────────────────────────────────
 
@@ -41,6 +44,7 @@ export interface AgentLoopResult {
   output: string
   iterations: number
   totalTokens: number
+  wroteCode?: boolean
   cacheStats?: {
     hitRate: number
     cacheHitTokens: number
@@ -72,6 +76,8 @@ export class AgentLoop {
   private maxIterations: number
   private totalTokensUsed = 0
   private abortSignal?: AbortSignal
+  private _remindedWrite = false
+  private _actuallyWrote = false  // 记录整个 session 中是否调用了 write/edit 工具
 
   constructor(config: AgentLoopConfig = {}) {
     this.context = new ContextManager({
@@ -93,6 +99,30 @@ export class AgentLoop {
   async run(task: string): Promise<AgentLoopResult> {
     this.context.addMessage({ role: 'user', content: task })
 
+    // ── 首轮注入工具说明 ─────────────────────────────
+    const tools = listTools()
+
+    const toolFormat = `你可以调用以下工具来协助完成任务。工具通过 JSON 格式调用：
+
+\`\`\`json
+[{"function": "ToolName", "args": "JSON encoded arguments string"}]
+\`\`\`
+
+可用工具: ${tools.map(t => t.name).join(', ')}
+
+调用规则：
+1. 每次迭代可以调用多个工具（放在一个 JSON 数组里）
+2. 工具调用的输出会在下一轮迭代提供
+3. 阅读工具输出后决定下一步行动
+4. 在任务目标全部完成之前，不要提前结束
+5. 任务全部完成后，给出总结`
+
+    // 只在首次运行且系统 prompt 不含工具说明时注入
+    const currentSys = this.context.getSystemPrompt()
+    if (currentSys && !currentSys.includes('你可以调用以下工具')) {
+      this.context.updateSystemPrompt(currentSys + '\n\n' + toolFormat)
+    }
+
     for (let i = 0; i < this.maxIterations; i++) {
       // Check abort signal
       if (this.abortSignal?.aborted) {
@@ -102,11 +132,40 @@ export class AgentLoop {
           output: lastMsg?.content ?? '(cancelled)',
           iterations: i + 1,
           totalTokens: this.totalTokensUsed,
+          wroteCode: false,
           error: `AgentLoop cancelled: ${this.abortSignal.reason?.toString() ?? 'unknown'}`,
         }
       }
 
       log.info(`AgentLoop iteration ${i + 1}/${this.maxIterations}`)
+
+      // ── Track read/write ratio — if too many reads without writes, force reminder ──
+      // Track tool usage from assistant messages' tool_calls arrays
+      const allAssistantMsgs = this.context.getMessages().filter(m => m.role === 'assistant' && m.tool_calls)
+      let readCount = 0
+      let writeCount = 0
+      const readNames = ['bash', 'read', 'grep', 'ls', 'glob']
+      const writeNames = ['write', 'edit']
+      for (const msg of allAssistantMsgs) {
+        for (const tc of (msg.tool_calls ?? [])) {
+          const name = tc.function?.name ?? ''
+          if (readNames.includes(name)) readCount++
+          if (writeNames.includes(name)) writeCount++
+        }
+      }
+
+      // If 6+ reads and 0 writes and not reminded yet, inject a forceful reminder once
+      if (i >= 6 && readCount >= 6 && writeCount === 0 && !this._remindedWrite) {
+        this._remindedWrite = true
+        const writeReminder = '⚠️ 你已经读了多次文件但从未产出任何代码改动。' +
+          '请立即产出实际代码改动。用以下格式写代码块（系统会自动提取）：\n\n' +
+          '```typescript:src/file.ts\n// 改完后的完整文件内容\n```\n\n' +
+          '不要输出工具调用 JSON 块当代码。那不算产出。' +
+          '这是最后一次机会写出代码。'
+        this.context.addMessage({ role: 'user', content: writeReminder })
+        log.warn(`Forced write reminder at iteration ${i + 1} (reads=${readCount}, writes=0)`)
+        continue
+      }
 
       // Phase 2: LLM-based 压缩（>75% 自动触发）
       await this.context.compressIfNeeded(this.apiClient)
@@ -147,6 +206,17 @@ export class AgentLoop {
 
         for (const tc of toolCalls) {
           log.info(`Executing tool: ${tc.name}`)
+          // Track whether any write/edit tool was actually called
+          if (tc.name === 'write' || tc.name === 'edit' || tc.name === 'write_file' || tc.name === 'edit_file') {
+            this._actuallyWrote = true
+          }
+          // Also track bash heredoc writes (cat > file, tee, etc.)
+          if (tc.name === 'bash' && typeof tc.args === 'string') {
+            const cmd = tc.args.toLowerCase()
+            if (cmd.includes('cat >') || cmd.includes('cat <<') || cmd.includes("'eof'") || cmd.includes('writefilesync') || cmd.includes('bun.write')) {
+              this._actuallyWrote = true
+            }
+          }
           let parsedArgs: Record<string, unknown> = {}
           try {
             parsedArgs = JSON.parse(tc.args)
@@ -167,11 +237,26 @@ export class AgentLoop {
           )
         }
       } else if (finishReason === 'stop' || finishReason === 'end_turn' || finishReason === 'end_call') {
-        // 无 tool calls 且 LLM 表示完成 → 最终回复
+        // 无 tool calls 且 LLM 表示完成
+        // 前 3 轮不允许直接结束——强制 LLM 使用工具
+        if (i < 3) {
+          const reminder = '请使用工具来完成任务。先调用一个工具看看结果。'
+          this.context.addMessage({ role: 'user', content: reminder })
+          log.info(`Agent stopped early (iter ${i + 1}), sending reminder to use tools`)
+          continue
+        }
+        // 3 轮之后才真正结束
         this.context.addMessage({ role: 'assistant', content })
         return this.buildResult(content, i + 1)
       }
-      // 无 tool calls 但 finishReason 不是终止信号 → 继续循环
+      // 无 tool calls 但 finishReason 不是以上终止信号
+      // 如果已经提醒过写代码但仍然无 tool calls → 接受当前输出并结束
+      if (this._remindedWrite && i >= 10) {
+        log.info(`Agent not producing tool calls after write reminder, ending with text output (iter ${i + 1})`)
+        this.context.addMessage({ role: 'assistant', content })
+        return this.buildResult(content, i + 1)
+      }
+      // 否则继续循环
     }
 
     // 超迭代次数
@@ -181,11 +266,15 @@ export class AgentLoop {
 
   private buildResult(output: string, iterations: number): AgentLoopResult {
     const cacheStats = this.context.getCacheStats()
+    // Also detect code blocks in output (non-JSON language tag with path)
+    const hasCodeBlock = /```\w+:(?!json)[^\n]+\n[\s\S]*?```/.test(output)
+    const actuallyWrote = this._actuallyWrote || hasCodeBlock
     return {
       success: true,
       output,
       iterations,
       totalTokens: this.totalTokensUsed,
+      wroteCode: actuallyWrote,
       cacheStats: {
         hitRate: cacheStats.hitRate,
         cacheHitTokens: cacheStats.cacheHitTokens,

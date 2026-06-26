@@ -16,10 +16,11 @@ import { createLogger } from './logger.js'
 
 const log = createLogger('bootstrap')
 
-import { existsSync, readFileSync } from 'fs'
+import { existsSync, readFileSync, mkdirSync } from 'fs'
 import { resolve } from 'path'
 import { AGENT_TYPES } from './config.js'
 import { MCP_CONFIG_PATH } from './paths.js'
+import { PROMPTS_DIR } from './paths.js'
 
 // ── 1. API key 注入 ───────────────────────────────────────
 
@@ -156,6 +157,15 @@ export function registerTypes(): AgentTypeRegistration[] {
   }
 
   log.info(`Registered ${registrations.length} agent types (Pi-free path)`)
+
+  // Ensure prompts directory exists
+  try {
+    if (!existsSync(PROMPTS_DIR)) {
+      mkdirSync(PROMPTS_DIR, { recursive: true })
+      log.info(`Created prompts directory: ${PROMPTS_DIR}`)
+    }
+  } catch { /* non-critical */ }
+
   return registrations
 }
 

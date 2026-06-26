@@ -4,8 +4,7 @@
  * Defines the 7 custom sub-agent types.
  * Each type has a default model, thinking level, tool set, and system prompt.
  *
- * Phase 3: Pi SDK removed. Agent types are now registered in-memory
- * via bootstrap.ts instead of through pi-subagents.
+ * Agent types are registered in-memory via bootstrap.ts.
  */
 
 import { createLogger } from './logger.js'
@@ -177,24 +176,33 @@ export interface AgentTypeConfig {
 // ── Prompt loader ──────────────────────────────────────
 
 export function loadPrompt(name: string): string {
-  try {
-    const path = resolve(PROMPTS_DIR, `${name}.md`)
-    const content = readFileSync(path, 'utf-8')
+  // Try PROMPTS_DIR (~/.yu/prompts/) first, then project prompts/, then extension/../prompts/
+  const projectRoot = import.meta.dirname ? resolve(import.meta.dirname, '..') : process.cwd()
+  const paths = [
+    resolve(PROMPTS_DIR, `${name}.md`),
+    resolve(projectRoot, 'prompts', `${name}.md`),
+  ]
+  for (const path of paths) {
+    try {
+      const content = readFileSync(path, 'utf-8')
 
-    // P1: Prompt 长度保护 — 超长 prompt 可能被 LLM API 截断
-    const MAX_PROMPT_LENGTH = 8_000
-    if (content.length > MAX_PROMPT_LENGTH) {
-      log.warn(
-        `Prompt "${name}.md" is ${content.length} chars (max ${MAX_PROMPT_LENGTH}). ` +
-          `Long prompts may be truncated by the LLM API. Consider splitting.`,
-      )
+      // P1: Prompt 长度保护 — 超长 prompt 可能被 LLM API 截断
+      const MAX_PROMPT_LENGTH = 8_000
+      if (content.length > MAX_PROMPT_LENGTH) {
+        log.warn(
+          `Prompt "${name}.md" is ${content.length} chars (max ${MAX_PROMPT_LENGTH}). ` +
+            `Long prompts may be truncated by the LLM API. Consider splitting.`,
+        )
+      }
+
+      return content
+    } catch {
+      continue
     }
-
-    return content
-  } catch (err) {
-    log.warn(`Prompt file not found for agent type "${name}", using fallback`, err)
-    return `You are a ${name} agent. Complete the assigned task.`
   }
+
+  log.warn(`Prompt file not found for agent type "${name}" in any location, using fallback`)
+  return `You are a ${name} agent. Complete the assigned task.`
 }
 
 // ── Agent type definitions ─────────────────────────────
@@ -230,8 +238,8 @@ export const AGENT_TYPES: Record<string, AgentTypeConfig> = {
     description: '出技术方案，只读不改',
     model: 'v4-pro',
     thinking: 'max',
-    maxTurns: 30,
-    builtinToolNames: ['read', 'grep', 'find', 'ls'],
+    maxTurns: 15,
+    builtinToolNames: ['read', 'grep', 'find', 'ls', 'write'],
     systemPrompt: loadPrompt('plan'),
   },
 

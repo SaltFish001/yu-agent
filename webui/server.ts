@@ -40,6 +40,12 @@ interface ClientPushConfig {
 const clientConfigs = new Map<any, ClientPushConfig>()
 const clientLastPush = new Map<any, number>()
 
+// Hono's Bun WS adapter wraps each callback in a new WSContext.
+// ws.raw gives the underlying Bun ServerWebSocket — use it as Map key.
+function rawWs(ws: any): any {
+  return ws?.raw ?? ws
+}
+
 let wsTicker: ReturnType<typeof setInterval> | null = null
 const TICK_INTERVAL = 500 // 每 500ms 检查一次到期 client
 
@@ -57,7 +63,7 @@ function getHtml(): string {
   return '<html><body><h1>yu-agent Web UI</h1><p>demo.html not found</p></body></html>'
 }
 
-function getNotFoundHtml(path: string): string {
+export function getNotFoundHtml(path: string): string {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -129,7 +135,7 @@ function getNotFoundHtml(path: string): string {
 </html>`
 }
 
-function escapeHtml(s: string): string {
+export function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -418,9 +424,9 @@ app.get(
     const clientInterval = intervalParam ? Math.max(500, parseInt(intervalParam, 10) || WS_STATUS_INTERVAL) : WS_STATUS_INTERVAL
     return {
     onOpen(_event, ws) {
-      wsClients.add(ws)
-      clientConfigs.set(ws, { interval: clientInterval, channels: new Set() })
-      clientLastPush.set(ws, Date.now())
+      wsClients.add(rawWs(ws))
+      clientConfigs.set(rawWs(ws), { interval: clientInterval, channels: new Set() })
+      clientLastPush.set(rawWs(ws), Date.now())
       wsStats.connectionsTotal++
       wsStats.connectionsCurrent = wsClients.size
       if (wsClients.size > wsStats.connectionsPeak) {
@@ -471,16 +477,16 @@ app.get(
             break
           case 'set_interval': {
             const newInterval = Math.max(500, parseInt(parsed.interval, 10) || WS_STATUS_INTERVAL)
-            const cfg = clientConfigs.get(ws)
+            const cfg = clientConfigs.get(rawWs(ws))
             if (cfg) {
               cfg.interval = newInterval
-              clientLastPush.set(ws, Date.now())
+              clientLastPush.set(rawWs(ws), Date.now())
               ws.send(JSON.stringify({ type: 'interval_set', data: { interval: newInterval }, timestamp: Date.now() }))
             }
             break
           }
           case 'set_channels': {
-            const cfg = clientConfigs.get(ws)
+            const cfg = clientConfigs.get(rawWs(ws))
             if (cfg && Array.isArray(parsed.channels)) {
               cfg.channels = new Set(parsed.channels)
               ws.send(JSON.stringify({ type: 'channels_set', data: { channels: parsed.channels }, timestamp: Date.now() }))
@@ -492,9 +498,9 @@ app.get(
     },
 
     onClose(_event, ws) {
-      wsClients.delete(ws)
-      clientConfigs.delete(ws)
-      clientLastPush.delete(ws)
+      wsClients.delete(rawWs(ws))
+      clientConfigs.delete(rawWs(ws))
+      clientLastPush.delete(rawWs(ws))
       wsStats.connectionsCurrent = wsClients.size
       log.info(`WS client disconnected (${wsClients.size} remaining)`)
 

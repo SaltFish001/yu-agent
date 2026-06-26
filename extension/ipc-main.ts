@@ -27,7 +27,7 @@ let msgSeq = 0
 /**
  * Build an IpcMessage with auto-populated timestamp and optional seq.
  */
-function buildMessage(type: IpcMessageType, payload?: Record<string, unknown>): IpcMessage {
+export function buildMessage(type: IpcMessageType, payload?: Record<string, unknown>): IpcMessage {
   return {
     type,
     payload,

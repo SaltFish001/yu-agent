@@ -320,6 +320,302 @@ describe('WebSocket /ws', () => {
   })
 })
 
+// ── GET /api/ws ───────────────────────────────────────────
+
+describe('GET /api/ws (WS 统计)', () => {
+  test('返回 200 + JSON', async () => {
+    const res = await fetch(`${BASE}/api/ws`)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Content-Type')).toContain('application/json')
+  })
+
+  test('返回对象包含 connected/total/peak/messagesSent/uptime', async () => {
+    const data = (await (await fetch(`${BASE}/api/ws`)).json()) as Record<string, unknown>
+    expect(data).toHaveProperty('connected')
+    expect(data).toHaveProperty('total')
+    expect(data).toHaveProperty('peak')
+    expect(data).toHaveProperty('messagesSent')
+    expect(data).toHaveProperty('uptime')
+    expect(typeof data.connected).toBe('number')
+    expect(typeof data.total).toBe('number')
+    expect(typeof data.uptime).toBe('number')
+  })
+
+  test('startedAt 为有效 ISO 日期', async () => {
+    const data = (await (await fetch(`${BASE}/api/ws`)).json()) as Record<string, unknown>
+    expect(data).toHaveProperty('startedAt')
+    expect(() => new Date(data.startedAt as string)).not.toThrow()
+    expect(Date.parse(data.startedAt as string)).toBeGreaterThan(0)
+  })
+})
+
+// ── POST /api/ws/reset ────────────────────────────────────
+
+describe('POST /api/ws/reset', () => {
+  test('返回 200 + { status: "ok" }', async () => {
+    const res = await fetch(`${BASE}/api/ws/reset`, { method: 'POST' })
+    expect(res.status).toBe(200)
+    const data = (await res.json()) as Record<string, unknown>
+    expect(data.status).toBe('ok')
+  })
+
+  test('重置后 messagesSent 归零', async () => {
+    await fetch(`${BASE}/api/ws/reset`, { method: 'POST' })
+    const data = (await (await fetch(`${BASE}/api/ws`)).json()) as Record<string, unknown>
+    expect(data.messagesSent).toBe(0)
+    expect(data.total).toBe(0)
+  })
+
+  test('peak 为当前连接数', async () => {
+    await fetch(`${BASE}/api/ws/reset`, { method: 'POST' })
+    const data = (await (await fetch(`${BASE}/api/ws`)).json()) as Record<string, unknown>
+    expect(typeof data.peak).toBe('number')
+    expect(data.peak).toBeGreaterThanOrEqual(0)
+  })
+})
+
+// ── GET /api/topics ───────────────────────────────────────
+
+describe('GET /api/topics', () => {
+  test('返回 200 + JSON', async () => {
+    const res = await fetch(`${BASE}/api/topics`)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Content-Type')).toContain('application/json')
+  })
+
+  test('返回对象包含 topics 数组和 activeName', async () => {
+    const data = (await (await fetch(`${BASE}/api/topics`)).json()) as Record<string, unknown>
+    expect(Array.isArray(data.topics)).toBe(true)
+    expect(data).toHaveProperty('activeName')
+  })
+
+  test('每个 topic 有 name/status/turns 字段', async () => {
+    const data = (await (await fetch(`${BASE}/api/topics`)).json()) as Record<string, unknown>
+    const topics = data.topics as Array<Record<string, unknown>>
+    if (topics.length > 0) {
+      const t = topics[0]
+      expect(t).toHaveProperty('name')
+      expect(t).toHaveProperty('status')
+      expect(t).toHaveProperty('turns')
+    }
+  })
+})
+
+// ── GET /api/topic/:name ──────────────────────────────────
+
+describe('GET /api/topic/:name', () => {
+  test('不存在的主题返回 404', async () => {
+    const res = await fetch(`${BASE}/api/topic/nonexistent-xyz-123`)
+    expect(res.status).toBe(404)
+    const data = (await res.json()) as Record<string, unknown>
+    expect(data).toHaveProperty('error')
+    expect((data.error as string)).toContain('not found')
+  })
+})
+
+// ── GET /api/terminals ───────────────────────────────────
+
+describe('GET /api/terminals', () => {
+  test('返回 200 + JSON', async () => {
+    const res = await fetch(`${BASE}/api/terminals`)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('Content-Type')).toContain('application/json')
+  })
+
+  test('返回 { sessions: [] }', async () => {
+    const data = (await (await fetch(`${BASE}/api/terminals`)).json()) as Record<string, unknown>
+    expect(Array.isArray(data.sessions)).toBe(true)
+  })
+
+  test('sessions 中的条目有 topic/cwd/pid/uptime/alive 字段', async () => {
+    const data = (await (await fetch(`${BASE}/api/terminals`)).json()) as Record<string, unknown>
+    const sessions = data.sessions as Array<Record<string, unknown>>
+    for (const s of sessions) {
+      expect(s).toHaveProperty('topic')
+      expect(s).toHaveProperty('cwd')
+      expect(s).toHaveProperty('pid')
+      expect(s).toHaveProperty('uptime')
+      expect(s).toHaveProperty('alive')
+    }
+  })
+})
+
+// ── GET /api/status?fields= ──────────────────────────────
+
+describe('GET /api/status?fields= 字段过滤', () => {
+  test('返回包含指定字段', async () => {
+    const res = await fetch(`${BASE}/api/status?fields=version,uptime`)
+    expect(res.status).toBe(200)
+    const data = (await res.json()) as Record<string, unknown>
+    expect(data).toHaveProperty('version')
+    expect(data).toHaveProperty('uptime')
+  })
+
+  test('不包含未请求字段', async () => {
+    const res = await fetch(`${BASE}/api/status?fields=version`)
+    expect(res.status).toBe(200)
+    const data = (await res.json()) as Record<string, unknown>
+    expect(data).toHaveProperty('version')
+    expect(data).not.toHaveProperty('uptime')
+    expect(data).not.toHaveProperty('memory')
+  })
+
+  test('空字段返回完整状态（?fields= 等同于不传）', async () => {
+    const res = await fetch(`${BASE}/api/status?fields=`)
+    expect(res.status).toBe(200)
+    const data = (await res.json()) as Record<string, unknown>
+    expect(data).toHaveProperty('version')
+    expect(data).toHaveProperty('uptime')
+    expect(data).toHaveProperty('memory')
+  })
+
+  test('不存在的字段返回空对象', async () => {
+    const res = await fetch(`${BASE}/api/status?fields=nonexistent_field_xyz`)
+    expect(res.status).toBe(200)
+    const data = (await res.json()) as Record<string, unknown>
+    expect(Object.keys(data).length).toBe(0)
+  })
+
+  test('多字段过滤', async () => {
+    const res = await fetch(`${BASE}/api/status?fields=memory,ws,rules`)
+    expect(res.status).toBe(200)
+    const data = (await res.json()) as Record<string, unknown>
+    expect(data).toHaveProperty('memory')
+    expect(data).toHaveProperty('ws')
+    expect(data).toHaveProperty('rules')
+  })
+})
+
+// ── 静态文件边角 ──────────────────────────────────────────
+
+describe('静态文件边角', () => {
+  test('不存在的静态文件返回 404', async () => {
+    const res = await fetch(`${BASE}/assets/nonexistent.css`)
+    expect(res.status).toBe(404)
+  })
+
+  test('路径穿越攻击被阻止', async () => {
+    const res = await fetch(`${BASE}/assets/../../../etc/passwd`)
+    expect(res.status).toBe(404)
+  })
+
+  test('双重路径穿越', async () => {
+    const res = await fetch(`${BASE}/assets/..%2f..%2f..%2fetc%2fpasswd`)
+    expect(res.status).toBe(404)
+  })
+})
+
+// ── WebSocket 消息交互 ──────────────────────────────────
+
+describe('WebSocket 消息交互', () => {
+  test('发送 set_interval 后收到 interval_set', async () => {
+    const ws = new WebSocket(`ws://localhost:${PORT}/ws`)
+    const result = await new Promise<string>((resolve, reject) => {
+      let connected = false
+      ws.onmessage = (e) => {
+        const parsed = JSON.parse(e.data as string)
+        if (parsed.type === 'connected') {
+          connected = true
+          ws.send(JSON.stringify({ type: 'set_interval', interval: 1000 }))
+          return
+        }
+        if (connected && parsed.type === 'interval_set') {
+          resolve(e.data as string)
+          ws.close()
+        }
+      }
+      ws.onerror = () => reject(new Error('WS error'))
+      setTimeout(() => reject(new Error('Timeout')), 3000)
+    })
+    const parsed = JSON.parse(result)
+    expect(parsed.type).toBe('interval_set')
+    expect(parsed.data.interval).toBe(1000)
+  })
+
+  test('发送 set_channels 后收到 channels_set', async () => {
+    const ws = new WebSocket(`ws://localhost:${PORT}/ws`)
+    const result = await new Promise<string>((resolve, reject) => {
+      let connected = false
+      ws.onmessage = (e) => {
+        const parsed = JSON.parse(e.data as string)
+        if (parsed.type === 'connected') {
+          connected = true
+          ws.send(JSON.stringify({ type: 'set_channels', channels: ['status', 'events'] }))
+          return
+        }
+        if (connected && parsed.type === 'channels_set') {
+          resolve(e.data as string)
+          ws.close()
+        }
+      }
+      ws.onerror = () => reject(new Error('WS error'))
+      setTimeout(() => reject(new Error('Timeout')), 3000)
+    })
+    const parsed = JSON.parse(result)
+    expect(parsed.type).toBe('channels_set')
+    expect(parsed.data.channels).toContain('status')
+    expect(parsed.data.channels).toContain('events')
+  })
+
+  test('发送非法 JSON 不崩溃', async () => {
+    const ws = new WebSocket(`ws://localhost:${PORT}/ws`)
+    await new Promise<void>((resolve, reject) => {
+      ws.onopen = () => {
+        setTimeout(() => {
+          ws.send('not json at all!!!')
+          ws.close()
+          resolve()
+        }, 200)
+      }
+      ws.onerror = () => reject(new Error('WS error'))
+      setTimeout(() => reject(new Error('Timeout')), 3000)
+    })
+  })
+
+  test('发送未知 type 不崩溃', async () => {
+    const ws = new WebSocket(`ws://localhost:${PORT}/ws`)
+    await new Promise<void>((resolve, reject) => {
+      ws.onopen = () => {
+        setTimeout(() => {
+          ws.send(JSON.stringify({ type: 'some_unknown_type_xyz' }))
+          ws.close()
+          resolve()
+        }, 200)
+      }
+      ws.onerror = () => reject(new Error('WS error'))
+      setTimeout(() => reject(new Error('Timeout')), 3000)
+    })
+  })
+})
+
+// ── 并发 WS 连接 ──────────────────────────────────────────
+
+describe('并发 WebSocket 连接', () => {
+  test('多个 WS 同时连接不崩溃', async () => {
+    const count = 5
+    const wss = Array.from({ length: count }, () => new WebSocket(`ws://localhost:${PORT}/ws`))
+    const results = await Promise.all(
+      wss.map((ws) => {
+        return new Promise<void>((resolve, reject) => {
+          ws.onopen = () => {
+            ws.send(JSON.stringify({ type: 'ping' }))
+          }
+          ws.onmessage = (e) => {
+            const parsed = JSON.parse(e.data as string)
+            if (parsed.type === 'pong') {
+              ws.close()
+              resolve()
+            }
+          }
+          ws.onerror = () => reject(new Error('WS error'))
+          setTimeout(() => reject(new Error('Timeout')), 3000)
+        })
+      }),
+    )
+    expect(results.length).toBe(count)
+  })
+})
+
 // ── 404 ──────────────────────────────────────────────────
 
 describe('未定义路由', () => {

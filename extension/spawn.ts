@@ -38,6 +38,7 @@ export interface SpawnResult {
   model?: string
   text?: string
   content?: string
+  wroteCode?: boolean
 }
 
 export interface SpawnStats {
@@ -134,15 +135,59 @@ export async function spawnAgent(config: SpawnConfig): Promise<SpawnResult> {
     try {
       const maxIter = Math.min(config.maxTurns ?? 30, 50)
 
+      // 加载 agent type 对应的 prompt 文件
+      let agentPrompt = `You are a ${config.type} agent. Complete the assigned task.`
+      try {
+        const { loadPrompt } = await import('./config.js')
+        const prompt = loadPrompt(config.type)
+        if (prompt) agentPrompt = prompt
+      } catch {
+        // fallback to default
+      }
+
       const result = await runAgent(config.task, {
-        systemPrompt: `You are a ${config.type} agent. Complete the assigned task.`,
+        systemPrompt: agentPrompt,
         maxIterations: maxIter,
         maxTokens: 8192,
+        abortSignal: config.timeout > 0 ? AbortSignal.timeout(config.timeout) : undefined,
       })
 
       const duration = Date.now() - startTime
 
       log.info(`Agent completed: type=${config.type} iterations=${result.iterations} duration=${duration}ms`)
+
+      // ── Coding agent: extract code blocks from text output if write tool wasn't used ──
+      if (config.type === 'coding' && !result.wroteCode && result.output && result.output.length > 50) {
+        try {
+          const { writeFileSync, mkdirSync } = await import('fs')
+          const { resolve } = await import('path')
+          const sharedDir = config.context?.shared_dir
+            ? String(config.context.shared_dir)
+            : resolve(process.cwd(), '.yu', 'code-output', `run-${Date.now()}`)
+          mkdirSync(sharedDir, { recursive: true })
+          const blockRegex = /```(\w+)?(?::([^\n]+))?\n([\s\S]*?)```/g
+          let savedCount = 0
+          let match
+          const matches: RegExpExecArray[] = []
+          while ((match = blockRegex.exec(result.output)) !== null) {
+            matches.push(match)
+          }
+          for (const m of matches) {
+            const path = m[2] ? m[2].trim() : null
+            const code = m[3].trim()
+            if (!code) continue
+            const filePath = path || resolve(sharedDir, `code_block_${savedCount + 1}.${m[1] || 'txt'}`)
+            writeFileSync(filePath, code, 'utf-8')
+            savedCount++
+            log.info(`Extracted code block to ${filePath}`)
+          }
+          if (savedCount > 0) {
+            log.info(`Saved ${savedCount} code blocks from agent text output`)
+          }
+        } catch (_err) {
+          /* non-critical — extraction is best-effort */
+        }
+      }
 
       // Emit agent.completed
       try {
@@ -167,6 +212,7 @@ export async function spawnAgent(config: SpawnConfig): Promise<SpawnResult> {
         outputTokens: result.totalTokens,
         durationMs: duration,
         model: config.model,
+        wroteCode: result.wroteCode,
       }
     } catch (err) {
       errorCount++
@@ -217,8 +263,19 @@ export async function spawnAgent(config: SpawnConfig): Promise<SpawnResult> {
     try {
       bg.markRunning(id)
       const maxIter = Math.min(config.maxTurns ?? 30, 50)
+
+      // 加载 agent type 对应的 prompt 文件
+      let agentPrompt = `You are a ${config.type} agent. Complete the assigned task.`
+      try {
+        const { loadPrompt } = await import('./config.js')
+        const prompt = loadPrompt(config.type)
+        if (prompt) agentPrompt = prompt
+      } catch {
+        // fallback to default
+      }
+
       const result = await runAgent(config.task, {
-        systemPrompt: `You are a ${config.type} agent. Complete the assigned task.`,
+        systemPrompt: agentPrompt,
         maxIterations: maxIter,
         maxTokens: 8192,
         abortSignal: signal,
@@ -227,6 +284,33 @@ export async function spawnAgent(config: SpawnConfig): Promise<SpawnResult> {
         bg.cancel(id, signal.reason?.toString())
         return
       }
+
+      // ── Coding agent: extract code blocks from text output (background path) ──
+      if (config.type === 'coding' && !result.wroteCode && result.output && result.output.length > 50) {
+        try {
+          const { writeFileSync, mkdirSync } = await import('fs')
+          const { resolve } = await import('path')
+          const sharedDir = config.context?.shared_dir
+            ? String(config.context.shared_dir)
+            : resolve(process.cwd(), '.yu', 'code-output', `bg-${id}`)
+          mkdirSync(sharedDir, { recursive: true })
+          const blockRegex = /```(\w+)?(?::([^\n]+))?\n([\s\S]*?)```/g
+          let savedCount = 0
+          let match
+          const matches: RegExpExecArray[] = []
+          while ((match = blockRegex.exec(result.output)) !== null) matches.push(match)
+          for (const m of matches) {
+            const path = m[2] ? m[2].trim() : null
+            const code = m[3].trim()
+            if (!code) continue
+            const filePath = path || resolve(sharedDir, `code_block_${savedCount + 1}.${m[1] || 'txt'}`)
+            writeFileSync(filePath, code, 'utf-8')
+            savedCount++
+          }
+          if (savedCount > 0) log.info(`Background coding: saved ${savedCount} code blocks to ${sharedDir}`)
+        } catch { /* non-critical */ }
+      }
+
       bg.markCompleted(id, result.output)
     } catch (err) {
       if (signal?.aborted) {
