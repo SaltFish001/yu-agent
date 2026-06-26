@@ -100,6 +100,14 @@ export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, 
     /* non-critical */
   }
 
+  // Extract original goal from plan or context
+  const originalGoal: string =
+    (_plan as Record<string, unknown>)?.goal as string
+    || _plan.agents?.[0]?.task
+    || (context.goal as string)
+    || (context.originalGoal as string)
+    || ''
+
   // Phase 1: Architect + Searcher in parallel
   const architectCfg = await resolveRoleConfig('architect', 'plan')
   const searcherCfg = await resolveRoleConfig('searcher', 'search')
@@ -107,7 +115,9 @@ export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, 
     type: 'plan',
     model: architectCfg.model,
     id: 'team-architect',
-    task: `分析现有代码结构并出方案。将方案写入 ${planFile}`,
+    task: originalGoal
+      ? `理解以下目标，拆解为具体任务。将方案写入 ${planFile}\n\n目标: ${originalGoal}`
+      : `分析现有代码结构并出方案。将方案写入 ${planFile}`,
   }
   const searcherTask: AgentTask = {
     type: 'search',
@@ -164,7 +174,13 @@ export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, 
 
     if (tooShort || isError || noChanges || isRambling || (!hasHeadings && !hasJsonStructure && !hasFileChanges)) {
       log.warn(`plan.md rejected (len=${planContent.length}, hasHeadings=${hasHeadings}, hasJson=${hasJsonStructure}, rambling=${isRambling}), using fallback`)
-      const fallback = `# 代码改进方案\n\n## 任务\n对指定文件进行代码质量改进。\n\n## 具体要求\n- 补充文档注释（JSDoc）\n- 补充单元测试\n- 改进类型安全\n- 重构冗余代码\n\n## JSON\n\`\`\`json\n{\n  "goal": "改进代码质量和测试覆盖",\n  "modules": [\n    {"name": "default", "files": [], "independent": true}\n  ]\n}\n\`\`\``
+      // Extract original goal from plan
+      const originalGoal: string =
+        (_plan as Record<string, unknown>)?.goal as string
+        || (_plan.agents?.[0]?.task)
+        || (context.goal as string)
+        || '执行代码改动'
+      const fallback = `# 执行方案\n\n## 目标\n${originalGoal}\n\n## 任务列表\n- ${originalGoal}\n\n## 改动风险\n新建文件无风险。改已有文件需验证不破坏现有逻辑。\n\n## JSON\n\`\`\`json\n{\n  "goal": "${originalGoal}",\n  "modules": [\n    {"name": "default", "files": [], "independent": true}\n  ]\n}\n\`\`\``
       writeFileSync(planFile, fallback, 'utf-8')
       log.info(`plan.md fallback written (${fallback.length} chars)`)
     }

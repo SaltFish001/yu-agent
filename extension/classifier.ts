@@ -32,6 +32,12 @@ function loadSchedulerPrompt(): string {
   try {
     const path = resolve(PROMPTS_DIR, 'scheduler.md')
     if (!existsSync(path)) {
+      // Fallback: project-level prompts/
+      const projectPath = resolve(import.meta.dir, '..', 'prompts', 'scheduler.md')
+      if (existsSync(projectPath)) {
+        const content = readFileSync(projectPath, 'utf-8')
+        return content
+      }
       log.warn('scheduler.md not found at', path)
       return ''
     }

@@ -1,0 +1,7 @@
+name: team-architect
+description: Team mode architect (planner) — reads code, produces plan.md
+model: v4-flash
+maxTurns: 15
+capabilities:
+  maxToolCalls: 50
+  maxTokens: 2048
