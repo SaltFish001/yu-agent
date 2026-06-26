@@ -1,0 +1,7 @@
+name: team-reviewer
+description: Team mode reviewer — checks code quality, approves or requests fixes
+model: v4-flash
+maxTurns: 15
+capabilities:
+  maxToolCalls: 50
+  maxTokens: 2048

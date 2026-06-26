@@ -1,0 +1,7 @@
+name: team-searcher
+description: Team mode searcher — codebase search for relevant context
+model: v4-flash
+maxTurns: 15
+capabilities:
+  maxToolCalls: 50
+  maxTokens: 2048
