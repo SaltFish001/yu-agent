@@ -1,7 +1,0 @@
-name: team-coder
-description: Team mode coding agent — fast by default
-model: v4-flash
-maxTurns: 30
-capabilities:
-  maxToolCalls: 150
-  maxTokens: 4096

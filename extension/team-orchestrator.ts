@@ -99,6 +99,7 @@ export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, 
   } catch {
     /* non-critical */
   }
+  log.info(`🚀 Team mode [${taskId}] 启动 — 阶段: 调研 (architect + searcher 并行)`)
 
   // Extract original goal from plan or context
   const originalGoal: string =
@@ -205,6 +206,8 @@ export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, 
   } catch {
     /* non-critical */
   }
+  log.info(`📋 Team [${taskId}] plan.md 就绪 (${planContent.length} chars, ${modules.length} 个模块)`)
+
 
   // Phase 2: Read plan, spawn Coder(s)
   const planContent = readFileSync(planFile, 'utf-8')
@@ -251,6 +254,7 @@ export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, 
   }))
 
   const coderAgentMap = new Map(coderTasks.map((t) => [t.id, t]))
+  log.info(`👷 Team [${taskId}] 阶段: coding — ${coderTasks.length} 个 agent (${coderCfg.model})`)
   const coderResults = await runParallelGroup(
     coderTasks.map((t) => t.id),
     coderAgentMap,
@@ -283,6 +287,7 @@ export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, 
 
     // Create one Reviewer task per module
     const reviewerCfg = await resolveRoleConfig('reviewer', 'review')
+    log.info(`🔍 Team [${taskId}] 阶段: review round ${round + 1} — ${modules.length} 个 agent`)
     const reviewerTasks: AgentTask[] = modules.map((mod, i) => ({
       type: 'review',
       model: reviewerCfg.model,
@@ -376,6 +381,12 @@ ${changesDetails.join('\n---\n')}
   } else {
     log.info('No merge conflicts detected')
   }
+
+  // Summary
+  const wroteSummary = Array.from(coderResults.values())
+    .map((r) => r?.wroteCode ? '✅' : '⚠️')
+    .join(' ')
+  log.info(`✅ Team [${taskId}] 完成 — 模块: ${modules.length} | 代码: ${wroteSummary} | review: ${allApproved ? '✅ passed' : '⚠️ not all approved'}`)
 
   // Final status
   writeTeamStatus({
