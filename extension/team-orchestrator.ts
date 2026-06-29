@@ -181,7 +181,7 @@ export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, 
         || (_plan.agents?.[0]?.task)
         || (context.goal as string)
         || '执行代码改动'
-      const fallback = `# 执行方案\n\n## 目标\n${originalGoal}\n\n## 任务列表\n- ${originalGoal}\n\n## 改动风险\n新建文件无风险。改已有文件需验证不破坏现有逻辑。\n\n## JSON\n\`\`\`json\n{\n  "goal": "${originalGoal}",\n  "modules": [\n    {"name": "default", "files": [], "independent": true}\n  ]\n}\n\`\`\``
+      const fallback = `# 执行方案（自动生成）\n\n## 目标\n${originalGoal}\n\n## 当前状态\n方案由 orchestrator 自动生成，未包含实际代码分析。coding agent 应主动读相关文件后补充分析。\n\n## 任务列表\n- 分析当前代码状态并执行目标: ${originalGoal}\n\n## 改动风险\n新建文件无风险。改已有文件需验证不破坏现有逻辑。\n\n## JSON\n\`\`\`json\n{\n  "goal": "${originalGoal}",\n  "modules": [\n    {"name": "analysis", "files": [], "independent": false, "note": "先分析代码结构"},\n    {"name": "implementation", "files": [], "independent": false, "dependencies": ["analysis"], "note": "根据分析结果执行改动"}\n  ]\n}\n\`\`\``
       writeFileSync(planFile, fallback, 'utf-8')
       log.info(`plan.md fallback written (${fallback.length} chars)`)
     }
