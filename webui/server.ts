@@ -55,10 +55,25 @@ let _htmlCache: string | null = null
 
 function getHtml(): string {
   if (_htmlCache) return _htmlCache
-  const htmlPath = resolve(import.meta.dir, 'demo.html')
-  if (existsSync(htmlPath)) {
-    _htmlCache = readFileSync(htmlPath, 'utf-8')
-    return _htmlCache
+  const candidates = [
+    import.meta.dir,
+    process.cwd(),
+    resolve(process.cwd(), 'webui'),
+    resolve(import.meta.dir, '..'),
+    resolve(import.meta.dir, '..', '..'),
+  ]
+  for (const dir of candidates) {
+    if (!dir) continue
+    const htmlPath = resolve(dir, 'demo.html')
+    if (existsSync(htmlPath)) {
+      _htmlCache = readFileSync(htmlPath, 'utf-8')
+      return _htmlCache
+    }
+    const webuiPath = resolve(dir, 'webui', 'demo.html')
+    if (existsSync(webuiPath)) {
+      _htmlCache = readFileSync(webuiPath, 'utf-8')
+      return _htmlCache
+    }
   }
   return '<html><body><h1>yu-agent Web UI</h1><p>demo.html not found</p></body></html>'
 }
@@ -156,21 +171,32 @@ const CONTENT_TYPES: Record<string, string> = {
 }
 
 function serveStatic(pathname: string): Response | null {
-  const webuiRoot = resolve(import.meta.dir)
-  const requestedFile = resolve(webuiRoot, pathname.replace(/^\//, ''))
-  if (!requestedFile.startsWith(webuiRoot)) return null
-  if (!existsSync(requestedFile)) return null
+  // Try possible webui roots (source dir, cwd, project root)
+  const candidates = [
+    import.meta.dir,
+    process.cwd(),
+    resolve(process.cwd(), 'webui'),
+    resolve(import.meta.dir, '..', 'webui'),
+    resolve(import.meta.dir, '..', '..', 'webui'),
+  ]
+  for (const webuiRoot of candidates) {
+    if (!webuiRoot) continue
+    const requestedFile = resolve(webuiRoot, pathname.replace(/^\//, ''))
+    if (!requestedFile.startsWith(webuiRoot)) continue
+    if (!existsSync(requestedFile)) continue
 
-  const ext = Object.keys(CONTENT_TYPES).find((e) => requestedFile.endsWith(e))
-  if (!ext) return null
+    const ext = Object.keys(CONTENT_TYPES).find((e) => requestedFile.endsWith(e))
+    if (!ext) return null
 
-  const content = readFileSync(requestedFile)
-  return new Response(content, {
-    headers: {
-      'Content-Type': CONTENT_TYPES[ext],
-      'Cache-Control': 'no-cache',
-    },
-  })
+    const content = readFileSync(requestedFile)
+    return new Response(content, {
+      headers: {
+        'Content-Type': CONTENT_TYPES[ext],
+        'Cache-Control': 'no-cache',
+      },
+    })
+  }
+  return null
 }
 
 // ── SSE 客户端管理 ─────────────────────────────────────
