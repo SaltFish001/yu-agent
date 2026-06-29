@@ -15,6 +15,9 @@ import './write.js'
 import './edit.js'
 import './web.js'
 import { registerTool, getTool } from './registry.js'
+import { createLogger } from '../logger.js'
+
+const log = createLogger('aliases')
 
 export function registerAliases(): void {
   const toolMap: Record<string, string> = {
@@ -49,4 +52,5 @@ export function registerAliases(): void {
     })
     count++
   }
+  log.info(`Registered ${count} tool aliases (${Object.keys(toolMap).length} configured)`)
 }
