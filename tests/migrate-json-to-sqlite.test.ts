@@ -26,7 +26,7 @@ function makeTempDir(): string {
 
 /** Run the migration script and return { exitCode, stdout, stderr } */
 function runMigration(dir: string): { exitCode: number; stdout: string; stderr: string } {
-  const result = Bun.spawnSync(['bun', 'run', SCRIPT, '--dir', dir], {
+  const result = Bun.spawnSync([process.execPath, 'run', SCRIPT, '--dir', dir], {
     env: { ...process.env },
   })
   return {
@@ -40,7 +40,7 @@ function runMigration(dir: string): { exitCode: number; stdout: string; stderr: 
 function readDbJson(dbPath: string, table: string): unknown[] {
   const result = Bun.spawnSync(
     [
-      'bun',
+      process.execPath,
       '-e',
       `
       import { Database } from 'bun:sqlite';
