@@ -296,7 +296,13 @@ export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, 
 
 方案文件: ${planFile}
 
-根据 plan.md 的方案评估实现质量。返回 approved 或 changes_requested。如果 changes_requested，请列出具体问题。`,
+根据 plan.md 的方案评估实现质量。
+
+审查要求：
+1. 编写详细的人类可读审查报告（问题、行号、建议）
+2. 在报告后用 \`\`\`json 代码块输出结构化摘要：
+   {"status": "approved" | "changes_requested", "findings": [{"severity": "high"|"medium"|"low", "file": "...", "line": N, "message": "..."}]}
+3. 至少有一个 high/medium 问题才返回 changes_requested`,
       files: mod.files.length > 0 ? mod.files : undefined,
     }))
 
@@ -307,18 +313,44 @@ export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, 
       { ...context, shared_dir: sharedDir, plan_content: planContent },
     )
 
-    // Check if any reviewer requested changes
+    // Collect review text & check approval
     const changesDetails: string[] = []
-    for (const [, result] of reviewerResults) {
-      const output = parseAgentOutput(result?.response || '')
-      if (output && 'status' in output && (output as ReviewOutput).status === 'changes_requested') {
-        changesDetails.push(JSON.stringify((output as ReviewOutput).findings || []))
+    const reviewTexts: string[] = []
+    for (const [id, result] of reviewerResults) {
+      const text = result?.response || result?.text || ''
+      reviewTexts.push(text)
+      // Save full review text to file
+      const reviewFile = resolve(sharedDir, `review-report-r${round + 1}-${id}.md`)
+      try {
+        writeFileSync(reviewFile, text, 'utf-8')
+      } catch { /* non-critical */ }
+
+      // Try JSON parse first (structured output)
+      const output = parseAgentOutput(text)
+      let requestedChanges = false
+      if (output && 'status' in output) {
+        if ((output as ReviewOutput).status === 'changes_requested') {
+          requestedChanges = true
+          changesDetails.push(JSON.stringify((output as ReviewOutput).findings || []))
+        }
+      } else {
+        // Fallback: text-based detection
+        requestedChanges = /changes?_requested|❌|不通过|问题|需修改/i.test(text)
+        if (requestedChanges) {
+          changesDetails.push(text.slice(0, 2000))
+        }
       }
+    }
+
+    // Log review findings
+    if (reviewTexts.length > 0) {
+      const firstReview = reviewTexts[0].slice(0, 1000)
+      log.info(`Review round ${round + 1} — findings:\n${firstReview}`)
     }
 
     if (changesDetails.length === 0) {
       allApproved = true
-      log.info(`Review round ${round + 1}: all approved`)
+      log.info(`Review round ${round + 1}: ✅ all approved`)
       break
     }
 
