@@ -167,8 +167,8 @@ export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, 
     const planContent = readFileSync(planFile, 'utf-8').trim()
     const hasHeadings = /^#{1,3}\s+/m.test(planContent)
     const hasJsonStructure = /"goal"\s*:/.test(planContent) || /"modules"\s*:/.test(planContent)
-    const hasFileChanges = /\.ts|\.js|\.md/.test(planContent) && /改动|修改|change|fix|add|refactor/i.test(planContent)
-    const isRambling = /^(现在|让我|我先|我需要)/.test(planContent) || /读取更多|继续读取/.test(planContent)
+    const hasFileChanges = /\.[a-zA-Z]+/.test(planContent) && /改动|修改|change|fix|add|refactor|分析|审查|review|check/i.test(planContent)
+    const isRambling = /^(现在|让我|我先|我需要)/.test(planContent) && planContent.length < 200 && !hasHeadings
     const tooShort = planContent.length < 50
     const isError = planContent.startsWith('Error:')
     const noChanges = planContent.includes('无需改动') || planContent.includes('no changes needed')
