@@ -5,7 +5,10 @@
  * 调用 LLM → 解析 tool_calls → 执行工具 → 继续循环 → 返回结果。
  * Phase 2 集成 ContextManager（压缩 + 缓存追踪 + 自动持久化）。
  *
- * Phase 1-2 仅 non-streaming。Phase 3 Web UI 做 streaming。
+ * Phase 3 (reasonix-inspired): 状态快照 + 周期 checkpoint + 指令强化。
+ * - 每 5 轮注入一次进度状态摘要，防止长上下文注意力漂移
+ * - 系统指令定期强化，防止指令遗忘
+ * - 状态外化跟踪（已改文件、关键决策）
  */
 
 import { createLogger } from './logger.js'
@@ -54,6 +57,16 @@ export interface AgentLoopResult {
   error?: string
 }
 
+/** 执行过程中的状态快照，用于 checkpoint 注入 */
+interface StateSnapshot {
+  filesRead: Set<string>
+  filesWritten: Set<string>
+  decisions: string[]
+  currentGoal: string
+  iteration: number
+  toolsCalled: number
+}
+
 // ── 默认 system prompt ───────────────────────────────────
 
 const DEFAULT_SYSTEM_PROMPT = `You are yu-agent, an AI-powered programming agent.
@@ -68,6 +81,19 @@ When using tools:
 
 When you have completed the task, provide a summary of what was done.`
 
+/** 关键行为指令（独立于 system prompt，用于强化注入） */
+const CORE_INSTRUCTIONS = `## 核心行为规则
+
+1. 始终使用工具完成任务。不要仅凭已有知识回答技术问题——先读代码再下结论。
+2. 工具调用用 \`\`\`json [{ "function": "ToolName", "args": "..." }] \`\`\` 格式。
+3. 每次迭代可以调多个工具，全部放在一个 JSON 数组里。
+4. 读完工具输出后再决定下一步。先分析，后行动。
+5. 任务全部完成之前不要提前结束。完成后给出改动总结。
+6. 如果需要修改代码，优先用 write/edit 工具。`
+
+/** Checkpoint 注入间隔 */
+const CHECKPOINT_INTERVAL = 5
+
 // ── AgentLoop ────────────────────────────────────────────
 
 export class AgentLoop {
@@ -78,6 +104,18 @@ export class AgentLoop {
   private abortSignal?: AbortSignal
   private _remindedWrite = false
   private _actuallyWrote = false  // 记录整个 session 中是否调用了 write/edit 工具
+
+  // Phase 3: 状态跟踪
+  private state: StateSnapshot = {
+    filesRead: new Set(),
+    filesWritten: new Set(),
+    decisions: [],
+    currentGoal: '',
+    iteration: 0,
+    toolsCalled: 0,
+  }
+  private _lastCheckpointIteration = 0
+  private _instructionsInjected = false
 
   constructor(config: AgentLoopConfig = {}) {
     this.context = new ContextManager({
@@ -97,6 +135,7 @@ export class AgentLoop {
   }
 
   async run(task: string): Promise<AgentLoopResult> {
+    this.state.currentGoal = task
     this.context.addMessage({ role: 'user', content: task })
 
     // ── 首轮注入工具说明 ─────────────────────────────
@@ -123,7 +162,12 @@ export class AgentLoop {
       this.context.updateSystemPrompt(currentSys + '\n\n' + toolFormat)
     }
 
+    // ── 首轮注入核心指令 ────────────────────────────
+    this._injectCoreInstructions()
+
     for (let i = 0; i < this.maxIterations; i++) {
+      this.state.iteration = i + 1
+
       // Check abort signal
       if (this.abortSignal?.aborted) {
         const lastMsg = this.context.getLastMessage()
@@ -167,6 +211,16 @@ export class AgentLoop {
         continue
       }
 
+      // ── Phase 3: Checkpoint 注入 ───────────────────
+      // 每 CHECKPOINT_INTERVAL 轮注入一次进度状态
+      if (i > 0 && i % CHECKPOINT_INTERVAL === 0 && i !== this._lastCheckpointIteration) {
+        this._lastCheckpointIteration = i
+        this._injectCheckpoint()
+
+        // 同时在 checkpoint 时强化核心指令
+        this._reinforceInstructions()
+      }
+
       // Phase 2: LLM-based 压缩（>75% 自动触发）
       await this.context.compressIfNeeded(this.apiClient)
 
@@ -206,6 +260,11 @@ export class AgentLoop {
 
         for (const tc of toolCalls) {
           log.info(`Executing tool: ${tc.name}`)
+          this.state.toolsCalled++
+
+          // Phase 3: 跟踪文件操作
+          this._trackToolCall(tc)
+          
           // Track whether any write/edit tool was actually called
           if (tc.name === 'write' || tc.name === 'edit' || tc.name === 'write_file' || tc.name === 'edit_file') {
             this._actuallyWrote = true
@@ -262,6 +321,79 @@ export class AgentLoop {
     // 超迭代次数
     const lastMsg = this.context.getLastMessage()
     return this.buildResult(lastMsg?.content ?? '(no output after max iterations)', this.maxIterations)
+  }
+
+  // ── Phase 3: 状态跟踪 ──────────────────────────────
+
+  /** 从工具调用中提取文件路径，更新状态 */
+  private _trackToolCall(tc: { name: string; args: string }): void {
+    // 从 args 中提取文件路径
+    const filePattern = /['"]?(?:file|path|src|target)['"]?\s*[:=]\s*['"]([^'"]+)['"]/i
+    const match = filePattern.exec(tc.args)
+    const filePath = match?.[1]
+
+    if (filePath) {
+      if (tc.name === 'read' || tc.name === 'grep' || tc.name === 'ls' || tc.name === 'glob') {
+        this.state.filesRead.add(filePath)
+      } else if (tc.name === 'write' || tc.name === 'edit' || tc.name === 'write_file' || tc.name === 'edit_file') {
+        this.state.filesWritten.add(filePath)
+      }
+    }
+
+    // 决策跟踪：bash 中的关键命令
+    if (tc.name === 'bash') {
+      const cmdText = tc.args.toLowerCase()
+      if (cmdText.includes('install') || cmdText.includes('npm ') || cmdText.includes('pip ')) {
+        this.state.decisions.push(`installed dependencies: ${tc.args.slice(0, 80)}`)
+      }
+      if (cmdText.includes('git commit') || cmdText.includes('git add')) {
+        this.state.decisions.push('committed changes to git')
+      }
+      if (cmdText.includes('rm -rf') || cmdText.includes('rm -r')) {
+        this.state.decisions.push(`removed: ${tc.args.slice(0, 60)}`)
+      }
+    }
+  }
+
+  /** 注入进度 checkpoint（每 5 轮） */
+  private _injectCheckpoint(): void {
+    const filesRead = [...this.state.filesRead]
+    const filesWritten = [...this.state.filesWritten]
+    const decisions = this.state.decisions
+
+    let summary = `[进度检查点 — 第 ${this.state.iteration}/${this.maxIterations} 轮]\n`
+    summary += `当前目标: ${this.state.currentGoal.slice(0, 200)}\n`
+    
+    if (filesRead.length > 0) {
+      summary += `已读文件 (${filesRead.length}): ${filesRead.slice(-5).join(', ')}${filesRead.length > 5 ? ` ...` : ''}\n`
+    }
+    if (filesWritten.length > 0) {
+      summary += `已修改文件 (${filesWritten.length}): ${filesWritten.join(', ')}\n`
+    }
+    if (decisions.length > 0) {
+      summary += `关键决策: ${decisions.slice(-3).join('; ')}\n`
+    }
+    summary += `已调用工具: ${this.state.toolsCalled} 次\n`
+    summary += `请继续推进，离完成目标还有距离。如果需要调整方向，说明原因。`
+
+    this.context.addMessage({ role: 'user', content: summary })
+    log.info(`Checkpoint injected at iteration ${this.state.iteration}`)
+  }
+
+  /** 注入核心行为指令（首轮用） */
+  private _injectCoreInstructions(): void {
+    if (this._instructionsInjected) return
+    this._instructionsInjected = true
+    // 核心指令放在首轮 toolFormat 之后，作为独立的 user message 强化
+    this.context.addMessage({ role: 'user', content: CORE_INSTRUCTIONS })
+  }
+
+  /** 强化指令（checkpoint 时附带） */
+  private _reinforceInstructions(): void {
+    this.context.addMessage({
+      role: 'user',
+      content: `[指令提醒]\n${CORE_INSTRUCTIONS.split('\n').slice(0, 4).join('\n')}`,
+    })
   }
 
   private buildResult(output: string, iterations: number): AgentLoopResult {

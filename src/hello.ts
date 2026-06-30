@@ -4,5 +4,6 @@
  * @returns 问候语字符串
  */
 export function greet(name: string): string {
+  // 返回拼接好的问候语字符串
   return `Hello, ${name}!`;
 }

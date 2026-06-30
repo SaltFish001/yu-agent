@@ -55,6 +55,14 @@ let _htmlCache: string | null = null
 
 function getHtml(): string {
   if (_htmlCache) return _htmlCache
+
+  // Try frontend/dist/index.html first (Vite build)
+  const distIndex = resolve(process.cwd(), 'webui', 'frontend', 'dist', 'index.html')
+  if (existsSync(distIndex)) {
+    _htmlCache = readFileSync(distIndex, 'utf-8')
+    return _htmlCache
+  }
+
   const candidates = [
     import.meta.dir,
     process.cwd(),
@@ -75,7 +83,7 @@ function getHtml(): string {
       return _htmlCache
     }
   }
-  return '<html><body><h1>yu-agent Web UI</h1><p>demo.html not found</p></body></html>'
+  return '<html><body><h1>yu-agent Web UI</h1><p>Frontend build not found. Run: cd webui/frontend && npm run build</p></body></html>'
 }
 
 export function getNotFoundHtml(path: string): string {
@@ -171,6 +179,24 @@ const CONTENT_TYPES: Record<string, string> = {
 }
 
 function serveStatic(pathname: string): Response | null {
+  // Try frontend/dist first (Vite build)
+  const distDir = resolve(process.cwd(), 'webui', 'frontend', 'dist')
+  if (existsSync(distDir)) {
+    const distFile = resolve(distDir, pathname.replace(/^\//, ''))
+    if (distFile.startsWith(distDir) && existsSync(distFile)) {
+      const ext = Object.keys(CONTENT_TYPES).find((e) => distFile.endsWith(e))
+      if (ext) {
+        const content = readFileSync(distFile)
+        return new Response(content, {
+          headers: {
+            'Content-Type': CONTENT_TYPES[ext],
+            'Cache-Control': 'no-cache',
+          },
+        })
+      }
+    }
+  }
+
   // Try possible webui roots (source dir, cwd, project root)
   const candidates = [
     import.meta.dir,
@@ -881,6 +907,63 @@ app.post(
   },
 )
 
+// ── API: chat stream (SSE) ──
+
+app.post(
+  '/api/chat/stream',
+  validator('json', (value, c) => {
+    const parsed = chatSchema.safeParse(value)
+    if (!parsed.success) {
+      const first = parsed.error.issues[0]
+      return c.json({ error: `参数错误: ${first.message}` }, 400)
+    }
+    return parsed.data
+  }),
+  async (c) => {
+    const { message } = c.req.valid('json')
+
+    const stream = new ReadableStream({
+      async start(controller) {
+        const enc = (text: string) => controller.enqueue(new TextEncoder().encode(text))
+
+        try {
+          enc(`event: start\ndata: ${JSON.stringify({ message, timestamp: Date.now() })}\n\n`)
+
+          const { runAgent } = await import('../extension/agent-loop.js')
+          const raw = await runAgent(message, { maxIterations: 20 })
+          const result = raw ?? { success: false, output: '(Agent returned no result)', iterations: 0, totalTokens: 0 }
+
+          // Send output in chunks for streaming effect
+          const output = typeof result.output === 'string' ? result.output : JSON.stringify(result)
+          const CHUNK_SIZE = 100
+          for (let i = 0; i < output.length; i += CHUNK_SIZE) {
+            const chunk = output.slice(i, i + CHUNK_SIZE)
+            enc(`data: ${JSON.stringify({ text: chunk })}\n\n`)
+          }
+
+          enc(`event: done\ndata: ${JSON.stringify({ iterations: result.iterations, totalTokens: result.totalTokens })}\n\n`)
+          enc('data: [DONE]\n\n')
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err)
+          enc(`event: error\ndata: ${JSON.stringify({ error: msg })}\n\n`)
+          enc('data: [DONE]\n\n')
+        } finally {
+          controller.close()
+        }
+      },
+    })
+
+    return c.newResponse(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      },
+    })
+  },
+)
+
 // ── 首页 ──
 
 app.get('/', (c) =>
@@ -898,6 +981,26 @@ app.get('/assets/*', (c) => {
   const res = serveStatic(c.req.path)
   if (res) return res
   return c.notFound()
+})
+
+// ── SPA fallback: 非 API 路由返回 index.html ──
+
+app.get('/*', (c) => {
+  const path = c.req.path
+  // API routes and WS should already be matched before this
+  if (path.startsWith('/api/') || path.startsWith('/ws') || path.startsWith('/events') || path.startsWith('/term-ws')) {
+    return c.notFound()
+  }
+  // Check for actual file first (favicon, etc.)
+  const fileRes = serveStatic(path)
+  if (fileRes) return fileRes
+  // Serve index.html for SPA routing
+  return c.newResponse(getHtml(), {
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-cache',
+    },
+  })
 })
 
 // ── 未匹配 404 ──
