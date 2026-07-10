@@ -27,32 +27,69 @@ interface AppState {
   activePanel: string
   sidebarWidth: number
   sidebarCollapsed: boolean
+  adminOpen: boolean
+  settingsOpen: boolean
   status: StatusData
   messages: ChatMessage[]
   streaming: boolean
+  topicSearch: string
+  activeTopic: string | null
+  connected: boolean
+  tokenUsage: number
+  agentIterations: number
+  agentBudget: number
   setActivePanel: (p: string) => void
   setSidebarWidth: (w: number) => void
   toggleSidebar: () => void
+  setAdminOpen: (o: boolean) => void
+  setSettingsOpen: (o: boolean) => void
   setStatus: (s: StatusData) => void
   addMessage: (m: ChatMessage) => void
   appendToLastMessage: (text: string) => void
   finalizeStream: () => void
   setStreaming: (s: boolean) => void
   clearMessages: () => void
+  setTopicSearch: (s: string) => void
+  setActiveTopic: (t: string | null) => void
+  setConnected: (c: boolean) => void
+  setTokenUsage: (t: number) => void
+  setAgentIterations: (i: number) => void
+  setAgentBudget: (b: number) => void
+  refreshStatus: () => Promise<void>
 }
 
 export const useStore = create<AppState>((set) => ({
   activePanel: 'chat',
   sidebarWidth: 240,
   sidebarCollapsed: false,
+  adminOpen: false,
+  settingsOpen: false,
   status: {},
   messages: [],
   streaming: false,
+  topicSearch: '',
+  activeTopic: null,
+  connected: false,
+  tokenUsage: 0,
+  agentIterations: 0,
+  agentBudget: 40000,
 
   setActivePanel: (p) => set({ activePanel: p }),
   setSidebarWidth: (w) => set({ sidebarWidth: w }),
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+  setAdminOpen: (o) => set({ adminOpen: o }),
+  setSettingsOpen: (o) => set({ settingsOpen: o }),
   setStatus: (s) => set({ status: s }),
+
+  refreshStatus: async () => {
+    try {
+      const { fetchStatus } = await import('./api')
+      const data = await fetchStatus()
+      set({ status: data })
+    } catch {
+      // silenty fail — WS will update eventually
+    }
+  },
 
   addMessage: (m) =>
     set((s) => ({ messages: [...s.messages, m] })),
@@ -79,4 +116,10 @@ export const useStore = create<AppState>((set) => ({
 
   setStreaming: (s) => set({ streaming: s }),
   clearMessages: () => set({ messages: [] }),
+  setTopicSearch: (s) => set({ topicSearch: s }),
+  setActiveTopic: (t) => set({ activeTopic: t }),
+  setConnected: (c) => set({ connected: c }),
+  setTokenUsage: (t) => set({ tokenUsage: t }),
+  setAgentIterations: (i) => set({ agentIterations: i }),
+  setAgentBudget: (b) => set({ agentBudget: b }),
 }))

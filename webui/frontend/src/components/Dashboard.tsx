@@ -2,11 +2,11 @@ import { useStore } from '../lib/store'
 import { useEffect, useState } from 'react'
 import ReactEChartsCore from 'echarts-for-react/lib/core'
 import * as echarts from 'echarts/core'
-import { LineChart, GaugeChart } from 'echarts/charts'
-import { GridComponent, TooltipComponent, TitleComponent } from 'echarts/components'
+import { GaugeChart, LineChart } from 'echarts/charts'
+import { GridComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 
-echarts.use([LineChart, GaugeChart, GridComponent, TooltipComponent, TitleComponent, CanvasRenderer])
+echarts.use([GaugeChart, LineChart, GridComponent, TooltipComponent, CanvasRenderer])
 
 function fmtBytes(b: number): string {
   if (!b || b === 0) return '0 B'
@@ -93,15 +93,15 @@ export default function Dashboard() {
           <div className="detail-row"><span>RSS</span><span>{fmtBytes(s.memory?.rss || 0)}</span></div>
           <div className="detail-row"><span>Heap Total</span><span>{fmtBytes(s.memory?.heapTotal || 0)}</span></div>
           <div className="detail-row"><span>Heap Used</span><span>{fmtBytes(s.memory?.heapUsed || 0)}</span></div>
-          <div className="chart-container"><ReactEChartsCore echarts={echarts} option={memLineOption} style={{ height: '100%' }} /></div>
+          <div className="chart-box"><ReactEChartsCore echarts={echarts} option={memLineOption} style={{ height: '100%' }} /></div>
         </>
       )
       case 'rules': return (s.rules || []).length > 0 ? (s.rules || []).map((r: any, i: number) => (
         <div key={i} className="detail-row"><span>{r.name || '—'}</span><span style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>{r.trigger || '—'}</span></div>
-      )) : <span className="sidebar-hint">无规则</span>
+      )) : <span className="hint">无规则</span>
       case 'tools': return (s.tools || []).length > 0 ? (s.tools || []).map((t: any, i: number) => (
         <div key={i} className="detail-row"><span>{t.name}</span><span>{t.paramCount != null ? `${t.paramCount}p` : ''}</span></div>
-      )) : <span className="sidebar-hint">无工具</span>
+      )) : <span className="hint">无工具</span>
       case 'agent': return (
         <>
           <div className="detail-row"><span>总计</span><span>{agentStats.total || 0}</span></div>
@@ -124,50 +124,50 @@ export default function Dashboard() {
   return (
     <>
       <div className="panel-header"><h2>仪表盘</h2></div>
-      <div className="dashboard-grid">
-        <div className="dashboard-card" onClick={() => setDetail(detail === 'uptime' ? null : 'uptime')}>
+      <div className="dash-grid">
+        <div className="card" onClick={() => setDetail(detail === 'uptime' ? null : 'uptime')}>
           <div className="card-label">运行时间</div>
           <div className="card-value">{fmtDuration(uptime)}</div>
         </div>
-        <div className="dashboard-card" onClick={() => setDetail(detail === 'mem' ? null : 'mem')}>
+        <div className="card" onClick={() => setDetail(detail === 'mem' ? null : 'mem')}>
           <div className="card-label">内存</div>
           <ReactEChartsCore echarts={echarts} option={memGaugeOption} style={{ height: 80 }} />
         </div>
-        <div className="dashboard-card" onClick={() => setDetail(detail === 'rules' ? null : 'rules')}>
+        <div className="card" onClick={() => setDetail(detail === 'rules' ? null : 'rules')}>
           <div className="card-label">规则</div>
           <div className="card-value">{rulesCount}</div>
         </div>
-        <div className="dashboard-card" onClick={() => setDetail(detail === 'tools' ? null : 'tools')}>
+        <div className="card" onClick={() => setDetail(detail === 'tools' ? null : 'tools')}>
           <div className="card-label">工具</div>
           <div className="card-value">{toolsCount}</div>
         </div>
       </div>
-      <div className="dashboard-grid">
-        <div className="dashboard-card" onClick={() => setDetail(detail === 'agent' ? null : 'agent')}>
+      <div className="dash-grid">
+        <div className="card" onClick={() => setDetail(detail === 'agent' ? null : 'agent')}>
           <div className="card-label">Agent 运行</div>
           <div className="card-value">{agentStats.total || 0}</div>
           <div className="card-sub">{agentStats.completed || 0} 完成 / {agentStats.failed || 0} 失败</div>
         </div>
-        <div className="dashboard-card" onClick={() => setDetail(detail === 'events' ? null : 'events')}>
+        <div className="card" onClick={() => setDetail(detail === 'events' ? null : 'events')}>
           <div className="card-label">事件</div>
           <div className="card-value">{events.total || 0}</div>
           <div className="card-sub">{events.unacknowledged || 0} 未确认</div>
         </div>
-        <div className="dashboard-card">
+        <div className="card">
           <div className="card-label">后台任务</div>
           <div className="card-value">{bgStats.active || 0}</div>
           <div className="card-sub">{bgStats.completed || 0} 完成</div>
         </div>
-        <div className="dashboard-card">
+        <div className="card">
           <div className="card-label">技能</div>
           <div className="card-value">{skillsCount}</div>
         </div>
       </div>
       {detail && (
-        <div className="dash-detail">
-          <div className="dash-detail-header">
+        <div className="card-detail">
+          <div className="card-detail-header">
             <span>{detail === 'uptime' ? '运行时间' : detail === 'mem' ? '内存' : detail === 'rules' ? '规则' : detail === 'tools' ? '工具' : detail === 'agent' ? 'Agent' : detail === 'events' ? '事件' : detail}</span>
-            <span className="dash-detail-close" onClick={() => setDetail(null)}>×</span>
+            <span className="card-detail-close" onClick={() => setDetail(null)}>×</span>
           </div>
           {detailContent()}
         </div>

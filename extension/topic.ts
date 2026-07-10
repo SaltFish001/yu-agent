@@ -347,6 +347,25 @@ export function archive(name: string): void {
 }
 
 /**
+ * Hard-delete a topic from the database.
+ */
+export function deleteTopic(name: string): void {
+  const db = getDb()
+  const topic = findByName(name)
+  if (!topic) {
+    throw new Error(`Topic "${name}" not found.`)
+  }
+
+  db.prepare('DELETE FROM topics WHERE id = ?').run(topic.id)
+
+  try {
+    eventBus.emit('topic.deleted', { name })
+  } catch {
+    /* non-critical */
+  }
+}
+
+/**
  * Set a topic's summary text.
  */
 export function setSummary(name: string, summary: string): void {

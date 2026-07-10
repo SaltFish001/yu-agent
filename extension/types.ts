@@ -160,6 +160,8 @@ export interface ToolEnhancement {
   sandbox?: boolean
   /** Number of retry attempts on failure (default: 0). */
   retryCount?: number
+  /** 工具来源 (builtin/mcp/plugin) — 用于按来源过滤 */
+  source?: 'builtin' | 'mcp' | 'plugin'
 }
 
 // ── MCP 传输 ─────────────────────────────────────────────

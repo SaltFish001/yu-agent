@@ -1,70 +1,45 @@
 import { useEffect } from 'react'
 import { useStore, type StatusData } from './lib/store'
 import { fetchStatus, connectWS } from './lib/api'
+import { useTheme } from './lib/theme'
 import Sidebar from './components/Sidebar'
 import ChatPanel from './components/ChatPanel'
-import Dashboard from './components/Dashboard'
-import TopicsPanel from './components/TopicsPanel'
-import BgTasksPanel from './components/BgTasksPanel'
-import RulesPanel from './components/RulesPanel'
-import SkillsPanel from './components/SkillsPanel'
-
-const PANELS: Record<string, { label: string; icon: string }> = {
-  chat: { label: '对话', icon: '💬' },
-  dashboard: { label: '仪表盘', icon: '📊' },
-  topics: { label: '主题', icon: '📋' },
-  bg: { label: '后台', icon: '⏳' },
-  rules: { label: '规则', icon: '🔒' },
-  skills: { label: '技能', icon: '🧩' },
-}
+import SettingsModal from './components/SettingsModal'
+import AdminPage from './pages/AdminPage'
 
 export default function App() {
-  const activePanel = useStore((s) => s.activePanel)
-  const setActivePanel = useStore((s) => s.setActivePanel)
+  useTheme()
+
+  // Standalone admin sub-window — no layout, full admin page
+  if (location.hash === '#/admin') return <AdminPage />
+
+  const adminOpen = useStore((s) => s.adminOpen)
+  const settingsOpen = useStore((s) => s.settingsOpen)
   const setStatus = useStore((s) => s.setStatus)
+  const setActiveTopic = useStore((s) => s.setActiveTopic)
 
   useEffect(() => {
-    fetchStatus().then(setStatus).catch(() => {})
-    const ws = connectWS((data: StatusData) => setStatus(data))
+    fetchStatus().then((data) => {
+      setStatus(data)
+      if (data.activeTopic) setActiveTopic(data.activeTopic)
+    }).catch(() => {})
+    const ws = connectWS((data: StatusData) => {
+      setStatus(data)
+      if (data.activeTopic) setActiveTopic(data.activeTopic)
+    })
     return () => ws.close()
-  }, [setStatus])
+  }, [setStatus, setActiveTopic])
 
   return (
     <div className="app-layout">
-      <Sidebar panels={PANELS} />
-      <div className="main-area">
-        <div className="panel-tabs">
-          {Object.entries(PANELS).map(([key, p]) => (
-            <button
-              key={key}
-              className={`panel-tab ${activePanel === key ? 'active' : ''}`}
-              onClick={() => setActivePanel(key)}
-            >
-              {p.icon} {p.label}
-            </button>
-          ))}
-        </div>
+      <Sidebar />
+      <main className="main-area">
         <div className="panel-content">
-          <div className={`panel ${activePanel === 'chat' ? 'active' : ''}`}>
-            <ChatPanel />
-          </div>
-          <div className={`panel dashboard ${activePanel === 'dashboard' ? 'active' : ''}`}>
-            <Dashboard />
-          </div>
-          <div className={`panel ${activePanel === 'topics' ? 'active' : ''}`}>
-            <TopicsPanel />
-          </div>
-          <div className={`panel ${activePanel === 'bg' ? 'active' : ''}`}>
-            <BgTasksPanel />
-          </div>
-          <div className={`panel ${activePanel === 'rules' ? 'active' : ''}`}>
-            <RulesPanel />
-          </div>
-          <div className={`panel ${activePanel === 'skills' ? 'active' : ''}`}>
-            <SkillsPanel />
-          </div>
+          <div className="panel"><ChatPanel /></div>
         </div>
-      </div>
+      </main>
+      {adminOpen && <div style={{ display: 'none' }} />}
+      {settingsOpen && <SettingsModal />}
     </div>
   )
 }

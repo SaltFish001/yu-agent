@@ -59,12 +59,12 @@ export async function classifyIntent(userInput: string, _context: Record<string,
     goal: 'classify intent & generate plan',
   })
 
-  // Fast path: full instructions pass through directly
+  // Fast path: role-play instructions pass through directly
   const trimmed = userInput.trim()
-  if (trimmed.length > 200 || /^你是|^你是一个/.test(trimmed)) {
+  if (/^你是|^你是一个/.test(trimmed) && trimmed.length < 50) {
     trackAgent('scheduler', 'completed')
-    log.info(`Scheduler: full instruction detected (${trimmed.length} chars), passing through`)
-    return { pass_through: true, reasoning: 'input too long or role-play, no classification needed' }
+    log.info(`Scheduler: role-play detected, passing through`)
+    return { pass_through: true, reasoning: 'role-play instruction, no classification needed' }
   }
 
   // Load scheduler prompt

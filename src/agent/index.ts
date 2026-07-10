@@ -45,14 +45,32 @@ export class Agent {
         timestamp: Date.now(),
       });
 
-      // TODO: 调用 LLM 生成回复
-      // TODO: 执行工具调用
-      // TODO: 处理工具结果
+      // 调用 LLM 生成回复
+      const { globalLLMManager } = await import('../llm/index.ts');
+      const llmResponse = await globalLLMManager.chat(
+        this.memory,
+        this.config.llm,
+      );
+
+      // 将 LLM 回复添加到记忆
+      this.memory.push({
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: llmResponse.content,
+        timestamp: Date.now(),
+      });
+
+      // 执行工具调用（如果 LLM 返回了工具调用）
+      if (llmResponse.finishReason === 'tool_calls') {
+        const { globalToolRegistry } = await import('../tool/index.ts');
+        // 解析工具调用（这里简化处理，实际需要根据 LLM 输出解析）
+        // TODO: 实现完整的工具调用解析和执行逻辑
+      }
 
       this.status = 'completed';
       return {
         status: 'completed',
-        output: `Agent ${this.config.name} processed: ${input}`,
+        output: llmResponse.content,
         memory: this.getMemory(),
         duration: Date.now() - this.startTime,
       };

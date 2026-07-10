@@ -14,7 +14,7 @@ import { createLogger } from '../logger.js'
 const log = createLogger('mcp-tools')
 
 import { _getServers, getTransport, jsonRpcCall } from '../mcp-manager.js'
-import { registerTool, type ToolDefinition, type ToolParameter, type ToolResult } from './registry.js'
+import { registerMcpTool, type ToolDefinition, type ToolParameter, type ToolResult } from './registry.js'
 
 // ── 常量 ────────────────────────────────────────────────
 
@@ -159,7 +159,7 @@ export async function refreshMcpTools(): Promise<void> {
     if (!_lastRefresh.has(name) || needsRefresh(name)) {
       const tools = await listServerTools(name, server.proc)
       for (const tool of tools) {
-        registerTool(buildToolDef(name, tool, name))
+        registerMcpTool(name, buildToolDef(name, tool, name))
       }
       log.info(`Registered ${tools.length} tools from MCP server '${name}'`)
     }

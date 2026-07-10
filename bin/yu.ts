@@ -488,6 +488,16 @@ async function mainCli(): Promise<void> {
     // Best-effort
   }
 
+  // ═ 启动初始化 ═
+  try {
+    const { bootstrap } = await import('../extension/bootstrap.js')
+    bootstrap({ skipSkills: false }).catch(err =>
+      console.warn('[yu] Bootstrap warning:', err)
+    )
+  } catch {
+    // best-effort
+  }
+
   // Help
   if (args[0] === '--help' || args[0] === '-h' || args[0] === 'help') {
     if (args[1]) {
@@ -634,6 +644,10 @@ async function mainCli(): Promise<void> {
   // `yu tool list | inspect <name>` — tool registry inspection
   if (args[0] === 'tool') {
     const sub = args[1] || 'help'
+    // 注册所有内置工具（side-effect import）
+    await import('../extension/tools/aliases.js')
+    const { registerAliases } = await import('../extension/tools/aliases.js')
+    registerAliases()
     const { listTools, getTool } = await import('../extension/tools/registry.js')
 
     if (sub === 'list') {

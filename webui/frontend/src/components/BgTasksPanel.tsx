@@ -1,4 +1,5 @@
 import { useStore } from '../lib/store'
+import { t } from '../lib/i18n'
 
 export default function BgTasksPanel() {
   const status = useStore((s) => s.status)
@@ -6,16 +7,16 @@ export default function BgTasksPanel() {
 
   return (
     <>
-      <div className="panel-header"><h2>后台任务</h2></div>
+      <div className="panel-header"><h2>{t('bg.title')}</h2></div>
       <div className="table-wrap">
         <table>
           <thead>
             <tr>
               <th>ID</th>
-              <th>类型</th>
-              <th>状态</th>
-              <th>耗时</th>
-              <th>任务</th>
+              <th>{t('bg.type')}</th>
+              <th>{t('bg.status')}</th>
+              <th>{t('bg.duration')}</th>
+              <th>{t('bg.task')}</th>
             </tr>
           </thead>
           <tbody>
@@ -33,7 +34,7 @@ export default function BgTasksPanel() {
                 <td style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.prompt || '—'}</td>
               </tr>
             )) : (
-              <tr><td colSpan={5}><span className="hint">无后台任务</span></td></tr>
+              <tr><td colSpan={5}><span className="hint">{t('bg.none')}</span></td></tr>
             )}
           </tbody>
         </table>

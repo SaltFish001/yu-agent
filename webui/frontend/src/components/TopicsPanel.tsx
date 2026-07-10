@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useStore } from '../lib/store'
+import { t } from '../lib/i18n'
 
 export default function TopicsPanel() {
   const status = useStore((s) => s.status)
@@ -12,10 +13,10 @@ export default function TopicsPanel() {
 
   return (
     <>
-      <div className="panel-header"><h2>主题 ({topics.length})</h2></div>
+      <div className="panel-header"><h2>{t('topic.title')} ({topics.length})</h2></div>
       <input
         className="panel-filter"
-        placeholder="筛选主题..."
+        placeholder={t('topic.filter')}
         value={filter}
         onChange={(e) => setFilter(e.target.value)}
       />
@@ -23,10 +24,10 @@ export default function TopicsPanel() {
         <table>
           <thead>
             <tr>
-              <th>名称</th>
-              <th>状态</th>
-              <th>轮次</th>
-              <th>上次活跃</th>
+              <th>{t('topic.name')}</th>
+              <th>{t('topic.status')}</th>
+              <th>{t('topic.turns')}</th>
+              <th>{t('topic.last.active')}</th>
             </tr>
           </thead>
           <tbody>
@@ -43,7 +44,7 @@ export default function TopicsPanel() {
                 <td>{t.lastActive ? new Date(t.lastActive).toLocaleString() : '—'}</td>
               </tr>
             )) : (
-              <tr><td colSpan={4}><span className="hint">无主题</span></td></tr>
+              <tr><td colSpan={4}><span className="hint">{t('topic.none')}</span></td></tr>
             )}
           </tbody>
         </table>

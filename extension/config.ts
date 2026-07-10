@@ -170,6 +170,10 @@ export interface AgentTypeConfig {
   thinking: 'max' | 'high' | 'medium' | 'low'
   maxTurns: number
   builtinToolNames: string[]
+  /** MCP 服务器白名单 — agent type 可调用的 MCP 工具来源 */
+  mcpServers?: string[]
+  /** Skills 名称列表 — 启动时自动加载并注入 system prompt */
+  skillNames?: string[]
   systemPrompt: string
 }
 
@@ -220,6 +224,7 @@ export const AGENT_TYPES: Record<string, AgentTypeConfig> = {
     thinking: 'max',
     maxTurns: 50,
     builtinToolNames: ['bash', 'read', 'edit', 'write', 'grep', 'find', 'ls'],
+    mcpServers: ['codegraph'],
     systemPrompt: loadPrompt('coding'),
   },
 
@@ -230,6 +235,7 @@ export const AGENT_TYPES: Record<string, AgentTypeConfig> = {
     thinking: 'max',
     maxTurns: 30,
     builtinToolNames: ['read', 'grep', 'find', 'ls'],
+    mcpServers: ['codegraph'],
     systemPrompt: loadPrompt('review'),
   },
 
@@ -240,6 +246,7 @@ export const AGENT_TYPES: Record<string, AgentTypeConfig> = {
     thinking: 'max',
     maxTurns: 15,
     builtinToolNames: ['read', 'grep', 'find', 'ls', 'write'],
+    mcpServers: ['codegraph'],
     systemPrompt: loadPrompt('plan'),
   },
 
@@ -270,6 +277,7 @@ export const AGENT_TYPES: Record<string, AgentTypeConfig> = {
     thinking: 'high',
     maxTurns: 20,
     builtinToolNames: ['read', 'edit'],
+    mcpServers: ['codegraph'],
     systemPrompt: loadPrompt('doc'),
   },
 
@@ -280,6 +288,7 @@ export const AGENT_TYPES: Record<string, AgentTypeConfig> = {
     thinking: 'high',
     maxTurns: 15,
     builtinToolNames: ['bash', 'read', 'grep'],
+    mcpServers: ['codegraph'],
     systemPrompt: loadPrompt('search'),
   },
 
@@ -290,6 +299,7 @@ export const AGENT_TYPES: Record<string, AgentTypeConfig> = {
     thinking: 'max',
     maxTurns: 10,
     builtinToolNames: ['read', 'grep', 'find', 'bash'],
+    skillNames: ['character-rp'],
     systemPrompt: loadPrompt('chat'),
   },
 

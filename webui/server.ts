@@ -566,6 +566,44 @@ app.get(
 
 // ── Terminal WebSocket ──
 
+// Serve terminal page for regular GET requests (not WebSocket upgrade)
+app.get('/term-ws/:topic?', async (c) => {
+  const topicName = c.req.param('topic') || 'default'
+  return c.html(`<!DOCTYPE html>
+<html lang="zh"><head><meta charset="utf-8"><title>终端 - ${topicName}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}body{background:#000;color:#e8e8e8;font:14px/1.5 system-ui,sans-serif;overflow:hidden;height:100vh;display:flex;flex-direction:column}
+.term-header{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:#111;border-bottom:1px solid #222;font-size:13px;flex-shrink:0}
+.term-header h3{font-weight:500;color:#888}
+.term-header .topic{color:#e8e8e8;font-family:monospace}
+#term{flex:1;padding:12px 14px;overflow-y:auto;font:13px/1.5 monospace;color:#ccc;white-space:pre-wrap;word-break:break-all}
+#term .prompt{color:#4caf7d}
+#term .out{color:#ccc}
+#term .err{color:#ef4444}
+.input-row{display:flex;border-top:1px solid #222;flex-shrink:0}
+.input-row input{flex:1;background:#111;border:none;padding:10px 14px;font:13px monospace;color:#e8e8e8;outline:none}
+.input-row input::placeholder{color:#555}
+.input-row button{background:#222;border:none;color:#888;padding:10px 16px;cursor:pointer;font-size:13px}
+.input-row button:hover{background:#333;color:#e8e8e8}
+#status{padding:4px 14px;font-size:11px;color:#555;flex-shrink:0;border-top:1px solid #111}
+</style></head><body>
+<div class="term-header"><h3>终端 <span class="topic">${topicName}</span></h3><span id="status">连接中…</span></div>
+<pre id="term"><span class="out">正在连接终端 ${topicName}…</span></pre>
+<div class="input-row"><input id="input" type="text" placeholder="$ " disabled /><button id="send" disabled>发送</button></div>
+<script>
+(function(){var ws,term=document.getElementById('term'),inp=document.getElementById('input'),sendBtn=document.getElementById('send'),status=document.getElementById('status')
+function connect(){status.textContent='连接中…'
+ws=new WebSocket((location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/term-ws/${topicName}')
+ws.onopen=function(){status.textContent='已连接';inp.disabled=false;sendBtn.disabled=false;inp.focus()}
+ws.onclose=function(){status.textContent='已断开';inp.disabled=true;sendBtn.disabled=true;setTimeout(connect,3000)}
+ws.onmessage=function(e){try{var msg=JSON.parse(e.data);if(msg.type==='term:init'){term.innerHTML='<span class="out">终端已就绪 (cwd: '+msg.cwd+')</span>\\n'}else if(msg.type==='term:data'){var div=document.createElement('span');div.className=msg.stream==='stderr'?'err':'out';div.textContent=msg.data;term.appendChild(div);term.scrollTop=term.scrollHeight}else if(msg.type==='term:exit'){term.innerHTML+='\\n<span class="err">进程退出 (code: '+msg.code+')</span>';inp.disabled=true;sendBtn.disabled=true}}catch(e){term.innerHTML+='<span class="err">'+e.message+'</span>'}}}
+function send(){var v=inp.value.trim();if(!v)return;ws.send(JSON.stringify({type:'input',data:v+'\\n'}));inp.value=''}
+inp.addEventListener('keydown',function(e){if(e.key==='Enter')send()})
+sendBtn.addEventListener('click',send)
+connect()})()
+</script></body></html>`)
+})
+
 app.get(
   '/term-ws/:topic?',
   upgradeWebSocket((c) => {
@@ -712,6 +750,18 @@ app.get('/api/terminals', (c) => {
     alive: s.readerActive,
   }))
   return c.json({ sessions })
+})
+
+// ── Terminal API: kill session ──
+
+app.delete('/api/terminals/:topic', (c) => {
+  const topic = c.req.param('topic')
+  const session = terminalSessions.get(topic)
+  if (!session) return c.json({ error: 'Session not found' }, 404)
+  try { session.proc.kill() } catch { /* already dead */ }
+  terminalSessions.delete(topic)
+  log.info(`Terminal killed: topic="${topic}"`)
+  return c.json({ ok: true })
 })
 
 // ── SSE ──
@@ -862,6 +912,43 @@ app.get('/api/topic/:name', async (c) => {
   }
 })
 
+// ── API: topic write operations (delete / rename / archive) ──
+
+app.delete('/api/topic/:name', async (c) => {
+  const name = c.req.param('name')
+  try {
+    const { deleteTopic } = await import('../extension/topic.js')
+    deleteTopic(name)
+    log.info(`Topic deleted: \"${name}\"`)
+    return c.json({ ok: true })
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    return c.json({ error: msg }, 500)
+  }
+})
+
+app.patch('/api/topic/:name', async (c) => {
+  const name = c.req.param('name')
+  const body = await c.req.json()
+  try {
+    const { rename, archive } = await import('../extension/topic.js')
+    if (body.action === 'rename' && body.newName) {
+      rename(name, body.newName)
+      log.info(`Topic renamed: \"${name}\" → \"${body.newName}\"`)
+      return c.json({ ok: true, newName: body.newName })
+    }
+    if (body.action === 'archive') {
+      archive(name)
+      log.info(`Topic archived: \"${name}\"`)
+      return c.json({ ok: true, archived: true })
+    }
+    return c.json({ error: 'Unknown action. Supported: rename, archive' }, 400)
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    return c.json({ error: msg }, 500)
+  }
+})
+
 // ── API: chat ──
 
 app.post(
@@ -924,32 +1011,165 @@ app.post(
 
     const stream = new ReadableStream({
       async start(controller) {
-        const enc = (text: string) => controller.enqueue(new TextEncoder().encode(text))
-
-        try {
-          enc(`event: start\ndata: ${JSON.stringify({ message, timestamp: Date.now() })}\n\n`)
-
-          const { runAgent } = await import('../extension/agent-loop.js')
-          const raw = await runAgent(message, { maxIterations: 20 })
-          const result = raw ?? { success: false, output: '(Agent returned no result)', iterations: 0, totalTokens: 0 }
-
-          // Send output in chunks for streaming effect
-          const output = typeof result.output === 'string' ? result.output : JSON.stringify(result)
-          const CHUNK_SIZE = 100
-          for (let i = 0; i < output.length; i += CHUNK_SIZE) {
-            const chunk = output.slice(i, i + CHUNK_SIZE)
-            enc(`data: ${JSON.stringify({ text: chunk })}\n\n`)
-          }
-
-          enc(`event: done\ndata: ${JSON.stringify({ iterations: result.iterations, totalTokens: result.totalTokens })}\n\n`)
-          enc('data: [DONE]\n\n')
-        } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : String(err)
-          enc(`event: error\ndata: ${JSON.stringify({ error: msg })}\n\n`)
-          enc('data: [DONE]\n\n')
-        } finally {
-          controller.close()
+        const enc = (text: string) => {
+          try {
+            controller.enqueue(new TextEncoder().encode(text))
+          } catch { /* stream closed */ }
         }
+
+        // 发送开始事件
+        enc(`event: start\ndata: ${JSON.stringify({ message, timestamp: Date.now() })}\n\n`)
+
+        // ── 全量走 scheduler（LLM 分类比正则准确）──
+        // 不在这里做正则匹配——scheduler 用 DeepSeek 判断意图
+        const trimmed = message.trim()
+        if (!trimmed) {
+          enc(`event: error\ndata: ${JSON.stringify({ error: 'empty message' })}\n\n`)
+          enc('data: [DONE]\n\n')
+          try { controller.close() } catch { /* already closed */ }
+          return
+        }
+        const isChat = false // 所有输入走 AgentLoop，由 scheduler 分类
+
+        if (isChat) {
+          // 走 chat 模式：一次 LLM 调用，无工具循环
+          try {
+            const { readFileSync, existsSync } = await import('fs')
+            const { resolve } = await import('path')
+            const chatPromptPath = resolve(process.env.HOME || '/home/saltfish', '.yu', 'prompts', 'chat.md')
+            const chatPrompt = existsSync(chatPromptPath) ? readFileSync(chatPromptPath, 'utf-8') : '你是一个友好的聊天助手，简洁直接地回答用户。'
+
+            const { chatCompletion } = await import('../extension/provider.js')
+            const result = await chatCompletion({
+              messages: [
+                { role: 'system', content: chatPrompt },
+                { role: 'user', content: trimmed },
+              ],
+              max_tokens: 1024,
+              temperature: 0.7,
+            })
+
+            const output = result?.content ?? '嗯？'
+            const reasoning = result?.reasoning_content
+            // 真正的推理链来自 reasoning_content
+            if (reasoning) {
+              enc(`event: thinking\ndata: ${JSON.stringify({ content: reasoning })}\n\n`)
+            }
+            // 最终回复来自 content
+            if (output) {
+              const CHUNK_SIZE = 20
+              for (let i = 0; i < output.length; i += CHUNK_SIZE) {
+                const chunk = output.slice(i, i + CHUNK_SIZE)
+                enc(`event: text\ndata: ${JSON.stringify({ output: chunk })}\n\n`)
+              }
+            }
+            enc(`event: done\ndata: ${JSON.stringify({ iterations: 0, totalTokens: result?.usage?.total_tokens ?? 0 })}\n\n`)
+            enc('data: [DONE]\n\n')
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err)
+            enc(`event: error\ndata: ${JSON.stringify({ error: msg })}\n\n`)
+            enc('data: [DONE]\n\n')
+          } finally {
+            try { controller.close() } catch { /* already closed */ }
+          }
+          return // 不走 AgentLoop
+        }
+
+        // ── 编程任务：后台运行 agent，实时推送事件 ──
+        const runPromise = (async () => {
+          try {
+            // Parse /goal command
+            let taskMessage = message
+            let goalCondition: string | null = null
+            const goalMatch = message.match(/^\/goal\s+(.+)/i)
+            if (goalMatch) {
+              goalCondition = goalMatch[1].trim()
+              taskMessage = goalCondition // the goal IS the task
+            }
+
+            const { AgentLoop } = await import('../extension/agent-loop.js')
+            // /goal 任务使用 coding agent system prompt
+            let systemPrompt: string | undefined
+            if (goalCondition) {
+              try {
+                const { readFileSync, existsSync } = await import('fs')
+                const { resolve } = await import('path')
+                const codingPromptPath = resolve(process.env.HOME || '/home/saltfish', '.yu', 'prompts', 'coding.md')
+                if (existsSync(codingPromptPath)) {
+                  systemPrompt = readFileSync(codingPromptPath, 'utf-8')
+                }
+              } catch {
+                /* fallback to default */
+              }
+            }
+            const agent = new AgentLoop({
+              systemPrompt,
+              maxIterations: 20,
+              tokenBudget: 40000, // ~$0.10 max per task
+              onEvent: (event) => {
+                // Include iteration & token info in every event payload
+                const data = {
+                  ...(typeof event.data === 'object' && event.data !== null ? event.data as Record<string, unknown> : {}),
+                  _iteration: event.iteration,
+                  _totalTokens: agent['totalTokensUsed'] ?? 0,
+                }
+                const payload = JSON.stringify(data)
+                enc(`event: ${event.type}\ndata: ${payload}\n\n`)
+              },
+              ...(goalCondition ? {
+                stopCondition: async (ctx) => {
+                  const lastMsg = ctx.getLastMessage()
+                  if (!lastMsg || !lastMsg.content) {
+                    return { met: false, reason: 'no output yet' }
+                  }
+                  // 用一次轻量 LLM 调用来判断目标是否达成
+                  try {
+                    const { chatCompletion } = await import('../extension/provider.js')
+                    const result = await chatCompletion({
+                      messages: [
+                        { role: 'system', content: `You are a goal evaluator. Determine if the following goal has been achieved based on the conversation. Respond with exactly one word: YES or NO.\n\nGoal: ${goalCondition}` },
+                        { role: 'user', content: `Latest output from the agent:\n\n${lastMsg.content.slice(0, 2000)}` },
+                      ],
+                      max_tokens: 10,
+                      temperature: 0,
+                    })
+                    const answer = result?.content?.trim().toUpperCase() ?? ''
+                    if (answer.startsWith('Y') || answer.includes('YES')) {
+                      return { met: true, reason: goalCondition }
+                    }
+                    return { met: false, reason: 'continue' }
+                  } catch {
+                    return { met: false, reason: 'evaluator error, continuing' }
+                  }
+                },
+              } : {}),
+            })
+
+            const raw = await agent.run(taskMessage)
+            const result = raw ?? {
+              success: false,
+              output: '(Agent returned no result)',
+              iterations: 0,
+              totalTokens: 0,
+            }
+
+            // 发送最终文本输出
+            const output = typeof result.output === 'string' ? result.output : JSON.stringify(result)
+            enc(`event: text\ndata: ${JSON.stringify({ output })}\n\n`)
+
+            enc(`event: done\ndata: ${JSON.stringify({ iterations: result.iterations, totalTokens: result.totalTokens })}\n\n`)
+            enc('data: [DONE]\n\n')
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err)
+            enc(`event: error\ndata: ${JSON.stringify({ error: msg })}\n\n`)
+            enc('data: [DONE]\n\n')
+          } finally {
+            try { controller.close() } catch { /* already closed */ }
+          }
+        })()
+
+        // start 函数不 await runPromise，立即返回
+        // 流在后台持续推送
       },
     })
 
@@ -970,7 +1190,7 @@ app.get('/', (c) =>
   c.newResponse(getHtml(), {
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
-      'Cache-Control': 'no-cache',
+      'Cache-Control': 'no-store',
     },
   }),
 )
@@ -980,7 +1200,33 @@ app.get('/', (c) =>
 app.get('/assets/*', (c) => {
   const res = serveStatic(c.req.path)
   if (res) return res
-  return c.notFound()
+  // 文件不存在（hash changed）→ 返回 index.html 让浏览器重新加载
+  return c.newResponse(getHtml(), {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+    },
+  })
+})
+
+// ── API: config (P1.8) ────────────────────────────────
+
+const serverConfig: Record<string, unknown> = {}
+
+app.post('/api/config', async (c) => {
+  try {
+    const body = await c.req.json()
+    Object.assign(serverConfig, body)
+    log.info(`Config updated: ${JSON.stringify(body)}`)
+    return c.json({ ok: true })
+  } catch (err) {
+    return c.json({ ok: false, error: String(err) }, 400)
+  }
+})
+
+app.get('/api/config', (c) => {
+  return c.json(serverConfig)
 })
 
 // ── SPA fallback: 非 API 路由返回 index.html ──
@@ -998,7 +1244,7 @@ app.get('/*', (c) => {
   return c.newResponse(getHtml(), {
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
-      'Cache-Control': 'no-cache',
+      'Cache-Control': 'no-store',
     },
   })
 })

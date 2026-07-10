@@ -13,7 +13,7 @@ import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
 
 const DEEPSEEK_BASE = 'https://api.deepseek.com/v1'
-const MODEL = 'deepseek-chat'
+const MODEL = 'deepseek-v4-flash'
 
 // ── Types ───────────────────────────────────────────────
 
@@ -34,6 +34,8 @@ export interface DeepSeekRequest {
   response_format?: { type: 'json_object' }
   max_tokens?: number
   temperature?: number
+  thinking?: { type: 'enabled' | 'disabled' }
+  reasoning_effort?: 'high' | 'max'
 }
 
 export interface DeepSeekResponse {
@@ -43,6 +45,7 @@ export interface DeepSeekResponse {
     message: {
       role: 'assistant'
       content: string | null
+      reasoning_content?: string | null
     }
     finish_reason: string
   }[]
@@ -97,20 +100,32 @@ export async function chatCompletion(request: DeepSeekRequest): Promise<DeepSeek
   const cfg = loadConfig()
   if (!cfg) return null
 
+  const shouldThink = request.thinking
+    ? request.thinking.type === 'enabled'
+    : !request.response_format
+
   try {
+    const body: Record<string, unknown> = {
+      model: request.model,
+      messages: request.messages,
+      response_format: request.response_format,
+      max_tokens: request.max_tokens ?? 1024,
+      temperature: request.temperature ?? 0,
+    }
+    if (shouldThink) {
+      body.thinking = { type: 'enabled' }
+      body.reasoning_effort = 'high'
+      // thinking mode doesn't support temperature
+      delete body.temperature
+    }
+
     const response = await fetch(`${cfg.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${cfg.apiKey}`,
       },
-      body: JSON.stringify({
-        model: cfg.model,
-        messages: request.messages,
-        response_format: request.response_format,
-        max_tokens: request.max_tokens ?? 1024,
-        temperature: request.temperature ?? 0,
-      }),
+      body: JSON.stringify(body),
     })
 
     if (!response.ok) {

@@ -149,6 +149,7 @@ export async function spawnAgent(config: SpawnConfig): Promise<SpawnResult> {
         systemPrompt: agentPrompt,
         maxIterations: maxIter,
         maxTokens: 8192,
+        agentType: config.type,
         abortSignal: config.timeout > 0 ? AbortSignal.timeout(config.timeout) : undefined,
       })
 
@@ -278,6 +279,7 @@ export async function spawnAgent(config: SpawnConfig): Promise<SpawnResult> {
         systemPrompt: agentPrompt,
         maxIterations: maxIter,
         maxTokens: 8192,
+        agentType: config.type,
         abortSignal: signal,
       })
       if (signal?.aborted) {

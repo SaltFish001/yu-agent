@@ -1,4 +1,4 @@
-# yu-agent 设计文档（v8）
+# yu-agent 设计文档 v0.3.1
 
 > DeepSeek 原生编程代理——调度器 + 多子 agent + 团队模式
 > 零外部运行时依赖，Bun 原生构建。
@@ -7,7 +7,7 @@
 
 ## 一、架构定位
 
-### 1.2 整体流程 (v8)
+### 1.2 整体流程
 
 ```
 用户输入（CLI: `yu "fix login bug"` 或 Web UI）
@@ -41,17 +41,19 @@ classifier.ts — 意图分类
 
 ### 1.3 自定义 Agent 类型
 
-通过 `bootstrap.ts` 内联注册 7 种类型（默认模型 spawn 时可覆写）：
+通过 `bootstrap.ts` 内联注册 9 种类型（默认模型 spawn 时可覆写）：
 
-| Type | 工具 | 默认模型 | 用途 |
-|------|------|---------|------|
-| `coding` | terminal, read_file, write_file, patch, search_files, glob, grep | v4-flash | 编码 |
-| `review` | read_file, search_files, glob, grep | v4-flash | 审查 |
-| `plan` | read_file, search_files, search, glob, grep | v4-flash | 规划 |
-| `lsp` | terminal (LSP) | v4-flash | LSP 诊断 |
-| `commit` | terminal (git) | v4-flash | 提交 |
-| `doc` | read_file, write_file | v4-flash | 文档 |
-| `search` | terminal (CLI) | v4-flash | 搜索 |
+| Type | 工具 | 默认模型 | 用途 | mcpServers |
+|------|------|---------|------|-----------|
+| `coding` | bash, read, edit, write, grep, find, ls | v4-pro | 编码 | codegraph |
+| `review` | read, grep, find, ls | v4-flash | 审查 | codegraph |
+| `plan` | read, grep, find, ls, write | v4-pro | 规划 | codegraph |
+| `lsp` | bash | v4-flash | LSP 诊断 | — |
+| `commit` | bash | v4-flash | 提交 | — |
+| `doc` | read, edit | v4-flash | 文档 | codegraph |
+| `search` | bash, read, grep | v4-flash | 搜索 | codegraph |
+| `chat` | read, grep, find, bash | v4-flash | 非编程对话 | — |
+| `general-purpose` | （无） | v4-flash | 通用意图分发 | — |
 
 配置方式（`bootstrap.ts` 启动时注册）：
 
@@ -77,7 +79,7 @@ const AGENT_TYPES = {
 > Agent 类型不通过外部 SDK 注册。`bootstrap.ts` 在启动时加载 prompt 文件后，类型配置由 `spawn.ts` → `agent-loop.ts` 在 `runAgent()` 时按需使用。
 > spawn 时通过 `config.type` 选择 system prompt，通过 `config.model` 覆写默认模型。
 
-### 1.4 Prompt 组织（9 个文件）
+### 1.4 Prompt 组织（10 个文件）
 
 ```
 `~/yu-agent/prompts/`
@@ -89,6 +91,7 @@ const AGENT_TYPES = {
 ├── commit.md
 ├── doc.md
 ├── search.md            # 代码库搜索 + 网页搜索
+├── chat.md              # 非编程对话（带 character-rp skill）
 └── team.md              # # Architect / # Coder / # Reviewer / # Searcher
 ```
 
@@ -96,7 +99,7 @@ const AGENT_TYPES = {
 
 ## 二、调度器设计
 
-### 2.1 入口 (v8)
+### 2.1 入口
 
 入口是 `bin/yu.ts` CLI（或 Web UI 服务器 `yu ui`），不再经过任何外部 hook。
 
@@ -341,13 +344,15 @@ hook 代码执行：
 ```typescript
 // extension/bootstrap.ts
 const AGENT_TYPE_CONFIGS: Record<string, AgentTypeConfig> = {
-  coding: { model: 'v4-flash', tools: ['Bash', 'Read', 'Edit', 'Glob', 'Grep'], prompt: 'coding' },
-  review: { model: 'v4-flash', tools: ['Read', 'Glob', 'Grep'], prompt: 'review' },
-  plan:   { model: 'v4-flash', tools: ['Read', 'Glob', 'Grep', 'Web'], prompt: 'plan' },
+  coding: { model: 'v4-pro', tools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep'], prompt: 'coding', mcpServers: ['codegraph'] },
+  review: { model: 'v4-flash', tools: ['Read', 'Glob', 'Grep'], prompt: 'review', mcpServers: ['codegraph'] },
+  plan:   { model: 'v4-pro', tools: ['Read', 'Glob', 'Grep', 'Web'], prompt: 'plan', mcpServers: ['codegraph'] },
   lsp:    { model: 'v4-flash', tools: ['Bash'], prompt: 'lsp' },
   commit: { model: 'v4-flash', tools: ['Bash'], prompt: 'commit' },
-  doc:    { model: 'v4-flash', tools: ['Read', 'Edit'], prompt: 'doc' },
-  search: { model: 'v4-flash', tools: ['Bash'], prompt: 'search' },
+  doc:    { model: 'v4-flash', tools: ['Read', 'Edit'], prompt: 'doc', mcpServers: ['codegraph'] },
+  search: { model: 'v4-flash', tools: ['Bash', 'Read', 'Grep'], prompt: 'search', mcpServers: ['codegraph'] },
+  chat:   { model: 'v4-flash', tools: ['Read', 'Grep', 'Bash'], prompt: 'chat', skillNames: ['character-rp'] },
+  'general-purpose': { model: 'v4-flash', tools: [], prompt: 'scheduler' },
 };
 ```
 
@@ -386,13 +391,15 @@ return {
 
 | Agent Type | 可用的内置工具 |
 |-----------|---------------|
-| coding | Bash, Read, Edit, Glob, Grep |
+| coding | Bash, Read, Edit, Write, Glob, Grep |
 | review | Read, Glob, Grep |
 | plan | Read, Glob, Grep |
 | lsp | Bash |
 | commit | Bash |
 | doc | Read, Edit |
-| search | Bash |
+| search | Bash, Read, Grep |
+| chat | Read, Grep, Find, Bash |
+| general-purpose | （无） |
 
 权限在 AgentConfig 的 `builtinToolNames` 中控制。
 
@@ -687,9 +694,9 @@ status 为 approved 时 findings 可为空。
 |│   ├── classifier.ts      # 意图分类（fast path + LLM）
 |│   ├── executor.ts        # 并发执行 + diff review
 |│   ├── agent-loop.ts      # Agent 主循环（LLM → tool → loop）
-|│   ├── spawn.ts           # AgentLoop 代理层
-|│   ├── team-orchestrator.ts # 团队模式编排
-|│   ├── config.ts          # AgentConfig 定义（7 种类型）
+||│   ├── spawn.ts           # AgentLoop 代理层
+||│   ├── team-orchestrator.ts # 团队模式编排
+||│   ├── config.ts          # AgentConfig 定义（9 种类型）
 |│   ├── template.ts        # 输出格式校验
 |│   ├── background.ts      # 后台任务注册表
 |│   ├── supervisor.ts      # 子进程管理器
@@ -708,9 +715,11 @@ status 为 approved 时 findings 可为空。
 |│   ├── server.ts          # Hono Web 服务器
 |│   ├── demo.html          # 聊天界面
 |│   └── assets/            # 前端资源
-|├── prompts/               # agent 类型 prompt 模板
-|├── tests/                 # 测试文件（46 文件，612 用例）
-|└── package.json
+||├── dist/
+||│   └── yu.js              # 569 模块 bundle
+||├── prompts/               # agent 类型 prompt 模板
+||├── tests/                 # 测试文件（46 文件，612 用例）
+||└── package.json
 ```
 
 **职责划分：**
@@ -723,7 +732,7 @@ status 为 approved 时 findings 可为空。
 | `executor.ts` | runParallelGroup / runWithConcurrencyLimit / reviewDiff |
 | `agent-loop.ts` | `runAgent()` — LLM + tool use 循环，零外部依赖 |
 | `spawn.ts` | 保持 SpawnConfig/SpawnResult 接口，委托给 agent-loop |
-| `config.ts` | 加载 prompt 文件 → 注册 7 种 AgentConfig |
+| `config.ts` | 加载 prompt 文件 → 注册 9 种 AgentConfig |
 
 ---
 

@@ -8,6 +8,14 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
     sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-echarts': ['echarts', 'echarts-for-react'],
+          'vendor-markdown': ['react-markdown', 'remark-gfm', 'rehype-highlight', 'highlight.js'],
+        },
+      },
+    },
   },
   server: {
     port: 5173,

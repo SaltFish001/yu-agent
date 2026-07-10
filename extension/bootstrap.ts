@@ -213,6 +213,51 @@ export function registerHooks(config?: { enabled?: boolean }): void {
   log.info('Scheduler hooks registered (placeholder — full wiring in Phase 3)')
 }
 
+// ── 6. Skills 加载 ──────────────────────────────────────
+
+let _skillsLoaded = false
+
+/**
+ * 扫描并缓存所有可用技能（~/.yu/skills/ *.ts）。
+ * 幂等：只会加载一次。
+ */
+export async function loadSkills(): Promise<string[]> {
+  if (_skillsLoaded) return []
+  _skillsLoaded = true
+
+  try {
+    const { scanSkills } = await import('./skills/registry.js')
+    const skills = await scanSkills()
+    const names = Array.from(skills.keys())
+    log.info(`Loaded ${names.length} skills: ${names.join(', ') || '(none)'}`)
+    return names
+  } catch (err) {
+    log.warn('Skill loading failed (non-fatal)', err)
+    return []
+  }
+}
+
+// ── 7. MCP 工具注册 ─────────────────────────────────────
+
+let _mcpToolsRegistered = false
+
+/**
+ * 从已启动的 MCP server 注册工具到 ToolRegistry。
+ * startMCP() 启动 manager 后调用此函数来注册工具。
+ */
+export async function registerMcpTools(): Promise<void> {
+  if (_mcpToolsRegistered) return
+  _mcpToolsRegistered = true
+
+  try {
+    const { startMcpToolRefresh } = await import('./tools/mcp-tools.js')
+    startMcpToolRefresh()
+    log.info('MCP tool refresh scheduled')
+  } catch (err) {
+    log.warn('MCP tool registration failed (non-fatal)', err)
+  }
+}
+
 // ── 统一启动 ───────────────────────────────────────────────
 
 export interface BootstrapResult {
@@ -220,6 +265,8 @@ export interface BootstrapResult {
   validation: { errors: number; warnings: number }
   types: number
   mcp: boolean
+  mcpTools: boolean
+  skills: string[]
   hooks: boolean
 }
 
@@ -232,6 +279,8 @@ export async function bootstrap(config?: {
   skipValidation?: boolean
   skipTypes?: boolean
   skipMCP?: boolean
+  skipMcpTools?: boolean
+  skipSkills?: boolean
   skipHooks?: boolean
 }): Promise<BootstrapResult> {
   const result: BootstrapResult = {
@@ -239,6 +288,8 @@ export async function bootstrap(config?: {
     validation: { errors: 0, warnings: 0 },
     types: 0,
     mcp: false,
+    mcpTools: false,
+    skills: [],
     hooks: false,
   }
 
@@ -260,20 +311,32 @@ export async function bootstrap(config?: {
     result.types = types.length
   }
 
-  // 4. MCP manager
+  // 4. MCP manager（启动 server 进程）
   if (!config?.skipMCP) {
     await startMCP()
     result.mcp = true
   }
 
-  // 5. Hooks
+  // 5. MCP 工具注册（延迟 2s 让 server 初始化完）
+  if (!config?.skipMcpTools) {
+    await registerMcpTools()
+    result.mcpTools = true
+  }
+
+  // 6. Skills 加载
+  if (!config?.skipSkills) {
+    const names = await loadSkills()
+    result.skills = names
+  }
+
+  // 7. Hooks
   if (!config?.skipHooks) {
     registerHooks()
     result.hooks = true
   }
 
   log.info(
-    `Bootstrap complete: ${result.types} types, ${result.validation.errors} errors, ${result.validation.warnings} warnings`,
+    `Bootstrap complete: ${result.types} types, ${result.skills.length} skills, ${result.validation.errors} errors, ${result.validation.warnings} warnings`,
   )
   return result
 }

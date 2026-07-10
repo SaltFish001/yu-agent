@@ -29,6 +29,7 @@ export interface ProviderRequest {
 export interface ProviderResponse {
   content: string | null
   finish_reason: string
+  reasoning_content?: string | null
   usage?: {
     prompt_tokens: number
     completion_tokens: number
@@ -68,14 +69,14 @@ export async function getApiKey(): Promise<string | null> {
 export function getModel(agentType: string): string {
   const cfg = AGENT_TYPES[agentType]
   if (cfg?.model) return cfg.model
-  return 'deepseek-chat'
+  return 'deepseek-v4-flash'
 }
 
 // ── Provider ────────────────────────────────────────────
 
 export async function chatCompletion(request: ProviderRequest): Promise<ProviderResponse | null> {
   const result = await dsChat({
-    model: 'deepseek-chat',
+    model: 'deepseek-v4-flash',
     messages: request.messages.map((m) => ({
       role: m.role === 'tool' ? 'user' : (m.role as 'system' | 'user' | 'assistant'),
       content: m.content,
@@ -88,6 +89,7 @@ export async function chatCompletion(request: ProviderRequest): Promise<Provider
 
   return {
     content: result.choices?.[0]?.message?.content ?? null,
+    reasoning_content: result.choices?.[0]?.message?.reasoning_content ?? null,
     finish_reason: result.choices?.[0]?.finish_reason ?? 'stop',
     usage: result.usage,
   }

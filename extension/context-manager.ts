@@ -158,7 +158,7 @@ export class ContextManager {
   constructor(opts: ContextManagerOpts = {}) {
     this.id = opts.id ?? crypto.randomUUID()
     this.systemPrompt = opts.systemPrompt ?? ''
-    this.maxTokens = opts.maxTokens ?? 8192
+    this.maxTokens = opts.maxTokens ?? 999999
     this.persistDir = opts.persistDir ?? resolve(process.env.HOME || '/home/saltfish', '.yu', 'sessions')
     this.autoPersist = opts.autoPersist ?? true
     this.compressThreshold = opts.compressThreshold ?? 0.75

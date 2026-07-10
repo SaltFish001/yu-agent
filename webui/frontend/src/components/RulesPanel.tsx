@@ -1,3 +1,4 @@
+import { t } from '../lib/i18n'
 import { useStore } from '../lib/store'
 
 export default function RulesPanel() {
@@ -6,15 +7,15 @@ export default function RulesPanel() {
 
   return (
     <>
-      <div className="panel-header"><h2>规则 ({rules.length})</h2></div>
+      <div className="panel-header"><h2>{t('rules.title')} ({rules.length})</h2></div>
       <div className="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>名称</th>
-              <th>触发器</th>
-              <th>动作</th>
-              <th>条件</th>
+              <th>{t('rules.name')}</th>
+              <th>{t('rules.trigger')}</th>
+              <th>{t('rules.action')}</th>
+              <th>{t('rules.condition')}</th>
             </tr>
           </thead>
           <tbody>
@@ -26,7 +27,7 @@ export default function RulesPanel() {
                 <td>{r.condition || '—'}</td>
               </tr>
             )) : (
-              <tr><td colSpan={4}><span className="hint">暂无规则</span></td></tr>
+              <tr><td colSpan={4}><span className="hint">{t('rules.none')}</span></td></tr>
             )}
           </tbody>
         </table>

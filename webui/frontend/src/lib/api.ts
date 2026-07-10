@@ -6,6 +6,60 @@ export async function fetchStatus(): Promise<any> {
   return res.json()
 }
 
+export async function fetchTopics(): Promise<{ topics: any[]; activeName: string | null }> {
+  const res = await fetch(`${BASE}/api/topics`)
+  if (!res.ok) throw new Error(`Topics fetch failed: ${res.status}`)
+  return res.json()
+}
+
+export async function fetchTopicDetail(name: string): Promise<any> {
+  const res = await fetch(`${BASE}/api/topic/${encodeURIComponent(name)}`)
+  if (!res.ok) throw new Error(`Topic fetch failed: ${res.status}`)
+  return res.json()
+}
+
+export async function deleteTopic(name: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/topic/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `Delete failed: ${res.status}`)
+  }
+}
+
+export async function archiveTopic(name: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/topic/${encodeURIComponent(name)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'archive' }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `Archive failed: ${res.status}`)
+  }
+}
+
+export async function renameTopic(oldName: string, newName: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/topic/${encodeURIComponent(oldName)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'rename', newName }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `Rename failed: ${res.status}`)
+  }
+}
+
+export async function updateConfig(cfg: Record<string, unknown>): Promise<void> {
+  await fetch(`${BASE}/api/config`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cfg),
+  })
+}
+
 export async function sendChat(message: string): Promise<any> {
   const res = await fetch(`${BASE}/api/chat`, {
     method: 'POST',

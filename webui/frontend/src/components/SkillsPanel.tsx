@@ -1,3 +1,4 @@
+import { t } from '../lib/i18n'
 import { useStore } from '../lib/store'
 
 export default function SkillsPanel() {
@@ -6,13 +7,13 @@ export default function SkillsPanel() {
 
   return (
     <>
-      <div className="panel-header"><h2>技能 ({skills.length})</h2></div>
+      <div className="panel-header"><h2>{t('skills.title')} ({skills.length})</h2></div>
       <div className="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>名称</th>
-              <th>描述</th>
+              <th>{t('skills.name')}</th>
+              <th>{t('skills.description')}</th>
             </tr>
           </thead>
           <tbody>
@@ -22,7 +23,7 @@ export default function SkillsPanel() {
                 <td style={{ color: 'var(--text-secondary)' }}>{s.description || '—'}</td>
               </tr>
             )) : (
-              <tr><td colSpan={2}><span className="hint">无技能</span></td></tr>
+              <tr><td colSpan={2}><span className="hint">{t('skills.none')}</span></td></tr>
             )}
           </tbody>
         </table>
