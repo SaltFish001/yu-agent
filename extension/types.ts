@@ -48,8 +48,10 @@ export interface SchedulerContext {
   session?: unknown
   teamRunId?: string
   memberName?: string
-  agentType?: string // --agent <name> override for yu run
-  background?: boolean // P2: run sub-agents in background mode
+  /** --agent <name> override for yu run. */
+  agentType?: string
+  /** P2: run sub-agents in background mode. */
+  background?: boolean
 }
 
 /** Structured result from scheduler handler. */
@@ -122,8 +124,14 @@ export interface SupervisorStatus {
 
 // ── Tools — 增强 ─────────────────────────────────────────
 
+/**
+ * Hooks for auditing tool calls.
+ * Each hook receives contextual information about the tool invocation.
+ */
 export interface ToolAuditHook {
+  /** Called before a tool is executed. */
   before?: (params: { name: string; args: Record<string, unknown>; role?: string }) => void
+  /** Called after a tool completes successfully. */
   after?: (params: {
     name: string
     args: Record<string, unknown>
@@ -131,23 +139,37 @@ export interface ToolAuditHook {
     durationMs: number
     role?: string
   }) => void
+  /** Called when a tool throws an error. */
   error?: (params: { name: string; args: Record<string, unknown>; error: Error; role?: string }) => void
 }
 
+/**
+ * Enhancement configuration for a tool.
+ * Allows adding schema validation, authorization, auditing, timeout, sandboxing, and retry logic.
+ */
 export interface ToolEnhancement {
+  /** Zod schema for validating tool arguments. */
   schema?: import('zod').ZodType<unknown>
+  /** Authorization rules for the tool. */
   auth?: { requiredRoles?: string[]; denyRoles?: string[] }
+  /** Audit hooks for monitoring tool usage. */
   audit?: ToolAuditHook
+  /** Timeout in ms for tool execution. */
   timeout?: number
+  /** If true, run the tool in a sandboxed environment. */
   sandbox?: boolean
-  /** 失败重试次数 (默认 0) */
+  /** Number of retry attempts on failure (default: 0). */
   retryCount?: number
+  /** 工具来源 (builtin/mcp/plugin) — 用于按来源过滤 */
+  source?: 'builtin' | 'mcp' | 'plugin'
 }
 
 // ── MCP 传输 ─────────────────────────────────────────────
 
+/** Supported MCP transport types. */
 export type McpTransportType = 'stdio' | 'sse'
 
+/** Configuration for an MCP transport connection. */
 export interface McpTransportConfig {
   type: McpTransportType
   target: string
@@ -157,6 +179,7 @@ export interface McpTransportConfig {
 
 // ── Rules ────────────────────────────────────────────────
 
+/** Capabilities that can be granted or restricted by a rule. */
 export interface RuleCapability {
   allowTools?: string[]
   denyTools?: string[]
@@ -165,6 +188,7 @@ export interface RuleCapability {
   maxTokens?: number
 }
 
+/** Definition of a rule that governs agent behaviour. */
 export interface RuleDef {
   name: string
   description?: string
@@ -178,6 +202,7 @@ export interface RuleDef {
 
 // ── Skills ───────────────────────────────────────────────
 
+/** Definition of a skill that an agent can use. */
 export interface SkillDef {
   name: string
   version: string

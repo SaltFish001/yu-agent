@@ -78,6 +78,8 @@ export class SseTransport extends McpTransport {
   private postUrl: string | null = null
   /** SSE 读取协程 promise */
   private sseReadPromise: Promise<void> | null = null
+  /** SSE AbortController */
+  private sseAbort: AbortController | null = null
   /** SSE 流 reader 引用，用于在 close() 时直接取消 */
   private sseReader: ReadableStreamDefaultReader<Uint8Array> | null = null
 

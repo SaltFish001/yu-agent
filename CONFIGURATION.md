@@ -1,6 +1,6 @@
 # yu-agent Configuration
 
-> **Version 0.1.0** — Configuration reference for all yu-agent settings
+> **Version 0.3.1** — Configuration reference for all yu-agent settings
 
 ---
 
@@ -51,6 +51,11 @@ All yu-agent data is stored under `~/.yu/`. The directory is auto-created on fir
 ├── knowledge.db                   # SQLite FTS5 knowledge index (RAG)
 ├── resume_context.json            # Temp file for session resume
 ├── agent/                         # Pi coding-agent runtime (internal)
+├── skills/                        # Agent skill files (.ts)
+│   ├── character-rp.ts
+│   ├── .store-index.json
+│   ├── .remote-sources.json
+│   └── ...
 ├── prompts/                       # Agent system prompt files (.md)
 │   ├── scheduler.md
 │   ├── coding.md
@@ -60,6 +65,7 @@ All yu-agent data is stored under `~/.yu/`. The directory is auto-created on fir
 │   ├── commit.md
 │   ├── doc.md
 │   ├── search.md
+│   ├── chat.md
 │   └── team.md
 ├── checkpoints/                   # Phase-level recovery checkpoints
 ├── pool-sessions/                 # Cache-first agent session pools
@@ -70,6 +76,7 @@ All yu-agent data is stored under `~/.yu/`. The directory is auto-created on fir
 │   ├── lsp/
 │   ├── commit/
 │   ├── doc/
+│   ├── chat/
 │   └── general-purpose/
 ├── data/
 │   ├── decisions.json             # Scheduler decision cache (max 50)
@@ -102,6 +109,7 @@ All paths are defined centrally in `extension/paths.ts`:
 | `DECISIONS_FILE` | `~/.yu/data/decisions.json` | Scheduler decision cache |
 | `MCP_CONFIG_PATH` | `~/.yu/mcp.config.json` | MCP server definitions |
 | `POOL_SESSIONS_DIR` | `~/.yu/pool-sessions/` | Disk-persisted session pools |
+| `SKILLS_DIR` | `~/.yu/skills/` | Agent skill files (.ts) |
 
 ---
 
@@ -137,20 +145,23 @@ Agent types are defined programmatically in `extension/config.ts::AGENT_TYPES`. 
 | `thinking` | `"max"` \| `"high"` | Thinking/effort level. Maps to pi-subagents' `xhigh` (for `"max"`) or `"high"`. |
 | `maxTurns` | `number` | Maximum number of tool-calling turns before the agent auto-terminates. |
 | `builtinToolNames` | `string[]` | Allowed built-in tools. Controls read/write permissions. |
+| `mcpServers` | `string[]` | Optional. MCP server whitelist — which MCP tools this agent type may invoke. |
+| `skillNames` | `string[]` | Optional. Skill names to load and inject into the system prompt at startup. |
 | `systemPrompt` | `string` | Content of the system prompt (loaded from `~/.yu/prompts/{type}.md` at startup). |
 
 ### Built-in Agent Types
 
-| Type Key | displayName | Default Model | Thinking | Max Turns | Allowed Tools | Description |
-|----------|-------------|---------------|----------|-----------|---------------|-------------|
-| `coding` | Coding Agent | `v4-pro` | max | 50 | bash, read, edit, write, grep, find, ls | Write and modify code. Full read/write access. |
-| `review` | Review Agent | `v4-flash` | max | 30 | read, grep, find, ls | Code review. Read-only tools. |
-| `plan` | Plan Agent | `v4-pro` | max | 30 | read, grep, find, ls | Technical architecture planning. Read-only. |
-| `search` | Search Agent | `v4-flash` | high | 15 | bash, read, grep | Semantic code search + web search via MCP. |
-| `lsp` | LSP Agent | `v4-flash` | high | 20 | bash | LSP diagnostics and auto-fix. Terminal only. |
-| `commit` | Commit Agent | `v4-flash` | high | 10 | bash | Git commit message generation. Terminal only. |
-| `doc` | Doc Agent | `v4-flash` | high | 20 | read, edit | Documentation generation. Read + write only. |
-| `general-purpose` | General Purpose Agent | `v4-flash` | high | 3 | _(none)_ | Scheduler/intent classifier. No tools — only outputs JSON plans. |
+| Type Key | displayName | Default Model | Thinking | Max Turns | Allowed Tools | MCP Servers | Skill Names | Description |
+|----------|-------------|---------------|----------|-----------|---------------|-------------|-------------|-------------|
+| `coding` | Coding Agent | `v4-pro` | max | 50 | bash, read, edit, write, grep, find, ls | `["codegraph"]` | — | Write and modify code. Full read/write access. |
+| `review` | Review Agent | `v4-flash` | max | 30 | read, grep, find, ls | `["codegraph"]` | — | Code review. Read-only tools. |
+| `plan` | Plan Agent | `v4-pro` | max | 15 | read, grep, find, ls, write | `["codegraph"]` | — | Technical architecture planning. Read-only. |
+| `search` | Search Agent | `v4-flash` | high | 15 | bash, read, grep | `["codegraph"]` | — | Semantic code search + web search via MCP. |
+| `lsp` | LSP Agent | `v4-flash` | high | 20 | bash | — | — | LSP diagnostics and auto-fix. Terminal only. |
+| `commit` | Commit Agent | `v4-flash` | high | 10 | bash | — | — | Git commit message generation. Terminal only. |
+| `doc` | Doc Agent | `v4-flash` | high | 20 | read, edit | `["codegraph"]` | — | Documentation generation. Read + write only. |
+| `chat` | Chat Agent | `v4-flash` | max | 10 | read, grep, find, bash | — | `["character-rp"]` | Non-programming conversation and Q&A. |
+| `general-purpose` | General Purpose Agent | `v4-flash` | max | 3 | _(none)_ | — | — | Scheduler/intent classifier. No tools — only outputs JSON plans. |
 
 ### Model Routing Logic
 
@@ -280,6 +291,7 @@ On process exit:
 | `commit.md` | commit | `spawn.ts` | Conventional commits generation |
 | `doc.md` | doc | `spawn.ts` | Code documentation generation |
 | `search.md` | search | `spawn.ts` | Code search + web search via MCP |
+| `chat.md` | chat | `spawn.ts` | Chat and dispatch subagent for conversation and task routing |
 | `team.md` | team | `team-orchestrator.ts` | Role prompts for team mode (Architect/Coder/Reviewer/Searcher) |
 
 ### Customizing Prompts
@@ -463,7 +475,7 @@ The diagnosis checks:
 
 1. **Data directory** (`~/.yu/`) — Exists and readable
 2. **MCP configuration** — File exists, valid JSON, valid Zod schema
-3. **Prompt files** — Directory exists with ≥ 8 prompt files
+3. **Prompt files** — Directory exists with ≥ 9 prompt files
 4. **Ring buffer** — SQLite DB accessible, reports entries and size
 5. **Facts store** — JSON file readable, reports entries and size
 6. **Scene state** — JSON file readable

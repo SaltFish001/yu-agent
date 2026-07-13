@@ -56,8 +56,65 @@ export function getTool(name: string): ToolDefinition | undefined {
   return _tools.get(name)
 }
 
+/** MCP 工具注册表 — 按 server 来源分组 */
+const _mcpTools = new Map<string, ToolDefinition>()
+
+export function registerMcpTool(source: string, tool: ToolDefinition): void {
+  const key = `mcp_${source}_${tool.name}`
+  _mcpTools.set(key, tool)
+  // 同时注册到主 registry（加 mcp_ 前缀）
+  registerTool({
+    ...tool,
+    name: `mcp_${tool.name}`,
+    enhancement: { ...tool.enhancement, source: 'mcp' },
+  })
+}
+
+export function getMcpTools(source?: string): ToolDefinition[] {
+  if (source) {
+    return Array.from(_mcpTools.values()).filter(t =>
+      t.enhancement?.source === 'mcp' && t.name.startsWith(`mcp_${source}_`),
+    )
+  }
+  return Array.from(_mcpTools.values())
+}
+
 export function listTools(): ToolDefinition[] {
   return Array.from(_tools.values())
+}
+
+/**
+ * 按 agent type 名称过滤可用工具。
+ * 返回：内置工具（匹配 builtinToolNames）+ MCP 工具（匹配 mcpServers）
+ */
+export function listToolsByType(
+  builtinToolNames: string[],
+  mcpServers?: string[],
+): ToolDefinition[] {
+  const result: ToolDefinition[] = []
+
+  // 内置工具过滤
+  const nameSet = new Set(builtinToolNames)
+  for (const tool of _tools.values()) {
+    if (tool.enhancement?.source === 'mcp') continue // MCP 工具单独处理
+    if (nameSet.has(tool.name)) {
+      result.push(tool)
+    }
+  }
+
+  // MCP 工具：按 server 来源匹配
+  if (mcpServers && mcpServers.length > 0) {
+    const mcpServerSet = new Set(mcpServers)
+    for (const [key, tool] of _mcpTools) {
+      // key = mcp_{source}_{name}
+      const source = key.split('_')[1] // 取 mcp_{source} 部分
+      if (source && mcpServerSet.has(source)) {
+        result.push(tool)
+      }
+    }
+  }
+
+  return result
 }
 
 export function getToolSchemas(): Array<{

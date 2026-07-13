@@ -33,7 +33,7 @@ const stdinDecoder = new TextDecoder()
 /**
  * Build an IpcMessage with auto-populated timestamp and optional seq.
  */
-function buildMessage(type: IpcMessageType, payload?: Record<string, unknown>): IpcMessage {
+export function buildMessage(type: IpcMessageType, payload?: Record<string, unknown>): IpcMessage {
   return {
     type,
     payload,

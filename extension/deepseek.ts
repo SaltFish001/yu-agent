@@ -13,7 +13,7 @@ import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
 
 const DEEPSEEK_BASE = 'https://api.deepseek.com/v1'
-const MODEL = 'deepseek-chat'
+const MODEL = 'deepseek-v4-flash'
 
 // ── Types ───────────────────────────────────────────────
 
@@ -34,6 +34,8 @@ export interface DeepSeekRequest {
   response_format?: { type: 'json_object' }
   max_tokens?: number
   temperature?: number
+  thinking?: { type: 'enabled' | 'disabled' }
+  reasoning_effort?: 'high' | 'max'
 }
 
 export interface DeepSeekResponse {
@@ -43,6 +45,7 @@ export interface DeepSeekResponse {
     message: {
       role: 'assistant'
       content: string | null
+      reasoning_content?: string | null
     }
     finish_reason: string
   }[]
@@ -56,31 +59,39 @@ export interface DeepSeekResponse {
 // ── Config loading ──────────────────────────────────────
 
 function loadConfig(): DeepSeekConfig | null {
+  // 优先从 ~/.yu/config.json 读取，再 fallback 到环境变量
   try {
     const configPath = resolve(process.env.HOME || process.env.USERPROFILE || '/home/saltfish', '.yu', 'config.json')
-    if (!existsSync(configPath)) {
-      log.warn('~/.yu/config.json not found')
-      return null
-    }
+    if (existsSync(configPath)) {
+      const raw = readFileSync(configPath, 'utf-8')
+      const config = JSON.parse(raw)
 
-    const raw = readFileSync(configPath, 'utf-8')
-    const config = JSON.parse(raw)
-
-    const apiKey = config?.apiKeys?.deepseek
-    if (!apiKey || typeof apiKey !== 'string' || !apiKey.trim()) {
+      const apiKey = config?.apiKeys?.deepseek
+      if (apiKey && typeof apiKey === 'string' && apiKey.trim()) {
+        return {
+          apiKey: apiKey.trim(),
+          baseUrl: config?.deepseek?.baseUrl || DEEPSEEK_BASE,
+          model: config?.deepseek?.model || MODEL,
+        }
+      }
       log.warn('apiKeys.deepseek is not configured in ~/.yu/config.json')
-      return null
-    }
-
-    return {
-      apiKey: apiKey.trim(),
-      baseUrl: config?.deepseek?.baseUrl || DEEPSEEK_BASE,
-      model: config?.deepseek?.model || MODEL,
     }
   } catch (err) {
-    log.warn('Failed to load DeepSeek config', err)
-    return null
+    log.warn('Failed to load DeepSeek config from ~/.yu/config.json', err)
   }
+
+  // Fallback: 环境变量
+  const envKey = process.env.DEEPSEEK_API_KEY
+  if (envKey && typeof envKey === 'string' && envKey.trim()) {
+    return {
+      apiKey: envKey.trim(),
+      baseUrl: process.env.DEEPSEEK_BASE_URL || DEEPSEEK_BASE,
+      model: process.env.DEEPSEEK_MODEL || MODEL,
+    }
+  }
+
+  log.warn('DEEPSEEK_API_KEY not found in ~/.yu/config.json or environment')
+  return null
 }
 
 // ── API call ────────────────────────────────────────────
@@ -89,20 +100,32 @@ export async function chatCompletion(request: DeepSeekRequest): Promise<DeepSeek
   const cfg = loadConfig()
   if (!cfg) return null
 
+  const shouldThink = request.thinking
+    ? request.thinking.type === 'enabled'
+    : !request.response_format
+
   try {
+    const body: Record<string, unknown> = {
+      model: request.model,
+      messages: request.messages,
+      response_format: request.response_format,
+      max_tokens: request.max_tokens ?? 1024,
+      temperature: request.temperature ?? 0,
+    }
+    if (shouldThink) {
+      body.thinking = { type: 'enabled' }
+      body.reasoning_effort = 'high'
+      // thinking mode doesn't support temperature
+      delete body.temperature
+    }
+
     const response = await fetch(`${cfg.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${cfg.apiKey}`,
       },
-      body: JSON.stringify({
-        model: cfg.model,
-        messages: request.messages,
-        response_format: request.response_format,
-        max_tokens: request.max_tokens ?? 1024,
-        temperature: request.temperature ?? 0,
-      }),
+      body: JSON.stringify(body),
     })
 
     if (!response.ok) {

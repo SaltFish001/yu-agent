@@ -31,11 +31,6 @@ describe('Path constants', () => {
     expect(PROMPTS_DIR).toBe(resolve(HOME, '.yu', 'prompts'))
   })
 
-  it('PI_AGENT_DIR resolves to ~/.yu/agent', async () => {
-    const { PI_AGENT_DIR } = await import('../extension/paths.js')
-    expect(PI_AGENT_DIR).toBe(resolve(HOME, '.yu', 'agent'))
-  })
-
   it('TEMP_DIR resolves to ~/.yu/data/temp', async () => {
     const { TEMP_DIR } = await import('../extension/paths.js')
     expect(TEMP_DIR).toBe(resolve(HOME, '.yu', 'data', 'temp'))

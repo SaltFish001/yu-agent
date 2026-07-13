@@ -3,10 +3,10 @@ import { createLogger } from './logger.js'
 
 const log = createLogger('team-orch')
 
-import { existsSync, mkdirSync, readFileSync, watch } from 'fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, watch } from 'fs'
 import { resolve } from 'path'
 import type { SchedulerPlan } from './classifier.js'
-import { AGENT_TYPES } from './config.js'
+import { AGENT_TYPES, loadPrompt } from './config.js'
 import { type AgentTask, runParallelGroup } from './executor.js'
 import { TEMP_DIR } from './paths.js'
 import { resolveRule } from './rules/compose.js'
@@ -45,6 +45,33 @@ async function resolveRoleConfig(
   }
 }
 
+// ── Parse modules from plan content ─────────────────────
+
+export function parseModulesFromPlan(planContent: string): { name: string; files: string[]; independent: boolean }[] {
+  // Try JSON (agent output) first
+  const planOutput = parseAgentOutput(planContent)
+  if (
+    planOutput &&
+    'modules' in planOutput &&
+    Array.isArray((planOutput as unknown as Record<string, unknown>).modules)
+  ) {
+    const modules = (planOutput as unknown as { modules: { name: string; files: string[]; independent: boolean }[] }).modules
+    if (modules.length > 0) return modules
+  }
+
+  // Fallback: extract modules from markdown headings (## Module Name)
+  const headingRegex = /^##\s+(.+)/gm
+  const matchResult = planContent.matchAll(headingRegex)
+  const headingModules: { name: string; files: string[]; independent: boolean }[] = []
+  for (const m of matchResult) {
+    headingModules.push({ name: m[1].trim(), files: [], independent: true })
+  }
+  if (headingModules.length > 0) return headingModules
+
+  // Last resort: single default module
+  return [{ name: 'default', files: [], independent: true }]
+}
+
 // ── Team mode orchestrator ─────────────────────────────
 
 export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, unknown>): Promise<string> {
@@ -72,6 +99,15 @@ export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, 
   } catch {
     /* non-critical */
   }
+  log.info(`🚀 Team mode [${taskId}] 启动 — 阶段: 调研 (architect + searcher 并行)`)
+
+  // Extract original goal from plan or context
+  const originalGoal: string =
+    (_plan as Record<string, unknown>)?.goal as string
+    || _plan.agents?.[0]?.task
+    || (context.goal as string)
+    || (context.originalGoal as string)
+    || ''
 
   // Phase 1: Architect + Searcher in parallel
   const architectCfg = await resolveRoleConfig('architect', 'plan')
@@ -80,7 +116,9 @@ export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, 
     type: 'plan',
     model: architectCfg.model,
     id: 'team-architect',
-    task: `分析现有代码结构并出方案。将方案写入 ${planFile}`,
+    task: originalGoal
+      ? `理解以下目标，拆解为具体任务。将方案写入 ${planFile}\n\n目标: ${originalGoal}`
+      : `分析现有代码结构并出方案。将方案写入 ${planFile}`,
   }
   const searcherTask: AgentTask = {
     type: 'search',
@@ -94,25 +132,59 @@ export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, 
     ['team-searcher', searcherTask],
   ])
 
-  await runParallelGroup(['team-architect', 'team-searcher'], agentMap, {
+  const agentResults = await runParallelGroup(['team-architect', 'team-searcher'], agentMap, {
     ...context,
     shared_dir: sharedDir,
   })
 
-  // Wait for plan.md with fs.watch timeout
+  // Wait for plan.md — with text fallback if agent never called write tool
   if (!existsSync(planFile)) {
-    await new Promise<void>((resolveTimeout, reject) => {
-      const watcher = watch(sharedDir, (_eventType, filename) => {
-        if (filename === 'plan.md' && existsSync(planFile)) {
+    // Try to use plan agent's text output as fallback
+    const architectResult = agentResults.get('team-architect')
+    const planText = architectResult?.text || architectResult?.response || architectResult?.content
+    if (planText) {
+      writeFileSync(planFile, planText, 'utf-8')
+      log.info(`plan.md written from agent text output (${planText.length} chars)`)
+    } else {
+      // Last resort: wait via fs.watch with timeout
+      await new Promise<void>((resolveTimeout, reject) => {
+        const watcher = watch(sharedDir, (_eventType, filename) => {
+          if (filename === 'plan.md' && existsSync(planFile)) {
+            watcher.close()
+            resolveTimeout()
+          }
+        })
+        setTimeout(() => {
           watcher.close()
-          resolveTimeout()
-        }
+          reject(new Error('Timeout waiting for plan.md'))
+        }, TEAM_FILE_TIMEOUT_MS)
       })
-      setTimeout(() => {
-        watcher.close()
-        reject(new Error('Timeout waiting for plan.md'))
-      }, TEAM_FILE_TIMEOUT_MS)
-    })
+    }
+  }
+
+  // Validate plan.md content — must look like a real plan, not just agent rambling
+  if (existsSync(planFile)) {
+    const planContent = readFileSync(planFile, 'utf-8').trim()
+    const hasHeadings = /^#{1,3}\s+/m.test(planContent)
+    const hasJsonStructure = /"goal"\s*:/.test(planContent) || /"modules"\s*:/.test(planContent)
+    const hasFileChanges = /\.[a-zA-Z]+/.test(planContent) && /改动|修改|change|fix|add|refactor|分析|审查|review|check/i.test(planContent)
+    const isRambling = /^(现在|让我|我先|我需要)/.test(planContent) && planContent.length < 200 && !hasHeadings
+    const tooShort = planContent.length < 50
+    const isError = planContent.startsWith('Error:')
+    const noChanges = planContent.includes('无需改动') || planContent.includes('no changes needed')
+
+    if (tooShort || isError || noChanges || isRambling || (!hasHeadings && !hasJsonStructure && !hasFileChanges)) {
+      log.warn(`plan.md rejected (len=${planContent.length}, hasHeadings=${hasHeadings}, hasJson=${hasJsonStructure}, rambling=${isRambling}), using fallback`)
+      // Extract original goal from plan
+      const originalGoal: string =
+        (_plan as Record<string, unknown>)?.goal as string
+        || (_plan.agents?.[0]?.task)
+        || (context.goal as string)
+        || '执行代码改动'
+      const fallback = `# 执行方案（自动生成）\n\n## 目标\n${originalGoal}\n\n## 当前状态\n方案由 orchestrator 自动生成，未包含实际代码分析。coding agent 应主动读相关文件后补充分析。\n\n## 任务列表\n- 分析当前代码状态并执行目标: ${originalGoal}\n\n## 改动风险\n新建文件无风险。改已有文件需验证不破坏现有逻辑。\n\n## JSON\n\`\`\`json\n{\n  "goal": "${originalGoal}",\n  "modules": [\n    {"name": "analysis", "files": [], "independent": false, "note": "先分析代码结构"},\n    {"name": "implementation", "files": [], "independent": false, "dependencies": ["analysis"], "note": "根据分析结果执行改动"}\n  ]\n}\n\`\`\``
+      writeFileSync(planFile, fallback, 'utf-8')
+      log.info(`plan.md fallback written (${fallback.length} chars)`)
+    }
   }
 
   writeTeamStatus({
@@ -137,30 +209,10 @@ export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, 
 
   // Phase 2: Read plan, spawn Coder(s)
   const planContent = readFileSync(planFile, 'utf-8')
+  log.info(`📋 Team [${taskId}] plan.md 就绪 (${planContent.length} chars)`)
 
-  // Parse modules from plan (JSON in markdown code block) or fallback to headings
-  const planOutput = parseAgentOutput(planContent)
-  let modules: { name: string; files: string[]; independent: boolean }[] = []
-
-  if (
-    planOutput &&
-    'modules' in planOutput &&
-    Array.isArray((planOutput as unknown as Record<string, unknown>).modules)
-  ) {
-    modules = (planOutput as unknown as { modules: typeof modules }).modules
-  }
-  if (modules.length === 0) {
-    // Fallback: extract modules from markdown headings (## Module Name)
-    const headingRegex = /^##\s+(.+)/gm
-    const matchResult = planContent.matchAll(headingRegex)
-    for (const m of matchResult) {
-      modules.push({ name: m[1].trim(), files: [], independent: true })
-    }
-  }
-  if (modules.length === 0) {
-    // Last resort: treat the entire plan as a single module
-    modules = [{ name: 'default', files: [], independent: true }]
-  }
+  // Parse modules from plan
+  const modules = parseModulesFromPlan(planContent)
 
   // Load context.md if generated by searcher
   const contextMdPath = resolve(sharedDir, 'context.md')
@@ -186,16 +238,33 @@ export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, 
     type: 'coding',
     model: coderCfg.model,
     id: `team-coder-${i}`,
-    task: `实现模块: ${mod.name}。遵循 plan.md 的方案。\n\n模块文件: ${(mod.files || []).join(', ')}\n\n约束: 只实现本模块 ${mod.name} 的内容，不要改其他模块的代码。`,
+    task: `实现模块: ${mod.name}。遵循 ${planFile} 的方案。
+
+共享目录: ${sharedDir}
+方案文件: ${planFile}
+上下文文件: ${resolve(sharedDir, 'context.md')}
+
+模块文件: ${(mod.files || []).join(', ')}
+
+约束: 只实现本模块 ${mod.name} 的内容。
+
+必须实际写出代码并通过验证，不能只读文件。`,
     files: mod.files.length > 0 ? mod.files : undefined,
   }))
 
   const coderAgentMap = new Map(coderTasks.map((t) => [t.id, t]))
-  await runParallelGroup(
+  log.info(`👷 Team [${taskId}] 阶段: coding — ${coderTasks.length} 个 agent (${coderCfg.model})`)
+  const coderResults = await runParallelGroup(
     coderTasks.map((t) => t.id),
     coderAgentMap,
     { ...context, shared_dir: sharedDir, plan_content: planContent, context_md: contextMd },
   )
+
+  // Log coding agent results
+  for (const [id, r] of coderResults) {
+    const wrote = r?.wroteCode ? '✅ 写了代码' : '⚠️ 未产出代码'
+    log.info(`Coder ${id}: ${wrote} (${r?.text?.length ?? 0} chars, ${r?.durationMs ?? 0}ms)`)
+  }
 
   // Phase 3: Reviewers — up to 2 rounds of review cycles
   const MAX_REVIEW_ROUNDS = 2
@@ -217,11 +286,23 @@ export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, 
 
     // Create one Reviewer task per module
     const reviewerCfg = await resolveRoleConfig('reviewer', 'review')
+    log.info(`🔍 Team [${taskId}] 阶段: review round ${round + 1} — ${modules.length} 个 agent`)
     const reviewerTasks: AgentTask[] = modules.map((mod, i) => ({
       type: 'review',
       model: reviewerCfg.model,
       id: `team-reviewer-${i}-r${round}`,
-      task: `审查模块 "${mod.name}" 的代码实现。\n模块文件: ${mod.files.join(', ')}\n\n根据 plan.md 的方案评估实现质量。返回 approved 或 changes_requested。如果 changes_requested，请列出具体问题。`,
+      task: `审查模块 "${mod.name}" 的代码实现。
+模块文件: ${mod.files.join(', ')}
+
+方案文件: ${planFile}
+
+根据 plan.md 的方案评估实现质量。
+
+审查要求：
+1. 编写详细的人类可读审查报告（问题、行号、建议）
+2. 在报告后用 \`\`\`json 代码块输出结构化摘要：
+   {"status": "approved" | "changes_requested", "findings": [{"severity": "high"|"medium"|"low", "file": "...", "line": N, "message": "..."}]}
+3. 至少有一个 high/medium 问题才返回 changes_requested`,
       files: mod.files.length > 0 ? mod.files : undefined,
     }))
 
@@ -232,18 +313,44 @@ export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, 
       { ...context, shared_dir: sharedDir, plan_content: planContent },
     )
 
-    // Check if any reviewer requested changes
+    // Collect review text & check approval
     const changesDetails: string[] = []
-    for (const [, result] of reviewerResults) {
-      const output = parseAgentOutput(result?.response || '')
-      if (output && 'status' in output && (output as ReviewOutput).status === 'changes_requested') {
-        changesDetails.push(JSON.stringify((output as ReviewOutput).findings || []))
+    const reviewTexts: string[] = []
+    for (const [id, result] of reviewerResults) {
+      const text = result?.response || result?.text || ''
+      reviewTexts.push(text)
+      // Save full review text to file
+      const reviewFile = resolve(sharedDir, `review-report-r${round + 1}-${id}.md`)
+      try {
+        writeFileSync(reviewFile, text, 'utf-8')
+      } catch { /* non-critical */ }
+
+      // Try JSON parse first (structured output)
+      const output = parseAgentOutput(text)
+      let requestedChanges = false
+      if (output && 'status' in output) {
+        if ((output as ReviewOutput).status === 'changes_requested') {
+          requestedChanges = true
+          changesDetails.push(JSON.stringify((output as ReviewOutput).findings || []))
+        }
+      } else {
+        // Fallback: text-based detection
+        requestedChanges = /changes?_requested|❌|不通过|问题|需修改/i.test(text)
+        if (requestedChanges) {
+          changesDetails.push(text.slice(0, 2000))
+        }
       }
+    }
+
+    // Log review findings
+    if (reviewTexts.length > 0) {
+      const firstReview = reviewTexts[0].slice(0, 1000)
+      log.info(`Review round ${round + 1} — findings:\n${firstReview}`)
     }
 
     if (changesDetails.length === 0) {
       allApproved = true
-      log.info(`Review round ${round + 1}: all approved`)
+      log.info(`Review round ${round + 1}: ✅ all approved`)
       break
     }
 
@@ -254,7 +361,14 @@ export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, 
         type: 'coding',
         model: AGENT_TYPES.coding.model,
         id: `team-coder-${i}-fix-r${round}`,
-        task: `根据 review 反馈修复模块 "${mod.name}" 的问题。\n\nReview 反馈:\n${changesDetails.join('\n---\n')}\n\n只修复列出的问题，不要改动其他代码。`,
+        task: `根据 review 反馈修复模块 "${mod.name}" 的问题。
+
+Review 反馈:
+${changesDetails.join('\n---\n')}
+
+方案文件: ${planFile}
+
+只修复列出的问题，不要改动其他代码。必须实际写出修改并通过验证。`,
         files: mod.files.length > 0 ? mod.files : undefined,
       }))
 
@@ -298,6 +412,12 @@ export async function runTeamMode(_plan: SchedulerPlan, context: Record<string, 
   } else {
     log.info('No merge conflicts detected')
   }
+
+  // Summary
+  const wroteSummary = Array.from(coderResults.values())
+    .map((r) => r?.wroteCode ? '✅' : '⚠️')
+    .join(' ')
+  log.info(`✅ Team [${taskId}] 完成 — 模块: ${modules.length} | 代码: ${wroteSummary} | review: ${allApproved ? '✅ passed' : '⚠️ not all approved'}`)
 
   // Final status
   writeTeamStatus({

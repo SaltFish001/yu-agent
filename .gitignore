@@ -27,3 +27,5 @@ package-lock.json
 *.db-wal
 *.db-shm
 .yu-agent/
+/coverage/
+run_team_test.ts

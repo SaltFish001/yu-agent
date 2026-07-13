@@ -32,6 +32,12 @@ function loadSchedulerPrompt(): string {
   try {
     const path = resolve(PROMPTS_DIR, 'scheduler.md')
     if (!existsSync(path)) {
+      // Fallback: project-level prompts/
+      const projectPath = resolve(import.meta.dir, '..', 'prompts', 'scheduler.md')
+      if (existsSync(projectPath)) {
+        const content = readFileSync(projectPath, 'utf-8')
+        return content
+      }
       log.warn('scheduler.md not found at', path)
       return ''
     }
@@ -53,12 +59,12 @@ export async function classifyIntent(userInput: string, _context: Record<string,
     goal: 'classify intent & generate plan',
   })
 
-  // Fast path: full instructions pass through directly
+  // Fast path: role-play instructions pass through directly
   const trimmed = userInput.trim()
-  if (trimmed.length > 200 || /^你是|^你是一个/.test(trimmed)) {
+  if (/^你是|^你是一个/.test(trimmed) && trimmed.length < 50) {
     trackAgent('scheduler', 'completed')
-    log.info(`Scheduler: full instruction detected (${trimmed.length} chars), passing through`)
-    return { pass_through: true, reasoning: 'input too long or role-play, no classification needed' }
+    log.info(`Scheduler: role-play detected, passing through`)
+    return { pass_through: true, reasoning: 'role-play instruction, no classification needed' }
   }
 
   // Load scheduler prompt

@@ -1,51 +1,13 @@
-# yu-agent 设计文档（v8）
+# yu-agent 设计文档 v0.3.1
 
 > DeepSeek 原生编程代理——调度器 + 多子 agent + 团队模式
->
-> **v8 更新 (2026-06-16): Pi SDK 已完全移除**
-
----
-
-## 重要说明
-
-本文档部分内容来自 v7（Pi SDK 时代）。以下变更已落地：
-
-| 变化 | 旧 | 新 |
-|------|----|----|
-| 运行时依赖 | Pi SDK (`@tintinweb/pi-subagents`) | 零外部依赖 (Bun 原生) |
-| Agent 调度 | `spawnAgent()` → Pi SessionPool | `runAgent()` → AgentLoop (`agent-loop.ts`) |
-| CLI 入口 | Pi `beforeChat` hook | 独立 `bin/yu.ts` + Web UI (`yu ui`) |
-| 上下文管理 | Pi Session 持久化 | 自有 `context-manager.ts` (LLM 压缩 + token 计数) |
-| 测试框架 | vitest | bun:test |
-| 构建工具 | tsc | `bun build` (单二进制, 52 模块 320ms) |
-
-本文档正文尚未逐节更新。上表为 v8 架构变更的权威参考。
+> 零外部运行时依赖，Bun 原生构建。
 
 ---
 
 ## 一、架构定位
 
-### 1.1 与 Pi 的关系（已解除）
-
-~~yu-agent 是 Pi 的一个 extension~~
-
-**现状:** yu-agent 是完全独立的项目。Pi SDK 位于 `optionalDependencies`，运行时零加载。
-所有原 Pi 能力已被自有实现替代：
-
-| 能力 | 当前实现 |
-|------|---------|
-| Session 持久化 + 分支 | `db.ts` (bun:sqlite) |
-| 斜杠命令、技能系统 | CLI 路由 + 命令分发 |
-| 子 agent 生命周期管理 | `agent-loop.ts` + `spawn.ts` (AgentLoop 代理) |
-| 子 agent 并发执行 | `executor.ts` + `Promise.all` + 并发控制 |
-| 自定义 agent 类型 | `bootstrap.ts` 内联注册 |
-| 工具权限控制 | 工具注册时声明 (`tools/registry.ts`) |
-| **意图识别 + 路由** | **`classifier.ts` + `scheduler.ts`** |
-| **子 agent 系统 prompt** | **`prompts/` 目录** |
-| **Team mode 编排** | **`team-orchestrator.ts`** |
-| **代码库搜索** | **`tools/grep.ts` (ripgrep + fallback)** |
-
-### 1.2 整体流程 (v8)
+### 1.2 整体流程
 
 ```
 用户输入（CLI: `yu "fix login bug"` 或 Web UI）
@@ -79,17 +41,19 @@ classifier.ts — 意图分类
 
 ### 1.3 自定义 Agent 类型
 
-通过 `bootstrap.ts` 内联注册 7 种类型（默认模型 spawn 时可覆写）：
+通过 `bootstrap.ts` 内联注册 9 种类型（默认模型 spawn 时可覆写）：
 
-| Type | 工具 | 默认模型 | 用途 |
-|------|------|---------|------|
-| `coding` | terminal, read_file, write_file, patch, search_files, glob, grep | v4-flash | 编码 |
-| `review` | read_file, search_files, glob, grep | v4-flash | 审查 |
-| `plan` | read_file, search_files, search, glob, grep | v4-flash | 规划 |
-| `lsp` | terminal (LSP) | v4-flash | LSP 诊断 |
-| `commit` | terminal (git) | v4-flash | 提交 |
-| `doc` | read_file, write_file | v4-flash | 文档 |
-| `search` | terminal (CLI) | v4-flash | 搜索 |
+| Type | 工具 | 默认模型 | 用途 | mcpServers |
+|------|------|---------|------|-----------|
+| `coding` | bash, read, edit, write, grep, find, ls | v4-pro | 编码 | codegraph |
+| `review` | read, grep, find, ls | v4-flash | 审查 | codegraph |
+| `plan` | read, grep, find, ls, write | v4-pro | 规划 | codegraph |
+| `lsp` | bash | v4-flash | LSP 诊断 | — |
+| `commit` | bash | v4-flash | 提交 | — |
+| `doc` | read, edit | v4-flash | 文档 | codegraph |
+| `search` | bash, read, grep | v4-flash | 搜索 | codegraph |
+| `chat` | read, grep, find, bash | v4-flash | 非编程对话 | — |
+| `general-purpose` | （无） | v4-flash | 通用意图分发 | — |
 
 配置方式（`bootstrap.ts` 启动时注册）：
 
@@ -115,7 +79,7 @@ const AGENT_TYPES = {
 > Agent 类型不通过外部 SDK 注册。`bootstrap.ts` 在启动时加载 prompt 文件后，类型配置由 `spawn.ts` → `agent-loop.ts` 在 `runAgent()` 时按需使用。
 > spawn 时通过 `config.type` 选择 system prompt，通过 `config.model` 覆写默认模型。
 
-### 1.4 Prompt 组织（9 个文件）
+### 1.4 Prompt 组织（10 个文件）
 
 ```
 `~/yu-agent/prompts/`
@@ -127,6 +91,7 @@ const AGENT_TYPES = {
 ├── commit.md
 ├── doc.md
 ├── search.md            # 代码库搜索 + 网页搜索
+├── chat.md              # 非编程对话（带 character-rp skill）
 └── team.md              # # Architect / # Coder / # Reviewer / # Searcher
 ```
 
@@ -134,7 +99,7 @@ const AGENT_TYPES = {
 
 ## 二、调度器设计
 
-### 2.1 入口 (v8)
+### 2.1 入口
 
 入口是 `bin/yu.ts` CLI（或 Web UI 服务器 `yu ui`），不再经过任何外部 hook。
 
@@ -379,13 +344,15 @@ hook 代码执行：
 ```typescript
 // extension/bootstrap.ts
 const AGENT_TYPE_CONFIGS: Record<string, AgentTypeConfig> = {
-  coding: { model: 'v4-flash', tools: ['Bash', 'Read', 'Edit', 'Glob', 'Grep'], prompt: 'coding' },
-  review: { model: 'v4-flash', tools: ['Read', 'Glob', 'Grep'], prompt: 'review' },
-  plan:   { model: 'v4-flash', tools: ['Read', 'Glob', 'Grep', 'Web'], prompt: 'plan' },
+  coding: { model: 'v4-pro', tools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep'], prompt: 'coding', mcpServers: ['codegraph'] },
+  review: { model: 'v4-flash', tools: ['Read', 'Glob', 'Grep'], prompt: 'review', mcpServers: ['codegraph'] },
+  plan:   { model: 'v4-pro', tools: ['Read', 'Glob', 'Grep', 'Web'], prompt: 'plan', mcpServers: ['codegraph'] },
   lsp:    { model: 'v4-flash', tools: ['Bash'], prompt: 'lsp' },
   commit: { model: 'v4-flash', tools: ['Bash'], prompt: 'commit' },
-  doc:    { model: 'v4-flash', tools: ['Read', 'Edit'], prompt: 'doc' },
-  search: { model: 'v4-flash', tools: ['Bash'], prompt: 'search' },
+  doc:    { model: 'v4-flash', tools: ['Read', 'Edit'], prompt: 'doc', mcpServers: ['codegraph'] },
+  search: { model: 'v4-flash', tools: ['Bash', 'Read', 'Grep'], prompt: 'search', mcpServers: ['codegraph'] },
+  chat:   { model: 'v4-flash', tools: ['Read', 'Grep', 'Bash'], prompt: 'chat', skillNames: ['character-rp'] },
+  'general-purpose': { model: 'v4-flash', tools: [], prompt: 'scheduler' },
 };
 ```
 
@@ -424,13 +391,15 @@ return {
 
 | Agent Type | 可用的内置工具 |
 |-----------|---------------|
-| coding | Bash, Read, Edit, Glob, Grep |
+| coding | Bash, Read, Edit, Write, Glob, Grep |
 | review | Read, Glob, Grep |
 | plan | Read, Glob, Grep |
 | lsp | Bash |
 | commit | Bash |
 | doc | Read, Edit |
-| search | Bash |
+| search | Bash, Read, Grep |
+| chat | Read, Grep, Find, Bash |
+| general-purpose | （无） |
 
 权限在 AgentConfig 的 `builtinToolNames` 中控制。
 
@@ -718,57 +687,52 @@ status 为 approved 时 findings 可为空。
 ## 五、项目结构
 
 ```
-~/yu-agent/
-├── extension/
-│   ├── index.ts           # Pi extension 入口 → 注册 beforeChat hook
-│   ├── scheduler.ts       # hook 处理函数 → JSON 解析 + spawn 编排 + 错误处理
-│   ├── config.ts          # AgentConfig 定义（7 种类型注册）
-│   └── template.ts        # 输出格式校验（校验各 agent 返回的 JSON）
-├── prompts/
-│   ├── scheduler.md
-│   ├── coding.md
-│   ├── review.md
-│   ├── plan.md
-│   ├── lsp.md
-│   ├── commit.md
-│   ├── doc.md
-│   ├── search.md
-│   └── team.md
-├── data/
-│   ├── decisions.json
-│   └── temp/
-└── package.json
+|~/yu-agent/
+|├── extension/
+|│   ├── bootstrap.ts       # 启动编排：API key 注入 + 类型注册
+|│   ├── scheduler.ts       # 调度器入口 → 意图分类 + 执行
+|│   ├── classifier.ts      # 意图分类（fast path + LLM）
+|│   ├── executor.ts        # 并发执行 + diff review
+|│   ├── agent-loop.ts      # Agent 主循环（LLM → tool → loop）
+||│   ├── spawn.ts           # AgentLoop 代理层
+||│   ├── team-orchestrator.ts # 团队模式编排
+||│   ├── config.ts          # AgentConfig 定义（9 种类型）
+|│   ├── template.ts        # 输出格式校验
+|│   ├── background.ts      # 后台任务注册表
+|│   ├── supervisor.ts      # 子进程管理器
+|│   ├── topic.ts           # 主题/会话管理
+|│   ├── events.ts          # 事件总线
+|│   ├── tracker.ts         # 决策持久化
+|│   ├── deepseek.ts        # DeepSeek API 客户端
+|│   ├── provider.ts        # Provider 抽象层
+|│   ├── lifecycle.ts       # 优雅关闭管理器
+|│   ├── verifier.ts        # LSP 验证 + 测试运行
+|│   └── tools/             # 工具注册表 + 各工具实现
+|├── bin/
+|│   ├── yu.ts              # CLI 入口
+|│   └── commands/          # 各命令 handler
+|├── webui/
+|│   ├── server.ts          # Hono Web 服务器
+|│   ├── demo.html          # 聊天界面
+|│   └── assets/            # 前端资源
+||├── dist/
+||│   └── yu.js              # 569 模块 bundle
+||├── prompts/               # agent 类型 prompt 模板
+||├── tests/                 # 测试文件（46 文件，612 用例）
+||└── package.json
 ```
 
 **职责划分：**
 
 | 文件 | 职责 |
 |------|------|
-| `index.ts` | 调用 `pi.registerHook('beforeChat', handler)` 注册 hook。入口文件 |
-| `scheduler.ts` | 导出 `handler(userInput)`。内部逻辑：spawn 调度器 agent → 解析 JSON → spawn 子 agent → 处理结果 → 错误处理 |
-| `config.ts` | 启动时加载 prompt 文件 → 注册 7 种 AgentConfig |
-| `template.ts` | 校验各 agent 返回 JSON 是否符合格式定义，失败则要求重试 |
-
-### package.json
-
-```json
-{
-  "name": "yu-agent",
-  "description": "Yu-agent programming agent dispatching for Pi",
-  "pi": { "extensions": ["./extension/index.ts"] },
-  "dependencies": {
-    "@tintinweb/pi-subagents": "latest",
-    "opencode-codebase-index": "latest",
-    "@colbymchenry/codegraph": "latest"
-  },
-  "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.74.0"
-  }
-}
-```
-
-安装方式：`pi install ~/yu-agent`（本地目录）或 `pi install npm:@scope/yu-agent`（npm 发布后）。
-需在项目根目录创建 `.gitignore`，忽略 `data/` 目录。
+| `bootstrap.ts` | 启动时执行 injectApiKeys + 注册 agent 类型 + validateAll |
+| `scheduler.ts` | `handler(userInput)` → 意图分类 → executePlan |
+| `classifier.ts` | fast path 检测 / LLM 调度器 → 输出 JSON 规划 |
+| `executor.ts` | runParallelGroup / runWithConcurrencyLimit / reviewDiff |
+| `agent-loop.ts` | `runAgent()` — LLM + tool use 循环，零外部依赖 |
+| `spawn.ts` | 保持 SpawnConfig/SpawnResult 接口，委托给 agent-loop |
+| `config.ts` | 加载 prompt 文件 → 注册 9 种 AgentConfig |
 
 ---
 

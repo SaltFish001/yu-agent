@@ -25,9 +25,13 @@ registerTool({
         type: 'string',
         description: 'File path to edit',
       },
+      old_content: {
+        type: 'string',
+        description: '(replace mode) 要替换的旧文本。old_string 是此参数的别名。',
+      },
       old_string: {
         type: 'string',
-        description: '(replace mode) Text to find and replace.',
+        description: 'Alias for old_content.',
       },
       new_string: {
         type: 'string',
@@ -100,7 +104,7 @@ registerTool({
       }
 
       // ── replace 模式（默认） ──────────────────────
-      const oldStr = String(params.old_string ?? '')
+      const oldStr = String(params.old_string ?? params.old_content ?? params.old ?? '')
       if (!oldStr) {
         return { success: false, output: '', error: 'old_string is required in replace mode' }
       }

@@ -488,6 +488,16 @@ async function mainCli(): Promise<void> {
     // Best-effort
   }
 
+  // ═ 启动初始化 ═
+  try {
+    const { bootstrap } = await import('../extension/bootstrap.js')
+    bootstrap({ skipSkills: false }).catch(err =>
+      console.warn('[yu] Bootstrap warning:', err)
+    )
+  } catch {
+    // best-effort
+  }
+
   // Help
   if (args[0] === '--help' || args[0] === '-h' || args[0] === 'help') {
     if (args[1]) {
@@ -619,120 +629,25 @@ async function mainCli(): Promise<void> {
 
   // `yu git <subcommand>` — Git integration via gh CLI
   if (args[0] === 'git') {
-    const sub = args[1] || 'help'
-    const { prCreate, prList, createBranch, mergeBranch } = await import('../extension/git-commands.js')
-    try {
-      switch (sub) {
-        case 'pr': {
-          const prSub = args[2]
-          if (prSub === 'create') {
-            const out = prCreate(args[3] || 'main')
-            console.log(out)
-          } else if (prSub === 'list') {
-            const out = prList()
-            console.log(out)
-          } else {
-            console.error('Usage: yu git pr create [target-branch]')
-            console.error('       yu git pr list')
-            process.exit(1)
-          }
-          break
-        }
-        case 'branch': {
-          const branchName = args[2]
-          if (!branchName) {
-            console.error('Usage: yu git branch <name>')
-            process.exit(1)
-          }
-          const out = createBranch(branchName)
-          console.log(out)
-          break
-        }
-        case 'merge': {
-          const mergeBranchName = args[2]
-          if (!mergeBranchName) {
-            console.error('Usage: yu git merge <branch>')
-            process.exit(1)
-          }
-          const out = mergeBranch(mergeBranchName)
-          console.log(out)
-          break
-        }
-        default:
-          console.error('Usage: yu git pr create [target-branch]')
-          console.error('       yu git pr list')
-          console.error('       yu git branch <name>')
-          console.error('       yu git merge <branch>')
-          process.exit(1)
-      }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e)
-      console.error(`git 操作失败: ${msg}`)
-      process.exit(1)
-    }
-    process.exit(0)
+    const { command: gitCommand } = await import('./commands/git.js')
+    await gitCommand(args)
+    return
   }
 
   // `yu hook list|toggle <name>` — manage hook config
   if (args[0] === 'hook') {
-    const sub = args[1] || 'help'
-    const configPath = resolve(process.env.HOME || '/home/saltfish', '.yu', 'config.json')
-    let config: Record<string, unknown> = {}
-    try {
-      if (existsSync(configPath)) {
-        config = JSON.parse(readFileSync(configPath, 'utf-8'))
-      }
-    } catch {
-      // will fall back to empty config
-    }
-
-    if (sub === 'list') {
-      const hooks = config.hooks as Record<string, { enabled: boolean }> | undefined
-      if (!hooks || Object.keys(hooks).length === 0) {
-        console.log('No hooks configured.')
-      } else {
-        console.log('Registered hooks:')
-        for (const [name, opts] of Object.entries(hooks)) {
-          const enabled = (opts as { enabled: boolean })?.enabled ?? true
-          console.log(`  ${enabled ? '✓' : '✗'} ${name} (${enabled ? 'enabled' : 'disabled'})`)
-        }
-      }
-      process.exit(0)
-    }
-
-    if (sub === 'toggle') {
-      const hookName = args[2]
-      if (!hookName) {
-        console.error('Usage: yu hook toggle <name>')
-        console.error('Example: yu hook toggle beforeChat')
-        process.exit(1)
-      }
-      const hooks = (config.hooks || {}) as Record<string, { enabled: boolean }>
-      // Validate: only known hook names can be toggled
-      const knownHooks = ['beforeChat']
-      if (!knownHooks.includes(hookName)) {
-        console.error(`Unknown hook "${hookName}". Available hooks: ${knownHooks.join(', ')}`)
-        process.exit(1)
-      }
-      const current = hooks[hookName]?.enabled ?? true
-      hooks[hookName] = { enabled: !current }
-      config.hooks = hooks
-      // Ensure dir exists
-      mkdirSync(resolve(process.env.HOME || '/home/saltfish', '.yu'), { recursive: true })
-      writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8')
-      console.log(`Hook "${hookName}" ${!current ? 'disabled' : 'enabled'}.`)
-      process.exit(0)
-    }
-
-    console.error('Usage:')
-    console.error('  yu hook list            — show registered hooks')
-    console.error('  yu hook toggle <name>   — toggle hook on/off')
-    process.exit(1)
+    const { command: hookCommand } = await import('./commands/hook.js')
+    await hookCommand(args)
+    return
   }
 
   // `yu tool list | inspect <name>` — tool registry inspection
   if (args[0] === 'tool') {
     const sub = args[1] || 'help'
+    // 注册所有内置工具（side-effect import）
+    await import('../extension/tools/aliases.js')
+    const { registerAliases } = await import('../extension/tools/aliases.js')
+    registerAliases()
     const { listTools, getTool } = await import('../extension/tools/registry.js')
 
     if (sub === 'list') {
@@ -825,258 +740,23 @@ async function mainCli(): Promise<void> {
 
   // `yu mcp <subcommand>` — MCP server management
   if (args[0] === 'mcp') {
-    const sub = args[1] || 'list'
-
-    if (sub === 'list') {
-      const { existsSync, readFileSync } = await import('fs')
-      const { resolve } = await import('path')
-      const { homedir } = await import('os')
-      const configPath = resolve(homedir(), '.yu', 'mcp.config.json')
-      const statusPath = resolve(homedir(), '.yu', 'mcp.json')
-
-      // Read config
-      let configured: string[] = []
-      if (existsSync(configPath)) {
-        try {
-          const raw = readFileSync(configPath, 'utf-8')
-          const config = JSON.parse(raw)
-          configured = Object.keys(config.servers || {})
-        } catch {
-          /* ignore */
-        }
-      }
-
-      // Read status
-      const statusMap: Record<string, { status: string; tools?: string[]; error?: string }> = {}
-      if (existsSync(statusPath)) {
-        try {
-          const raw = readFileSync(statusPath, 'utf-8')
-          const statusData = JSON.parse(raw)
-          for (const s of statusData.servers || []) {
-            statusMap[s.name] = s
-          }
-        } catch {
-          /* ignore */
-        }
-      }
-
-      if (configured.length === 0 && Object.keys(statusMap).length === 0) {
-        console.log('No MCP servers configured.')
-        console.log('  Add one with: yu mcp add <name> <command> [args...]')
-        process.exit(0)
-      }
-
-      const allNames = [...new Set([...configured, ...Object.keys(statusMap)])]
-      console.log(`MCP servers (${allNames.length}):`)
-      for (const name of allNames) {
-        const st = statusMap[name]
-        const statusIcon = !st ? '○' : st.status === 'connected' ? '✓' : st.status === 'error' ? '✗' : '○'
-        const statusText = !st ? 'not started' : st.status
-        const tools = st?.tools?.length ? ` (${st.tools.length}t)` : ''
-        const err = st?.error ? ` — ${st.error}` : ''
-        const configuredMark = configured.includes(name) ? '' : ' (not in config)'
-        console.log(`  ${statusIcon} ${name} ${statusText}${tools}${err}${configuredMark}`)
-      }
-      process.exit(0)
-    }
-
-    if (sub === 'add') {
-      const name = args[2]
-      const command = args[3]
-      if (!name || !command) {
-        console.error('Usage: yu mcp add <name> <command> [args...]')
-        process.exit(1)
-      }
-      const extraArgs = args.slice(4)
-      const { resolve } = await import('path')
-      const { homedir } = await import('os')
-      const { existsSync, readFileSync, writeFileSync } = await import('fs')
-      const configPath = resolve(homedir(), '.yu', 'mcp.config.json')
-
-      let config: { servers: Record<string, { command: string; args?: string[] }> } = { servers: {} }
-      if (existsSync(configPath)) {
-        try {
-          config = JSON.parse(readFileSync(configPath, 'utf-8'))
-        } catch {
-          /* ignore */
-        }
-      }
-      if (!config.servers) config.servers = {}
-
-      config.servers[name] = { command, args: extraArgs.length > 0 ? extraArgs : undefined }
-      writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8')
-      console.log(`MCP server "${name}" added to ${configPath}`)
-      console.log('  Restart yu-agent to apply changes.')
-      process.exit(0)
-    }
-
-    if (sub === 'rm' || sub === 'remove') {
-      const name = args[2]
-      if (!name) {
-        console.error('Usage: yu mcp rm <name>')
-        process.exit(1)
-      }
-      const { resolve } = await import('path')
-      const { homedir } = await import('os')
-      const { existsSync, readFileSync, writeFileSync } = await import('fs')
-      const configPath = resolve(homedir(), '.yu', 'mcp.config.json')
-
-      let config: { servers: Record<string, unknown> } = { servers: {} }
-      if (existsSync(configPath)) {
-        try {
-          config = JSON.parse(readFileSync(configPath, 'utf-8'))
-        } catch {
-          /* ignore */
-        }
-      }
-      if (!config.servers?.[name]) {
-        console.error(`MCP server "${name}" not found in config.`)
-        process.exit(1)
-      }
-      delete config.servers[name]
-      writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8')
-      console.log(`MCP server "${name}" removed from ${configPath}`)
-      process.exit(0)
-    }
-
-    console.error('Usage:')
-    console.error('  yu mcp list                — list MCP servers (configured + status)')
-    console.error('  yu mcp add <name> <cmd>    — add a new MCP server')
-    console.error('  yu mcp rm <name>           — remove an MCP server')
-    process.exit(1)
+    const { command: mcpCommand } = await import('./commands/mcp.js')
+    await mcpCommand(args)
+    return
   }
 
   // `yu run <prompt>` — scheduler dispatch with optional --agent and --bg
-  // Classifies intent → pass_through to chat agent, or dispatch to
-  // coding/search/review/etc. Replaces the old hardcoded coding-agent spawn.
   if (args[0] === 'run') {
-    const agentIdx = args.indexOf('--agent')
-    const _bgIdx = args.indexOf('--bg') !== -1 ? args.indexOf('--bg') : args.indexOf('--background')
-    let agentName: string | undefined
-    let isBackground = false
-    const filtered: string[] = []
-    if (agentIdx !== -1 && args[agentIdx + 1]) {
-      agentName = args[agentIdx + 1]
-      filtered.push(...args.slice(1, agentIdx), ...args.slice(agentIdx + 2))
-    } else {
-      filtered.push(...args.slice(1))
-    }
-    // Remove --bg/--background flag
-    const finalArgs = filtered.filter((a) => a !== '--bg' && a !== '--background')
-    if (filtered.length !== finalArgs.length) isBackground = true
-    const prompt = finalArgs.join(' ')
-    if (!prompt) {
-      console.error('Usage: yu run [--agent <name>] [--bg] <prompt>')
-      process.exit(1)
-    }
-
-    // Validate agent name if specified
-    if (agentName) {
-      const mod = await import('../extension/config.js')
-      const { getAgentTypeConfig } = mod
-      if (!getAgentTypeConfig(agentName)) {
-        console.error(`Unknown agent type: "${agentName}"`)
-        console.error(`Available: ${Object.keys(mod.AGENT_TYPES || {}).join(', ')}`)
-        process.exit(1)
-      }
-      if (!isBackground) console.error(`  Using agent: ${agentName}`)
-    }
-
-    if (isBackground) {
-      const { handler } = await import('../extension/scheduler.js')
-      const result = await handler(prompt, { agentType: agentName, background: true })
-      if (result !== null) {
-        console.log(result)
-      }
-      return
-    }
-
-    const { handler } = await import('../extension/scheduler.js')
-    const result = await handler(prompt, { agentType: agentName })
-    if (result !== null) {
-      console.log(result)
-    }
+    const { command: runCommand } = await import('./commands/run.js')
+    await runCommand(args)
     return
   }
 
   // `yu bg <subcommand>` — background task management
   if (args[0] === 'bg') {
-    const sub = args[1] || 'list'
-    const { bg } = await import('../extension/background.js')
-
-    if (sub === 'list' || sub === 'ls') {
-      const tasks = bg.list()
-      if (tasks.length === 0) {
-        console.log('No background tasks.')
-      } else {
-        console.log(`Background tasks (${tasks.length}):`)
-        console.log('')
-        for (const t of tasks) {
-          const dur = t.endTime ? `${((t.endTime - t.startTime) / 1000).toFixed(1)}s` : '-'
-          const icon =
-            t.status === 'completed'
-              ? '✓'
-              : t.status === 'failed'
-                ? '✗'
-                : t.status === 'running'
-                  ? '▶'
-                  : t.status === 'cancelled'
-                    ? '⊘'
-                    : '○'
-          console.log(`  ${icon} ${t.id}`)
-          console.log(`     Type: ${t.type}  Status: ${t.status}  Duration: ${dur}`)
-          console.log(`     Task: ${t.prompt}`)
-          if (t.status === 'failed' && t.error) {
-            console.log(`     Error: ${t.error.slice(0, 200)}`)
-          }
-          console.log('')
-        }
-      }
-      process.exit(0)
-    }
-
-    if (sub === 'get' || sub === 'show') {
-      const id = args[2]
-      if (!id) {
-        console.error('Usage: yu bg get <id>')
-        process.exit(1)
-      }
-      const t = bg.get(id)
-      if (!t) {
-        console.error(`Background task not found: ${id}`)
-        process.exit(1)
-      }
-      console.log(`Task: ${t.id}`)
-      console.log(`  Type:   ${t.type}`)
-      console.log(`  Status: ${t.status}`)
-      console.log(`  Start:  ${new Date(t.startTime).toLocaleString()}`)
-      if (t.endTime) console.log(`  End:    ${new Date(t.endTime).toLocaleString()}`)
-      console.log(`  Prompt: ${t.prompt}`)
-      if (t.result) console.log(`\n  Result:\n${t.result.slice(0, 2000)}`)
-      if (t.error) console.log(`\n  Error: ${t.error}`)
-      process.exit(0)
-    }
-
-    if (sub === 'cancel') {
-      const id = args[2]
-      if (!id) {
-        console.error('Usage: yu bg cancel <id>')
-        process.exit(1)
-      }
-      if (bg.cancel(id)) {
-        console.log(`Cancelled: ${id}`)
-      } else {
-        console.error(`Task not found or already finished: ${id}`)
-        process.exit(1)
-      }
-      process.exit(0)
-    }
-
-    console.error('Usage:')
-    console.error('  yu bg list           — list background tasks')
-    console.error('  yu bg get <id>       — show task result')
-    console.error('  yu bg cancel <id>    — cancel pending task')
-    process.exit(1)
+    const { command: bgCommand } = await import('./commands/bg.js')
+    await bgCommand(args)
+    return
   }
 
   // `yu supervisor <subcommand>` — supervisor management
@@ -1092,78 +772,9 @@ async function mainCli(): Promise<void> {
 
   // `yu rule <subcommand>` — rule (orchestrator) management
   if (args[0] === 'rule') {
-    const sub = args[1] || 'help'
-    const ruleArgs = args.slice(2)
-
-    if (sub === 'help') {
-      const { showHelpForCommand } = await import('./help.js')
-      console.log(showHelpForCommand('rule'))
-      process.exit(0)
-    }
-
-    // Read rules from orchestrator.json
-    const configPath = resolve(process.env.HOME || '/home/saltfish', '.yu', 'orchestrator.json')
-    let rules: Array<{ name: string; trigger?: string; action?: string; condition?: string }> = []
-    let configSource = '(no config)'
-    if (existsSync(configPath)) {
-      try {
-        const raw = readFileSync(configPath, 'utf-8')
-        const parsed = JSON.parse(raw)
-        rules = parsed.rules ?? []
-        configSource = configPath
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e)
-        console.error(`Error reading orchestrator.json: ${msg}`)
-        process.exit(1)
-      }
-    }
-
-    if (sub === 'list') {
-      if (rules.length === 0) {
-        console.log('No rules configured.')
-        console.log(`  Config: ${configSource}`)
-        console.log('  Create ~/.yu/orchestrator.json with a "rules" array to get started.')
-      } else {
-        console.log(`Rules (${rules.length}):`)
-        console.log(`  Config: ${configSource}`)
-        console.log('')
-        for (const r of rules) {
-          const trigger = r.trigger ? `  Trigger: ${r.trigger}` : ''
-          const action = r.action ? `  Action: ${r.action}` : ''
-          const condition = r.condition ? `  Condition: ${r.condition}` : ''
-          console.log(`  ▶ ${r.name}`)
-          if (trigger) console.log(trigger)
-          if (condition) console.log(condition)
-          if (action) console.log(action)
-          console.log('')
-        }
-      }
-      process.exit(0)
-    }
-
-    if (sub === 'inspect') {
-      const name = ruleArgs[0]
-      if (!name) {
-        console.error('Usage: yu rule inspect <name>')
-        process.exit(1)
-      }
-      const rule = rules.find((r) => r.name === name)
-      if (!rule) {
-        console.error(`Rule not found: "${name}"`)
-        process.exit(1)
-      }
-      console.log(`Rule: ${rule.name}`)
-      console.log(`  Trigger:   ${rule.trigger ?? '(none)'}`)
-      console.log(`  Action:    ${rule.action ?? '(none)'}`)
-      console.log(`  Condition: ${rule.condition ?? '(none)'}`)
-      console.log(`  Source:    ${configSource}`)
-      process.exit(0)
-    }
-
-    console.error('Usage:')
-    console.error('  yu rule list              — list all active rules')
-    console.error('  yu rule inspect <name>    — show rule details')
-    process.exit(1)
+    const { command: ruleCommand } = await import('./commands/rule.js')
+    await ruleCommand(args)
+    return
   }
 
   // `yu role <subcommand>` — role management
@@ -1202,84 +813,23 @@ async function mainCli(): Promise<void> {
 
   // `yu search <query>` — semantic code search via CodeGraph
   if (args[0] === 'search') {
-    const query = args.slice(1).join(' ')
-    if (!query) {
-      console.error('Usage: yu search <query>')
-      process.exit(1)
-    }
-    const cgPath = resolve(PROJECT_ROOT, 'node_modules', '.bin', 'codegraph')
-    try {
-      const proc = Bun.spawnSync([cgPath, 'query', query, '--limit', '15'], {
-        cwd: PROJECT_ROOT,
-        timeout: 15000,
-      })
-      if (proc.exitCode === 0) {
-        console.log(proc.stdout.toString())
-      } else {
-        console.error('Search failed: codegraph exited with code', proc.exitCode, proc.stderr.toString())
-      }
-    } catch (e: unknown) {
-      const errMsg = e instanceof Error ? e.message : String(e)
-      console.error('Search failed:', errMsg)
-    }
-    process.exit(0)
+    const { command: cgCommand } = await import('./commands/codegraph.js')
+    await cgCommand('search', args.slice(1))
+    return
   }
 
   // `yu graph <symbol>` — show callers/callees
   if (args[0] === 'graph') {
-    const symbol = args.slice(1).join(' ')
-    if (!symbol) {
-      console.error('Usage: yu graph <symbol>')
-      process.exit(1)
-    }
-    const cgPath = resolve(PROJECT_ROOT, 'node_modules', '.bin', 'codegraph')
-    try {
-      console.log('=== Callers ===')
-      const callersProc = Bun.spawnSync([cgPath, 'callers', symbol, '--limit', '10'], {
-        cwd: PROJECT_ROOT,
-        timeout: 10000,
-      })
-      if (callersProc.exitCode === 0) {
-        console.log(callersProc.stdout.toString())
-      }
-      console.log('=== Callees ===')
-      const calleesProc = Bun.spawnSync([cgPath, 'callees', symbol, '--limit', '10'], {
-        cwd: PROJECT_ROOT,
-        timeout: 10000,
-      })
-      if (calleesProc.exitCode === 0) {
-        console.log(calleesProc.stdout.toString())
-      }
-    } catch (e: unknown) {
-      const errMsg = e instanceof Error ? e.message : String(e)
-      console.error('Graph query failed:', errMsg)
-    }
-    process.exit(0)
+    const { command: cgCommand } = await import('./commands/codegraph.js')
+    await cgCommand('graph', args.slice(1))
+    return
   }
 
   // `yu context <task>` — build task context
   if (args[0] === 'context') {
-    const task = args.slice(1).join(' ')
-    if (!task) {
-      console.error('Usage: yu context <task description>')
-      process.exit(1)
-    }
-    const cgPath = resolve(PROJECT_ROOT, 'node_modules', '.bin', 'codegraph')
-    try {
-      const proc = Bun.spawnSync([cgPath, 'context', task], {
-        cwd: PROJECT_ROOT,
-        timeout: 30000,
-      })
-      if (proc.exitCode === 0) {
-        console.log(proc.stdout.toString())
-      } else {
-        throw new Error(`codegraph exit code ${proc.exitCode}: ${proc.stderr.toString()}`)
-      }
-    } catch (e: unknown) {
-      const errMsg = e instanceof Error ? e.message : String(e)
-      console.error('Context build failed:', errMsg)
-    }
-    process.exit(0)
+    const { command: cgCommand } = await import('./commands/codegraph.js')
+    await cgCommand('context', args.slice(1))
+    return
   }
 
   // `yu refactor <action>` — AST-aware refactoring

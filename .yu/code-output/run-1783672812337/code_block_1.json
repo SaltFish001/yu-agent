@@ -1,0 +1,1 @@
+[{"function": "grep", "args": "{\"pattern\": \"light|prefers-color-scheme\", \"path\": \"webui/frontend/src/styles/global.css\"}"}]

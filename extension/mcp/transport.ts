@@ -55,7 +55,7 @@ export abstract class McpTransport {
   /** 传输配置 */
   protected config: McpTransportConfig
   /** 事件回调 */
-  protected events: McpTransportEvents = {}
+  events: McpTransportEvents = {}
 
   constructor(config: McpTransportConfig) {
     this.config = config

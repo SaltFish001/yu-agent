@@ -23,9 +23,6 @@ import { resolve } from 'path'
 /** ~/.yu — base directory for all yu-agent data, config, and state */
 export const YU_HOME = resolve(process.env.HOME || '/home/saltfish', '.yu')
 
-/** ~/.yu/agent — Pi coding-agent directory (used internally by Pi runtime) */
-export const PI_AGENT_DIR = resolve(YU_HOME, 'agent')
-
 /** ~/.yu/prompts — markdown prompt files for each agent type */
 export const PROMPTS_DIR = resolve(YU_HOME, 'prompts')
 
