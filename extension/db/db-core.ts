@@ -125,7 +125,7 @@ export function getDb(): DatabaseSync {
 }
 
 // ── Schema versions — used for migration ─────────────────
-const SCHEMA_VERSION = 6
+const SCHEMA_VERSION = 7
 
 function initSchema(db: DatabaseSync): void {
   // Create schema version tracking
@@ -212,6 +212,7 @@ function initSchema(db: DatabaseSync): void {
       session_id TEXT NOT NULL,
       role TEXT NOT NULL,
       content TEXT NOT NULL DEFAULT '',
+      reasoning TEXT DEFAULT NULL,
       time_created INTEGER NOT NULL,
       FOREIGN KEY (session_id) REFERENCES sessions(tag) ON DELETE CASCADE
     );
@@ -331,6 +332,7 @@ function runMigrations(db: DatabaseSync): void {
           session_id TEXT NOT NULL,
           role TEXT NOT NULL,
           content TEXT NOT NULL DEFAULT '',
+      reasoning TEXT DEFAULT NULL,
           time_created INTEGER NOT NULL
         );
       `)
@@ -458,6 +460,11 @@ function runMigrations(db: DatabaseSync): void {
     } catch {
       /* ignore if exists */
     }
+  }
+
+
+  if (currentVersion < 7) {
+    try { db.exec("ALTER TABLE messages ADD COLUMN reasoning TEXT DEFAULT NULL") } catch { /* ignore */ }
   }
 
   db.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(SCHEMA_VERSION, Date.now())

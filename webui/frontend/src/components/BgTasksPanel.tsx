@@ -1,9 +1,31 @@
 import { useStore } from '../lib/store'
 import { t } from '../lib/i18n'
+import { PanelLoading, ErrorState } from './primitives'
+import { fmtMs } from '../lib/format'
 
 export default function BgTasksPanel() {
   const status = useStore((s) => s.status)
+  const statusLoaded = useStore((s) => s.statusLoaded)
+  const connected = useStore((s) => s.connected)
+  const refreshStatus = useStore((s) => s.refreshStatus)
   const tasks = status.backgroundTasks || []
+
+  if (!statusLoaded) {
+    return (
+      <>
+        <div className="panel-header"><h2>{t('bg.title')}</h2></div>
+        <PanelLoading />
+      </>
+    )
+  }
+  if (!connected) {
+    return (
+      <>
+        <div className="panel-header"><h2>{t('bg.title')}</h2></div>
+        <ErrorState message={t('panel.disconnected')} onRetry={refreshStatus} />
+      </>
+    )
+  }
 
   return (
     <>
@@ -41,11 +63,4 @@ export default function BgTasksPanel() {
       </div>
     </>
   )
-}
-
-function fmtMs(ms: number): string {
-  if (ms < 1000) return ms + 'ms'
-  const s = Math.floor(ms / 1000)
-  if (s < 60) return s + 's'
-  return Math.floor(s / 60) + 'm ' + (s % 60) + 's'
 }

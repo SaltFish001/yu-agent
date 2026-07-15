@@ -423,7 +423,8 @@ async function getFullStatus(): Promise<Record<string, unknown>> {
   return result
 }
 
-// Keep getStatus() for backward compat — now delegates to getFullStatus() with limited fields
+// Keep getStatus() for backward compat — delegates to getFullStatus() and returns
+// every field the frontend consumes (topics, skills, backgroundTasks, activeTopic, …).
 async function getStatus(): Promise<Record<string, unknown>> {
   const full = await getFullStatus()
   return {
@@ -435,6 +436,10 @@ async function getStatus(): Promise<Record<string, unknown>> {
     memories: full.memories ?? [],
     rules: full.rules ?? [],
     ws: full.ws,
+    topics: full.topics ?? [],
+    skills: full.skills ?? [],
+    backgroundTasks: full.backgroundTasks ?? [],
+    activeTopic: full.activeTopic ?? null,
   }
 }
 
@@ -446,6 +451,7 @@ const chatSchema = z.object({
     .min(1, '消息不能为空')
     .max(10_000, '消息过长（最多 10000 字符）')
     .transform((s) => s.trim()),
+  budget: z.number().optional(),
 })
 
 // ── Terminal Session Manager ─────────────────────────────
@@ -567,7 +573,11 @@ app.get(
 // ── Terminal WebSocket ──
 
 // Serve terminal page for regular GET requests (not WebSocket upgrade)
-app.get('/term-ws/:topic?', async (c) => {
+app.get('/term-ws/:topic?', async (c, next) => {
+  if (c.req.header('upgrade')?.toLowerCase() === 'websocket') {
+    await next()
+    return
+  }
   const topicName = c.req.param('topic') || 'default'
   return c.html(`<!DOCTYPE html>
 <html lang="zh"><head><meta charset="utf-8"><title>终端 - ${topicName}</title>
@@ -852,6 +862,22 @@ app.get('/api/topics', async (c) => {
   }
 })
 
+app.post('/api/topics', async (c) => {
+  try {
+    const body = await c.req.json()
+    const name = typeof body?.name === 'string' ? body.name.trim() : ''
+    if (!name) return c.json({ error: 'Topic name is required.' }, 400)
+    const dir = typeof body?.dir === 'string' && body.dir.trim() ? body.dir.trim() : process.cwd()
+    const { create } = await import('../extension/topic.js')
+    const topic = create(name, dir)
+    log.info(`Topic created via Web UI: "${name}" @ ${dir}`)
+    return c.json({ ok: true, topic })
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    return c.json({ error: msg }, 500)
+  }
+})
+
 // ── API: topic detail (info + file tree + diff) ──
 
 function walkDir(dir: string, prefix = ''): Array<{ name: string; path: string; isDir: boolean; size: number }> {
@@ -983,6 +1009,15 @@ app.post(
       iterations: result.iterations,
     })
 
+    // Persist to DB
+    try {
+      const { insertMessage, upsertSession } = await import('../extension/db.js')
+      const sid = 'default'
+      upsertSession(sid, { name: sid, cwd: process.cwd() })
+      insertMessage(sid, 'user', message)
+      insertMessage(sid, 'assistant', result.output, Date.now(), result.reasoning ?? null)
+    } catch (err) { log.warn('Failed to persist messages', err) }
+
     broadcastWS('chat:complete', {
       result: result.output,
       iterations: result.iterations,
@@ -1007,7 +1042,7 @@ app.post(
     return parsed.data
   }),
   async (c) => {
-    const { message } = c.req.valid('json')
+    const body = c.req.valid('json') as { message: string; budget?: number }; const message = body.message; const budget = body.budget ?? 0
 
     const stream = new ReadableStream({
       async start(controller) {
@@ -1026,10 +1061,13 @@ app.post(
         if (!trimmed) {
           enc(`event: error\ndata: ${JSON.stringify({ error: 'empty message' })}\n\n`)
           enc('data: [DONE]\n\n')
+
           try { controller.close() } catch { /* already closed */ }
           return
         }
-        const isChat = false // 所有输入走 AgentLoop，由 scheduler 分类
+        const codeKeywords = /\b(fix|bug|error|code|file|src|test|build|deploy|refactor|implement|function|class|import|export|module|package|config|api|endpoint|route|component|state|props|hook|type|interface|schema|query|mutation|database|sql|migration|docker|kubernetes|nginx|linux|bash|script|cron|log|debug|trace|perf|memory|leak|crash|exception|stack|traceback|compile|runtime|dependency|version|upgrade|install|npm|pip|cargo|go |rust |python|node|bun |js|ts|jsx|tsx|json|yaml|toml|css|html|svg|regex|async|await|promise|callback|closure|thread|process|fork|spawn|socket|http|https|tcp|udp|dns|ssl|tls|cert|auth|login|logout|token|jwt|oauth|session|cookie|cors|cache|proxy|gateway|load|balance|scale|replica|shard|partition|index|search|sort|filter|map|reduce|aggregate|pipeline)\b/i
+        const isChat = trimmed.length < 100 && !codeKeywords.test(trimmed) && !trimmed.includes('\n')
+        log.info(`Chat request [isChat=${'$'}{isChat}]: "${'$'}{trimmed.slice(0, 80)}"`)
 
         if (isChat) {
           // 走 chat 模式：一次 LLM 调用，无工具循环
@@ -1050,6 +1088,15 @@ app.post(
             })
 
             const output = result?.content ?? '嗯？'
+
+            // Persist to DB
+            try {
+              const { insertMessage, upsertSession } = await import('../extension/db.js')
+              const sid = 'default'
+              upsertSession(sid, { name: sid, cwd: process.cwd() })
+              insertMessage(sid, 'user', trimmed)
+              insertMessage(sid, 'assistant', output, Date.now(), result?.reasoning_content ?? null)
+            } catch (err) { log.warn('Failed to persist chat messages', err) }
             const reasoning = result?.reasoning_content
             // 真正的推理链来自 reasoning_content
             if (reasoning) {
@@ -1065,10 +1112,12 @@ app.post(
             }
             enc(`event: done\ndata: ${JSON.stringify({ iterations: 0, totalTokens: result?.usage?.total_tokens ?? 0 })}\n\n`)
             enc('data: [DONE]\n\n')
+
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err)
             enc(`event: error\ndata: ${JSON.stringify({ error: msg })}\n\n`)
             enc('data: [DONE]\n\n')
+
           } finally {
             try { controller.close() } catch { /* already closed */ }
           }
@@ -1104,8 +1153,9 @@ app.post(
             }
             const agent = new AgentLoop({
               systemPrompt,
+              model: (serverConfig.defaultModel as string) || undefined,
               maxIterations: 20,
-              tokenBudget: 40000, // ~$0.10 max per task
+              tokenBudget: budget && budget > 0 ? budget : 50000, // ~$0.10 default, overridden by /budget
               onEvent: (event) => {
                 // Include iteration & token info in every event payload
                 const data = {
@@ -1153,16 +1203,28 @@ app.post(
               totalTokens: 0,
             }
 
+            // Persist to DB (best-effort, inside async IIFE for scope)
+            log.info(`Stream: persisting to DB, sid=default`)
+            try {
+              const { insertMessage, upsertSession } = await import('../extension/db.js')
+              const sid = 'default'
+              upsertSession(sid, { name: sid, cwd: process.cwd() })
+              insertMessage(sid, 'user', message)
+              insertMessage(sid, 'assistant', result.output, Date.now(), result.reasoning ?? null)
+            } catch (err) { log.warn('Failed to persist messages', err) }
+
             // 发送最终文本输出
             const output = typeof result.output === 'string' ? result.output : JSON.stringify(result)
             enc(`event: text\ndata: ${JSON.stringify({ output })}\n\n`)
 
             enc(`event: done\ndata: ${JSON.stringify({ iterations: result.iterations, totalTokens: result.totalTokens })}\n\n`)
             enc('data: [DONE]\n\n')
+
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err)
             enc(`event: error\ndata: ${JSON.stringify({ error: msg })}\n\n`)
             enc('data: [DONE]\n\n')
+
           } finally {
             try { controller.close() } catch { /* already closed */ }
           }
@@ -1183,6 +1245,41 @@ app.post(
     })
   },
 )
+
+// ── API: debug system prompt ──
+
+app.get('/api/debug/prompt', async (c) => {
+  const type = c.req.query('type') || 'chat'
+  const { resolve } = await import('path')
+  const { existsSync, readFileSync } = await import('fs')
+  const home = process.env.HOME || '/home/saltfish'
+  const files: Record<string, string> = {
+    chat: resolve(home, '.yu', 'prompts', 'chat.md'),
+    coding: resolve(home, '.yu', 'prompts', 'coding.md'),
+    scheduler: resolve(home, '.yu', 'prompts', 'scheduler.md'),
+  }
+  const path = files[type]
+  if (!path || !existsSync(path)) return c.json({ error: `prompt not found for type: ${type}` }, 404)
+  const content = readFileSync(path, 'utf-8')
+  return c.json({ type, path, length: content.length, preview: content.slice(0, 500), full: content })
+})
+
+
+// ── API: messages (chat history from DB) ──
+
+app.get('/api/messages', async (c) => {
+  const before = c.req.query('before')
+  const limit = Math.min(parseInt(c.req.query('limit') || '50', 10) || 50, 200)
+  try {
+    const { getMessages, getMessagesBefore } = await import('../extension/db.js')
+    const sid = 'default'
+    const msgs = before ? getMessagesBefore(sid, parseInt(before, 10), limit) : getMessages(sid, limit)
+    return c.json({ messages: msgs })
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    return c.json({ error: msg }, 500)
+  }
+})
 
 // ── 首页 ──
 
@@ -1227,6 +1324,15 @@ app.post('/api/config', async (c) => {
 
 app.get('/api/config', (c) => {
   return c.json(serverConfig)
+})
+
+
+// ── API: restart server ──
+
+app.post('/api/restart', async (c) => {
+  log.info('Server restart requested via API')
+  setTimeout(() => process.exit(0), 500)
+  return c.json({ ok: true, message: 'Restarting in 500ms...' })
 })
 
 // ── SPA fallback: 非 API 路由返回 index.html ──

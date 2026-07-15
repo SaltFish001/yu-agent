@@ -15,6 +15,9 @@ const uid = () => `yu_${++_id}_${Date.now().toString(36)}`
  *   event: error        → error
  *   data: [DONE]        → stream end
  */
+// Init budget from localStorage
+try { (window as any).__yu_budget = parseInt(localStorage.getItem('yu-budget') || '', 10) || 0 } catch {}
+
 export class YuTransport implements ChatTransport<UIMessage> {
   async sendMessages({
     messages,
@@ -35,10 +38,11 @@ export class YuTransport implements ChatTransport<UIMessage> {
       return new ReadableStream({ start(c) { c.close() } })
     }
 
+    const budget = (window as any).__yu_budget ?? 0
     const response = await fetch('/api/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text }),
+      body: JSON.stringify({ message: text, budget }),
       signal: abortSignal,
     })
 

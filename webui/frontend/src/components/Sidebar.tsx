@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useState, Fragment, useEffect } from 'react'
 import { useStore } from '../lib/store'
 import { t } from '../lib/i18n'
-import { fetchTopicDetail, deleteTopic, archiveTopic, renameTopic } from '../lib/api'
-import { uuid } from '../lib/uuid'
+import { deleteTopic, archiveTopic, renameTopic } from '../lib/api'
+import CreateTopicModal from './CreateTopicModal'
+import TopicDetailDrawer from './TopicDetailDrawer'
+import { getStatusColor, getStatusLabel, getDotClass } from '../lib/status'
 
 export default function Sidebar() {
   const status = useStore((s) => s.status)
@@ -10,12 +12,18 @@ export default function Sidebar() {
   const setTopicSearch = useStore((s) => s.setTopicSearch)
   const activeTopic = useStore((s) => s.activeTopic)
   const setActiveTopic = useStore((s) => s.setActiveTopic)
-  const addMessage = useStore((s) => s.addMessage)
+  const pushToast = useStore((s) => s.pushToast)
+  const sidebarCollapsed = useStore((s) => s.sidebarCollapsed)
+  const toggleSidebar = useStore((s) => s.toggleSidebar)
 
   const topics = status.topics || []
-  const filtered = topicSearch
-    ? topics.filter((t) => t.name.toLowerCase().includes(topicSearch.toLowerCase()))
-    : topics
+  const [filter, setFilter] = useState<'all' | 'active' | 'archived'>('all')
+  const filtered = topics.filter((t) => {
+    if (topicSearch && !t.name.toLowerCase().includes(topicSearch.toLowerCase())) return false
+    if (filter === 'active' && (t.archived || t.status !== 'active')) return false
+    if (filter === 'archived' && !t.archived) return false
+    return true
+  })
 
   // Active first, then by name, archived last
   const sorted = [...filtered].sort((a, b) => {
@@ -27,98 +35,49 @@ export default function Sidebar() {
   })
 
   const [creating, setCreating] = useState(false)
-  const [newTopicName, setNewTopicName] = useState('')
   const [renaming, setRenaming] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
+  const [detailName, setDetailName] = useState<string | null>(null)
+
+  // Open create-topic modal from command palette
+  useEffect(() => {
+    const onOpen = () => setCreating(true)
+    window.addEventListener('yu:open-create', onOpen)
+    return () => window.removeEventListener('yu:open-create', onOpen)
+  }, [])
 
   // Tooltip state
   const [tooltip, setTooltip] = useState<{ topic: any; x: number; y: number } | null>(null)
 
-  const openAdmin = () => {
-    const url = window.location.origin + window.location.pathname + '#/admin'
-    window.open(url, 'yu-admin', 'width=900,height=680,resizable=yes,scrollbars=yes')
-  }
-
-  const handleTopicClick = async (name: string) => {
+  const handleTopicClick = (name: string) => {
     setActiveTopic(name)
-    addMessage({ role: 'system', content: `📂 加载主题: ${name}...`, id: uuid() })
-    try {
-      const detail = await fetchTopicDetail(name)
-      const lines: string[] = []
-      lines.push(`# 📁 ${detail.topic.name}`)
-      lines.push('')
-      lines.push(`**状态:** ${detail.topic.status}  |  **目录:** \`${detail.topic.dir}\``)
-      lines.push(`**轮次:** ${detail.topic.turns}  |  **创建:** ${detail.topic.createdAt ? new Date(detail.topic.createdAt).toLocaleDateString() : '-'}`)
-      if (detail.topic.summary) lines.push(`**摘要:** ${detail.topic.summary}`)
-      lines.push('')
-      lines.push('---')
-      lines.push(`🖥 在 \`${detail.topic.dir}\` 目录下打开终端`)
-      lines.push('')
-
-      // File tree
-      lines.push('## 📄 文件')
-      lines.push('')
-      if (detail.files.length > 0) {
-        const dirs = detail.files.filter((f: any) => f.isDir)
-        const files = detail.files.filter((f: any) => !f.isDir)
-        for (const d of dirs) lines.push(`📁 \`${d.name}/\``)
-        for (const f of files) lines.push(`📄 \`${f.name}\`  (${fmtBytes(f.size)})`)
-      } else {
-        lines.push('*(目录不存在或为空)*')
-      }
-      lines.push('')
-
-      // Git status
-      if (detail.git?.hasGit) {
-        lines.push('## 🔄 Git')
-        lines.push('')
-        if (detail.git.lastCommit) lines.push(`**最后提交:** \`${detail.git.lastCommit}\``)
-        if (detail.git.diffStat) {
-          lines.push('')
-          lines.push('**未提交变更:**')
-          lines.push('```')
-          lines.push(detail.git.diffStat)
-          lines.push('```')
-        }
-      }
-
-      addMessage({ role: 'system', content: lines.join('\n'), id: uuid() })
-    } catch (e) {
-      addMessage({ role: 'system', content: `❌ 加载主题失败: ${(e as Error).message}`, id: uuid() })
-    }
-  }
-
-  const getStatusColor = (t: any): string => {
-    if (t.status === 'active') return '#22c55e'
-    if (t.status === 'background') return '#3b82f6'
-    if (t.status === 'error') return '#ef4444'
-    return '#6b7280'
-  }
-
-  const getStatusIcon = (t: any): string => {
-    if (t.status === 'active') return '▶'
-    if (t.status === 'background') return '⏳'
-    if (t.status === 'error') return '✕'
-    return '○'
-  }
-
-  const getStatusLabel = (t: any): string => {
-    if (t.status === 'active') return '活跃'
-    if (t.status === 'background') return '后台'
-    if (t.status === 'error') return '错误'
-    return '空闲'
   }
 
   const formatDate = (s: string): string => {
     try { return new Date(s).toLocaleString() } catch { return s }
   }
 
-  const handleCreateTopic = () => {
-    if (newTopicName.trim()) {
-      addMessage({ role: 'system', content: `📂 创建主题: ${newTopicName.trim()}...`, id: uuid() })
-      setNewTopicName('')
-      setCreating(false)
+  const handleCreatedTopic = (name: string) => {
+    useStore.getState().refreshStatus()
+    setActiveTopic(name)
+    pushToast({ type: 'success', message: `已创建主题: ${name}` })
+  }
+
+  const handleDetailArchive = async (name: string) => {
+    try {
+      await archiveTopic(name)
+      useStore.getState().refreshStatus()
+      pushToast({ type: 'success', message: `已归档主题: ${name}` })
+    } catch (e) {
+      pushToast({ type: 'error', message: `归档失败: ${(e as Error).message}` })
     }
+    setDetailName(null)
+  }
+
+  const handleDetailRename = (name: string) => {
+    setDetailName(null)
+    setRenaming(name)
+    setRenameValue(name)
   }
 
   const handleRename = async (oldName: string, newName: string) => {
@@ -126,9 +85,9 @@ export default function Sidebar() {
       try {
         await renameTopic(oldName, newName.trim())
         useStore.getState().refreshStatus()
-        addMessage({ role: 'system', content: `✏️ 重命名主题: ${oldName} → ${newName.trim()}`, id: uuid() })
+        pushToast({ type: 'success', message: `重命名主题: ${oldName} → ${newName.trim()}` })
       } catch (e) {
-        addMessage({ role: 'system', content: `❌ 重命名失败: ${(e as Error).message}`, id: uuid() })
+        pushToast({ type: 'error', message: `重命名失败: ${(e as Error).message}` })
       }
     }
     setRenaming(null)
@@ -138,9 +97,9 @@ export default function Sidebar() {
   const handleArchive = async (name: string) => {
     try {
       await archiveTopic(name)
-      addMessage({ role: 'system', content: `📦 归档主题: ${name}`, id: uuid() })
+      pushToast({ type: 'success', message: `已归档主题: ${name}` })
     } catch (e) {
-      addMessage({ role: 'system', content: `❌ 归档失败: ${(e as Error).message}`, id: uuid() })
+      pushToast({ type: 'error', message: `归档失败: ${(e as Error).message}` })
     }
   }
 
@@ -149,9 +108,9 @@ export default function Sidebar() {
     try {
       await deleteTopic(name)
       useStore.getState().refreshStatus()
-      addMessage({ role: 'system', content: `🗑️ 已删除主题: ${name}`, id: uuid() })
+      pushToast({ type: 'success', message: `已删除主题: ${name}` })
     } catch (e) {
-      addMessage({ role: 'system', content: `❌ 删除失败: ${(e as Error).message}`, id: uuid() })
+      pushToast({ type: 'error', message: `删除失败: ${(e as Error).message}` })
     }
   }
 
@@ -160,7 +119,10 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
+      <button className="sidebar-toggle" onClick={toggleSidebar} title="切换侧边栏 (Cmd/Ctrl + .)" aria-label="切换侧边栏">
+        ☰
+      </button>
       {/* Brand */}
       <div className="sidebar-brand">
         <span className="brand-icon">y</span>
@@ -168,27 +130,9 @@ export default function Sidebar() {
 
       {/* Create topic button */}
       <div className="topic-create-wrap">
-        {creating ? (
-          <div className="topic-create-input">
- <input
-   type="text"
-   placeholder={t('create.topic.hint')}
-              value={newTopicName}
-              onChange={(e) => setNewTopicName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleCreateTopic()
-                if (e.key === 'Escape') { setCreating(false); setNewTopicName('') }
-              }}
-              autoFocus
-            />
-            <button className="topic-create-confirm" onClick={handleCreateTopic} title="确认创建">✓</button>
-            <button className="topic-create-cancel" onClick={() => { setCreating(false); setNewTopicName('') }} title="取消">✕</button>
-          </div>
-        ) : (
-          <button className="topic-create-btn" onClick={() => setCreating(true)} title="创建新 topic">
-            + 新建 Topic
-          </button>
-        )}
+        <button className="topic-create-btn" onClick={() => setCreating(true)} title="创建新 topic">
+          + 新建 Topic
+        </button>
       </div>
 
       {/* Topic search */}
@@ -202,11 +146,27 @@ export default function Sidebar() {
         />
       </div>
 
+      {/* Status filter */}
+      <div className="topic-filter">
+        {(['all', 'active', 'archived'] as const).map((f) => (
+          <button
+            key={f}
+            className={`topic-filter-btn ${filter === f ? 'active' : ''}`}
+            onClick={() => setFilter(f)}
+          >
+            {f === 'all' ? '全部' : f === 'active' ? '活跃' : '归档'}
+          </button>
+        ))}
+      </div>
+
       {/* Topic list */}
       <nav className="topic-list">
-        {sorted.length > 0 ? sorted.map((t) => (
+        {sorted.length > 0 ? sorted.map((t, idx) => (
+          <Fragment key={t.name}>
+          {idx > 0 && !t.archived && sorted[idx - 1].archived && (
+            <div className="topic-archived-divider">已归档</div>
+          )}
           <div
-            key={t.name}
             className={`topic-item ${t.name === activeTopic ? 'active' : ''} ${t.archived ? 'archived' : ''}`}
             onClick={() => handleTopicClick(t.name)}
             onMouseEnter={(e) => {
@@ -219,15 +179,12 @@ export default function Sidebar() {
             }}
             onMouseMove={(e) => {
               // Keep tooltip Y aligned with topic item
-              setTooltip((prev) => {
-                if (!prev) return null
-                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-                return { ...prev, y: Math.max(8, rect.top) }
-              })
+              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+              setTooltip((prev) => (prev ? { ...prev, y: Math.max(8, rect.top) } : null))
             }}
             onMouseLeave={() => setTooltip(null)}
           >
-            <span className="topic-status" style={{ color: getStatusColor(t) }}>{getStatusIcon(t)}</span>
+            <span className="topic-status"><span className={`topic-dot ${getDotClass(t)}`} /></span>
             {renaming === t.name ? (
               <div className="topic-rename-input">
                 <input
@@ -251,6 +208,11 @@ export default function Sidebar() {
             <span className="topic-turns">{t.turns}t</span>
             {t.archived && <span className="topic-archived">📦</span>}
             <div className="topic-hover-actions">
+              <button
+                className="topic-action-btn detail"
+                onClick={(e) => { e.stopPropagation(); setDetailName(t.name) }}
+                title="查看详情"
+              >ℹ</button>
               <button
                 className="topic-action-btn switch"
                 onClick={(e) => { e.stopPropagation(); handleSwitch(t.name) }}
@@ -276,11 +238,12 @@ export default function Sidebar() {
               className="topic-term-btn"
               onClick={(e) => {
                 e.stopPropagation()
-                addMessage({ role: 'system', content: `终端功能待实现: ${t.name}`, id: uuid() })
+                useStore.getState().openWindow('terminal')
               }}
               title="打开终端"
             >$_</button>
           </div>
+          </Fragment>
         )) : (
           <div className="topic-empty">
             {topicSearch ? t('no.match') : t('no.topics')}
@@ -325,15 +288,19 @@ export default function Sidebar() {
       {/* Footer */}
       <div className="sidebar-footer">
         <button className="sb-btn" onClick={() => useStore.getState().setSettingsOpen(true)} aria-label={t('settings')} title={t('settings')}>⚙️ {t('settings')}</button>
-        <button className="sb-btn" onClick={openAdmin} aria-label={t('status')} title={t('status')}>📊 {t('status')}</button>
+        <button className="sb-btn" onClick={() => useStore.getState().openWindow('status')} aria-label={t('status')} title={t('status')}>📊 {t('status')}</button>
       </div>
+
+      <CreateTopicModal open={creating} onClose={() => setCreating(false)} onCreated={handleCreatedTopic} />
+      <TopicDetailDrawer
+        open={detailName !== null}
+        name={detailName}
+        onClose={() => setDetailName(null)}
+        onSwitch={handleSwitch}
+        onArchive={handleDetailArchive}
+        onRename={handleDetailRename}
+      />
     </aside>
   )
 }
 
-function fmtBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(1024))
-  return (bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1) + ' ' + units[i]
-}

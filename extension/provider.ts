@@ -24,6 +24,7 @@ export interface ProviderRequest {
   messages: ProviderMessage[]
   max_tokens?: number
   temperature?: number
+  model?: string
 }
 
 export interface ProviderResponse {
@@ -76,7 +77,7 @@ export function getModel(agentType: string): string {
 
 export async function chatCompletion(request: ProviderRequest): Promise<ProviderResponse | null> {
   const result = await dsChat({
-    model: 'deepseek-v4-flash',
+    model: request.model || 'deepseek-v4-flash',
     messages: request.messages.map((m) => ({
       role: m.role === 'tool' ? 'user' : (m.role as 'system' | 'user' | 'assistant'),
       content: m.content,

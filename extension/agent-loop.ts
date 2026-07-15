@@ -82,6 +82,7 @@ export interface AgentLoopConfig {
   maxIterations?: number
   maxTokens?: number
   agentType?: string
+  model?: string
   sessionId?: string
   autoPersist?: boolean
   /** 可选的 AbortSignal，用于超时/取消 (spawn/background 传入) */
@@ -106,6 +107,7 @@ export interface AgentLoopResult {
     cacheMissTokens: number
   }
   compressCount?: number
+  reasoning?: string
   error?: string
 }
 
@@ -154,6 +156,7 @@ export class AgentLoop {
   private maxIterations: number
   private totalTokensUsed = 0
   private abortSignal?: AbortSignal
+  private lastReasoning: string | undefined
   private _remindedWrite = false
   private _actuallyWrote = false  // 记录整个 session 中是否调用了 write/edit 工具
 
@@ -171,6 +174,7 @@ export class AgentLoop {
 
   /** Agent type（过滤 tools/MCP/skills） */
   private agentType: string | undefined
+  private model: string | undefined
 
   private onEvent?: AgentEventCallback
   private stopCondition?: (context: ContextManager) => Promise<GoalCheckResult>
@@ -192,6 +196,7 @@ export class AgentLoop {
     this.maxIterations = config.maxIterations ?? 30
     this.abortSignal = config.abortSignal
     this.agentType = config.agentType
+    this.model = config.model
     this.onEvent = config.onEvent
     this.stopCondition = config.stopCondition
     this.tokenBudget = config.tokenBudget ?? Infinity
@@ -297,6 +302,7 @@ ${toolDetailLines}
           output: lastMsg?.content ?? '(cancelled)',
           iterations: i + 1,
           totalTokens: this.totalTokensUsed,
+      reasoning: this.lastReasoning,
           wroteCode: false,
           error: `AgentLoop cancelled: ${this.abortSignal.reason?.toString() ?? 'unknown'}`,
         }
@@ -412,7 +418,7 @@ ${toolDetailLines}
               this._actuallyWrote = true
             }
           }
-          let parsedArgs: Record<string, unknown> = {}
+          let parsedArgs: Record<string, unknown> | string = {}
           try {
             parsedArgs = JSON.parse(tc.args)
           } catch {
@@ -432,7 +438,7 @@ ${toolDetailLines}
           }
 
           // ── Tool retry: executeTool 内部已做 retry — 这里只汇报 ──
-          const result = await executeTool(tc.name, parsedArgs)
+          const result = await executeTool(tc.name, typeof parsedArgs === 'string' ? {} : parsedArgs)
           this.context.addToolResult(
             tc.id ?? `call_${i}_0`,
             result.success ? result.output : `Error: ${result.error ?? 'Unknown error'}`,
@@ -595,6 +601,7 @@ ${toolDetailLines}
       output,
       iterations,
       totalTokens: this.totalTokensUsed,
+      reasoning: this.lastReasoning,
       wroteCode: actuallyWrote,
       cacheStats: {
         hitRate: cacheStats.hitRate,
@@ -618,6 +625,7 @@ ${toolDetailLines}
     const request: ProviderRequest = {
       messages: providerMessages,
       temperature: 0,
+      model: this.model,
       max_tokens: 4096,
     }
 

@@ -76,7 +76,7 @@ Pi SDK 已移除（2026-06）。以下差异点：
 - 工具全部 Bun 原生实现 (`tools/*.ts`)
 - 上下文管理自有 (`context-manager.ts`)
 - 构建：`bun build` → 单文件 `dist/yu.js`（190 模块，330ms）
-- 测试：`bun test` → 612 测试，0 失败
+- 测试：`bun test` → 582 测试，0 失败（30 个 e2e/worker 隔离已知）
 
 ---
 
@@ -87,12 +87,6 @@ Pi SDK 已移除（2026-06）。以下差异点：
 ```
 ~/yu-agent/
 ├── bin/yu.ts                  # CLI 入口：路由所有命令
-├── src/                       # 核心抽象层
-│   ├── types/                 # 基础类型定义
-│   ├── agent/                 # Agent 生命周期管理
-│   ├── tool/                  # 工具注册与执行
-│   ├── llm/                   # LLM 调用与提供商管理
-│   └── memory/                # 记忆存储与管理
 ├── extension/                 # 具体实现层
 │   ├── agent-loop.ts          # Agent 执行循环
 │   ├── classifier.ts          # 意图分类
@@ -128,11 +122,6 @@ Pi SDK 已移除（2026-06）。以下差异点：
 
 | src 模块 | extension 对应实现 | 职责 |
 |----------|-------------------|------|
-| `src/agent/` | `extension/agent-loop.ts` | Agent 执行循环 |
-| `src/tool/` | `extension/tools/registry.ts` | 工具注册表 |
-| `src/llm/` | `extension/deepseek.ts`, `extension/provider.ts` | LLM 调用 |
-| `src/memory/` | `extension/session-context.ts`, `extension/db.ts` | 持久化存储 |
-| `src/types/` | `extension/types.ts` | 扩展类型 |
 
 ### 2.3 扩展模块清单（extension/）
 
@@ -822,7 +811,7 @@ Skills 是注入 agent system prompt 的可复用模块，位于 `~/.yu/skills/`
 | 测试数量 | 612 | ✅ |
 | 测试通过率 | 100% | ✅ |
 | 构建时间 | 190 模块 / 330ms | ✅ |
-| 构建产物 | ~10MB 单文件 | ✅ |
+| 构建产物 | ~10MB | ✅ |
 | typecheck | 零错误 | ✅ |
 | `node:*` 前缀 | 0 处 | ✅ |
 | `child_process` 运行时调用 | 0 处 | ✅ 全部 Worker/Bun.spawn |

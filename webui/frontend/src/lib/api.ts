@@ -18,6 +18,19 @@ export async function fetchTopicDetail(name: string): Promise<any> {
   return res.json()
 }
 
+export async function createTopic(name: string, dir?: string): Promise<any> {
+  const res = await fetch(`${BASE}/api/topics`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, dir: dir ?? '' }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `Create failed: ${res.status}`)
+  }
+  return res.json()
+}
+
 export async function deleteTopic(name: string): Promise<void> {
   const res = await fetch(`${BASE}/api/topic/${encodeURIComponent(name)}`, {
     method: 'DELETE',
@@ -60,61 +73,37 @@ export async function updateConfig(cfg: Record<string, unknown>): Promise<void> 
   })
 }
 
-export async function sendChat(message: string): Promise<any> {
-  const res = await fetch(`${BASE}/api/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message }),
-  })
-  if (!res.ok) throw new Error(`Chat failed: ${res.status}`)
-  return res.json()
-}
+export function connectWS(
+  onStatus: (data: any) => void,
+  onConn?: (connected: boolean) => void,
+): { close: () => void } {
+  let ws: WebSocket | null = null
+  let closed = false
+  let retry: ReturnType<typeof setTimeout> | null = null
 
-export function streamChat(message: string, onChunk: (text: string, done: boolean) => void): AbortController {
-  const ctrl = new AbortController()
-  fetch(`${BASE}/api/chat/stream`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message }),
-    signal: ctrl.signal,
-  }).then(async (res) => {
-    if (!res.ok) { onChunk(`Error: ${res.status}`, true); return }
-    const reader = res.body?.getReader()
-    if (!reader) { onChunk('No response body', true); return }
-    const decoder = new TextDecoder()
-    let buffer = ''
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) { onChunk('', true); break }
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6)
-          if (data === '[DONE]') { onChunk('', true); return }
-          try {
-            const parsed = JSON.parse(data)
-            if (parsed.text) onChunk(parsed.text, false)
-          } catch { /* ignore partial */ }
-        }
-      }
+  const connect = () => {
+    if (closed) return
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+    ws = new WebSocket(`${protocol}//${location.host}/ws`)
+    ws.onopen = () => onConn?.(true)
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data)
+        if (msg.type === 'status') onStatus(msg.data)
+      } catch { /* ignore */ }
     }
-  }).catch((err) => {
-    if (err.name !== 'AbortError') onChunk(`Error: ${err.message}`, true)
-  })
-  return ctrl
-}
-
-export function connectWS(onStatus: (data: any) => void): WebSocket {
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const ws = new WebSocket(`${protocol}//${location.host}/ws`)
-  ws.onmessage = (e) => {
-    try {
-      const msg = JSON.parse(e.data)
-      if (msg.type === 'status') onStatus(msg.data)
-    } catch { /* ignore */ }
+    ws.onclose = () => {
+      onConn?.(false)
+      if (!closed) retry = setTimeout(connect, 3000)
+    }
   }
-  ws.onclose = () => setTimeout(() => connectWS(onStatus), 3000)
-  return ws
+
+  connect()
+  return {
+    close: () => {
+      closed = true
+      if (retry) clearTimeout(retry)
+      ws?.close()
+    },
+  }
 }

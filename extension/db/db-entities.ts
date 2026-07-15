@@ -318,19 +318,20 @@ export function insertMessage(
   role: string,
   content: string,
   timeCreated: number = Date.now(),
+  reasoning?: string | null,
 ): number {
   const db = getDb()
   const result = db
-    .prepare('INSERT INTO messages (session_id, role, content, time_created) VALUES (?, ?, ?, ?)')
-    .run(sessionId, role, content, timeCreated)
+    .prepare('INSERT INTO messages (session_id, role, content, time_created, reasoning) VALUES (?, ?, ?, ?, ?)')
+    .run(sessionId, role, content, timeCreated, reasoning ?? null)
   return Number(result.lastInsertRowid)
 }
 
 export function getMessages(sessionId: string, limit?: number): MessageRow[] {
   const db = getDb()
   const sql = limit
-    ? 'SELECT id, session_id, role, content, time_created FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?'
-    : 'SELECT id, session_id, role, content, time_created FROM messages WHERE session_id = ? ORDER BY id ASC'
+    ? 'SELECT id, session_id, role, content, reasoning, time_created FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?'
+    : 'SELECT id, session_id, role, content, reasoning, time_created FROM messages WHERE session_id = ? ORDER BY id ASC'
   const params: (string | number | null)[] = [sessionId]
   if (limit) params.push(limit)
   const rows = db.prepare(sql).all(...params) as Record<string, unknown>[]
@@ -339,6 +340,7 @@ export function getMessages(sessionId: string, limit?: number): MessageRow[] {
     sessionId: r.session_id as string,
     role: r.role as string,
     content: r.content as string,
+    reasoning: (r.reasoning as string) ?? null,
     timeCreated: r.time_created as number,
   }))
   // If limit was used, reverse to chronological order
@@ -352,6 +354,17 @@ export function getMessageCount(sessionId: string): number {
   return row.cnt
 }
 
+/** Cursor pagination: N messages older than beforeId */
+export function getMessagesBefore(sessionId: string, beforeId: number, limit: number = 20): MessageRow[] {
+  const db = getDb()
+  const rows = db.prepare('SELECT id, session_id, role, content, reasoning, time_created FROM messages WHERE session_id = ? AND id < ? ORDER BY id DESC LIMIT ?')
+    .all(sessionId, beforeId, limit) as Record<string, unknown>[]
+  return rows.map((r) => ({
+    id: r.id as number, sessionId: r.session_id as string, role: r.role as string,
+    content: r.content as string, timeCreated: r.time_created as number,
+  })).reverse()
+}
+
 // ── Todos (P1 — per-session task list) ──────────────────
 
 export function insertTodo(
@@ -360,6 +373,7 @@ export function insertTodo(
   priority: string = 'medium',
   position?: number,
   timeCreated: number = Date.now(),
+  reasoning?: string | null,
 ): number {
   const db = getDb()
   // Auto-assign position if not given

@@ -3,8 +3,10 @@ import { useStore } from '../lib/store'
 import { t, setLang, getLang } from '../lib/i18n'
 import { type Theme, getStoredTheme, applyTheme, resolveTheme } from '../lib/theme'
 import { updateConfig } from '../lib/api'
+import Modal from './Modal'
 
 export default function SettingsModal() {
+  const settingsOpen = useStore((s) => s.settingsOpen)
   const setSettingsOpen = useStore((s) => s.setSettingsOpen)
   const status = useStore((s) => s.status)
   const agentBudget = useStore((s) => s.agentBudget)
@@ -40,6 +42,8 @@ export default function SettingsModal() {
     const v = parseInt(budget, 10)
     if (!isNaN(v) && v > 0) {
       setAgentBudget(v)
+      ;(window as any).__yu_budget = v
+      try { localStorage.setItem('yu-budget', String(v)) } catch {}
     } else {
       setBudget(String(agentBudget))
     }
@@ -61,137 +65,134 @@ export default function SettingsModal() {
   const resolvedTheme = resolveTheme(theme)
 
   return (
-    <div className="modal-overlay" onClick={() => setSettingsOpen(false)}>
-      <div className="modal-window modal-settings" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h3>{t('settings.title')}</h3>
-          <button className="modal-close" onClick={() => setSettingsOpen(false)} title={t('settings.close')}>✕</button>
-        </div>
-        <div className="modal-body">
-          {/* General */}
-          <div className="settings-section">
-            <div className="settings-label">{t('settings.general')}</div>
-            <div className="settings-row">
-              <span>{t('settings.theme')}</span>
-              <div className="settings-right">
-                <select
-                  className="settings-select"
-                  value={theme}
-                  onChange={(e) => setTheme(e.target.value as Theme)}
-                >
-                  <option value="dark">{t('settings.theme.dark')}</option>
-                  <option value="light">{t('settings.theme.light')}</option>
-                  <option value="auto">{t('settings.theme.auto')}</option>
-                </select>
-                {theme === 'auto' && (
-                  <span className="settings-hint">
-                    {resolvedTheme === 'dark' ? '🌙' : '☀️'}
-                  </span>
-                )}
-              </div>
-            </div>
-            <div className="settings-row">
-              <span>{t('settings.lang')}</span>
-              <select
-                className="settings-select"
-                value={lang}
-                onChange={(e) => handleLangChange(e.target.value)}
-              >
-                <option value="zh">{t('settings.lang.zh')}</option>
-                <option value="en">{t('settings.lang.en')}</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Model */}
-          <div className="settings-section">
-            <div className="settings-label">{t('settings.model')}</div>
-            <div className="settings-row">
-              <span>{t('settings.default.model')}</span>
-              <select
-                className="settings-select"
-                value={model}
-                onChange={(e) => {
-                  setModel(e.target.value)
-                  updateConfig({ defaultModel: e.target.value })
-                }}
-              >
-                <option value="deepseek-v4-flash">DeepSeek v4 Flash</option>
-                <option value="deepseek-v4-pro">DeepSeek v4 Pro</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Agent */}
-          <div className="settings-section">
-            <div className="settings-label">{t('settings.agent')}</div>
-            <div className="settings-row">
-              <div className="settings-col">
-                <span>{t('settings.token.budget')}</span>
-                <span className="settings-desc">{t('settings.token.budget.desc')}</span>
-              </div>
-              <input
-                type="number"
-                className="settings-input"
-                value={budget}
-                onChange={(e) => setBudget(e.target.value)}
-                onBlur={handleBudgetBlur}
-                min={1000}
-                max={999999}
-                step={1000}
-                style={{ width: 110 }}
-              />
-            </div>
-            <div className="settings-row">
-              <span>{t('settings.max.iters')}</span>
-              <input
-                type="number"
-                className="settings-input"
-                value={iters}
-                onChange={(e) => setIters(e.target.value)}
-                onBlur={() => {
-                  const v = parseInt(iters, 10)
-                  if (!isNaN(v) && v > 0) {
-                    setAgentIterations(v)
-                    updateConfig({ maxIterations: v })
-                  } else {
-                    setIters(String(agentIterations || 25))
-                  }
-                }}
-                min={1}
-                max={100}
-                style={{ width: 80 }}
-              />
-            </div>
-          </div>
-
-          {/* System */}
-          <div className="settings-section">
-            <div className="settings-label">{t('settings.system')}</div>
-            <div className="settings-row">
-              <span>{t('settings.restart')}</span>
-              <button
-                className="settings-btn danger"
-                onClick={handleRestart}
-                disabled={restarting}
-              >
-                {restarting ? t('settings.restarting') : t('settings.restart')}
-              </button>
-            </div>
-          </div>
-
-          {/* About */}
-          <div className="settings-section">
-            <div className="settings-label">{t('settings.about')}</div>
-            <div className="settings-row">
-              <span>{t('settings.version')}</span>
-              <span className="settings-version">
-                yu v{status.version || '?'}
+    <Modal
+      open={settingsOpen}
+      onClose={() => setSettingsOpen(false)}
+      title={t('settings.title')}
+      width={520}
+    >
+      {/* General */}
+      <div className="settings-section">
+        <div className="settings-label">{t('settings.general')}</div>
+        <div className="settings-row">
+          <span>{t('settings.theme')}</span>
+          <div className="settings-right">
+            <select
+              className="settings-select"
+              value={theme}
+              onChange={(e) => setTheme(e.target.value as Theme)}
+            >
+              <option value="dark">{t('settings.theme.dark')}</option>
+              <option value="light">{t('settings.theme.light')}</option>
+              <option value="auto">{t('settings.theme.auto')}</option>
+            </select>
+            {theme === 'auto' && (
+              <span className="settings-hint">
+                {resolvedTheme === 'dark' ? '🌙' : '☀️'}
               </span>
-            </div>
+            )}
           </div>
+        </div>
+        <div className="settings-row">
+          <span>{t('settings.lang')}</span>
+          <select
+            className="settings-select"
+            value={lang}
+            onChange={(e) => handleLangChange(e.target.value)}
+          >
+            <option value="zh">{t('settings.lang.zh')}</option>
+            <option value="en">{t('settings.lang.en')}</option>
+          </select>
         </div>
       </div>
-    </div>
+
+      {/* Model */}
+      <div className="settings-section">
+        <div className="settings-label">{t('settings.model')}</div>
+        <div className="settings-row">
+          <span>{t('settings.default.model')}</span>
+          <select
+            className="settings-select"
+            value={model}
+            onChange={(e) => {
+              setModel(e.target.value)
+              updateConfig({ defaultModel: e.target.value })
+            }}
+          >
+            <option value="deepseek-v4-flash">DeepSeek v4 Flash</option>
+            <option value="deepseek-v4-pro">DeepSeek v4 Pro</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Agent */}
+      <div className="settings-section">
+        <div className="settings-label">{t('settings.agent')}</div>
+        <div className="settings-row">
+          <div className="settings-col">
+            <span>{t('settings.token.budget')}</span>
+            <span className="settings-desc">{t('settings.token.budget.desc')}</span>
+          </div>
+          <input
+            type="number"
+            className="settings-input"
+            value={budget}
+            onChange={(e) => setBudget(e.target.value)}
+            onBlur={handleBudgetBlur}
+            min={1000}
+            max={999999}
+            step={1000}
+            style={{ width: 110 }}
+          />
+        </div>
+        <div className="settings-row">
+          <span>{t('settings.max.iters')}</span>
+          <input
+            type="number"
+            className="settings-input"
+            value={iters}
+            onChange={(e) => setIters(e.target.value)}
+            onBlur={() => {
+              const v = parseInt(iters, 10)
+              if (!isNaN(v) && v > 0) {
+                setAgentIterations(v)
+                updateConfig({ maxIterations: v })
+              } else {
+                setIters(String(agentIterations || 25))
+              }
+            }}
+            min={1}
+            max={100}
+            style={{ width: 80 }}
+          />
+        </div>
+      </div>
+
+      {/* System */}
+      <div className="settings-section">
+        <div className="settings-label">{t('settings.system')}</div>
+        <div className="settings-row">
+          <span>{t('settings.restart')}</span>
+          <button
+            className="settings-btn danger"
+            onClick={handleRestart}
+            disabled={restarting}
+          >
+            {restarting ? t('settings.restarting') : t('settings.restart')}
+          </button>
+        </div>
+      </div>
+
+      {/* About */}
+      <div className="settings-section">
+        <div className="settings-label">{t('settings.about')}</div>
+        <div className="settings-row">
+          <span>{t('settings.version')}</span>
+          <span className="settings-version">
+            yu v{status.version || '?'}
+          </span>
+        </div>
+      </div>
+    </Modal>
   )
 }

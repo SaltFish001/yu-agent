@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
@@ -10,6 +10,7 @@ import { YuTransport } from '../lib/yu-transport'
 import { useStore } from '../lib/store'
 import { uuid } from '../lib/uuid'
 import { t, setLang } from '../lib/i18n'
+import { getStatusColor } from '../lib/status'
 import { applyTheme } from '../lib/theme'
 
 // ── 会话持久化 ──
@@ -21,17 +22,34 @@ function loadSavedMessages(): UIMessage[] {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return []
     const msgs = JSON.parse(raw)
-    // Migration: 旧格式只有 content 没有 parts → 转成 v4 parts
-    return msgs.map((m: any) => {
-      if (Array.isArray(m.parts)) return m as UIMessage
-      // 旧格式: { id, role, content } → { id, role, parts: [{ type: 'text', text: content }] }
-      return {
-        id: m.id,
-        role: m.role || 'user',
-        parts: [{ type: 'text', text: m.content || '' }] as TextUIPart[],
-        content: m.content || '',
-      } as UIMessage
-    })
+    // Build UIMessage from serializable format
+    return msgs
+      .map((m: any) => {
+        // New format: { role, text, id } → UIMessage
+        if (m.text !== undefined) {
+          const parts: any[] = [{ type: 'text', text: m.text || '' }]
+          if (m.reasoning) parts.unshift({ type: 'reasoning', text: m.reasoning })
+          return {
+            id: m.id || `hist_${Date.now()}_${Math.random().toString(36).slice(2,6)}`,
+            role: m.role || 'user',
+            parts,
+            content: m.text || '',
+          } as UIMessage
+        }
+        // AI SDK format: has parts array
+        if (Array.isArray(m.parts) && m.parts.length > 0) return m as UIMessage
+        // Old format: { id, role, content }
+        if (m.content) {
+          return {
+            id: m.id || `hist_${Date.now()}_${Math.random().toString(36).slice(2,6)}`,
+            role: m.role || 'user',
+            parts: [{ type: 'text', text: m.content || '' }] as TextUIPart[],
+            content: m.content || '',
+          } as UIMessage
+        }
+        return null
+      })
+      .filter(Boolean) as UIMessage[]
   } catch {
     return []
   }
@@ -39,11 +57,26 @@ function loadSavedMessages(): UIMessage[] {
 
 function saveMessages(msgs: UIMessage[]) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(msgs.slice(-200)))
+    // Serialize as lightweight {role, text} objects — UIMessage parts may not survive JSON
+    const saved = msgs.slice(-200).map((m) => ({
+      role: m.role,
+      text: msgText(m),
+      reasoning: msgReasoning(m),
+      id: m.id,
+    }))
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(saved))
   } catch { /* quota exceeded */ }
 }
 
 // ── 工具函数 ──
+
+/** Extract reasoning from a UIMessage. */
+function msgReasoning(m: UIMessage): string {
+  return m.parts
+    .filter((p): p is ReasoningUIPart => p.type === 'reasoning')
+    .map((p) => p.text)
+    .join('\n')
+}
 
 /** Extract full text from a UIMessage (v4 uses `parts` not `content`). */
 function msgText(m: UIMessage): string {
@@ -94,28 +127,63 @@ export default function ChatPanel() {
   const activeTopic = useStore((s) => s.activeTopic)
   const setActiveTopic = useStore((s) => s.setActiveTopic)
   const addSystemMessage = useStore((s) => s.addMessage)
-  const connected = useStore((s) => s.connected)
-  const setConnected = useStore((s) => s.setConnected)
-  const tokenUsage = useStore((s) => s.tokenUsage)
-  const setTokenUsage = useStore((s) => s.setTokenUsage)
-  const agentIterations = useStore((s) => s.agentIterations)
-  const setAgentIterations = useStore((s) => s.setAgentIterations)
-  const agentBudget = useStore((s) => s.agentBudget)
+  const sysMessages = useStore((s) => s.messages)
   const topics = status.topics || []
   const nonArchived = topics.filter((t: any) => !t.archived)
   const activeTopicData = topics.find((t: any) => t.name === activeTopic)
   const topicNames = topics.map((t: any) => t.name)
 
-  // ── AI SDK useChat ──
+  // ── Load history from server + localStorage fallback ──
+async function loadHistory(): Promise<UIMessage[]> {
+  try {
+    const res = await fetch('/api/messages?limit=50')
+    if (res.ok) {
+      const data = await res.json()
+      if (data.messages?.length > 0) {
+        return data.messages.map((m: any) => {
+          const parts: any[] = [{ type: 'text', text: m.content || '' }]
+          if (m.reasoning) parts.unshift({ type: 'reasoning', text: m.reasoning })
+          return {
+            id: String(m.id || Date.now()),
+            role: m.role || 'user',
+            parts,
+            content: m.content || '',
+          } as UIMessage
+        })
+      }
+    }
+  } catch { /* offline or error */ }
+  // Fallback to localStorage
+  return loadSavedMessages()
+}
+
+// ── AI SDK useChat ──
   const { messages, setMessages, status: chatStatus, error, ...chat } = useChat({
     transport,
     messages: loadSavedMessages(),
     onError: (e) => console.error('Chat error:', e),
   })
 
+  // Load server history on mount to replace localStorage
+  useEffect(() => {
+    loadHistory().then((msgs) => {
+      if (msgs.length > 0) setMessages(msgs)
+    })
+  }, [])
+
   const isLoading = chatStatus === 'streaming' || chatStatus === 'submitted'
   const [isInitialLoading, setIsInitialLoading] = useState(true)
   const [inputValue, setInputValue] = useState('')
+
+  // Merge server/command system-feedback messages (store.messages) into the chat
+  const displayMessages = useMemo(() => {
+    const sys = sysMessages.map((m) => ({
+      id: m.id,
+      role: m.role,
+      parts: [{ type: 'text', text: m.content }] as TextUIPart[],
+    }))
+    return [...messages, ...sys]
+  }, [messages, sysMessages])
 
   // 持久化消息
   const prevMsgLen = useRef(messages.length)
@@ -166,33 +234,15 @@ export default function ChatPanel() {
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
-  // ── SSE connection monitoring ──
+  // ── Global "new chat" (Cmd/Ctrl+N / command palette) ──
   useEffect(() => {
-    // Try to connect to SSE endpoint to detect server health
-    const es = new EventSource('/events')
-    es.onopen = () => setConnected(true)
-    es.onerror = () => setConnected(false)
-    return () => { es.close(); setConnected(false) }
-  }, [setConnected])
-
-  // ── Track token usage from agent responses ──
-  useEffect(() => {
-    // Listen for assistant messages and estimate token usage
-    const lastMsg = messages[messages.length - 1]
-    if (lastMsg?.role === 'assistant' && !isLoading) {
-      const text = msgText(lastMsg)
-      const estimated = Math.ceil(text.length / 4)
-      const current = useStore.getState().tokenUsage
-      if (estimated > current) setTokenUsage(estimated)
+    const onNewChat = () => {
+      setMessages([])
+      localStorage.removeItem(STORAGE_KEY)
     }
-  }, [messages, isLoading])
-
-  const getStatusColor = (t: any): string => {
-    if (t?.status === 'active') return '#22c55e'
-    if (t?.status === 'background') return '#3b82f6'
-    if (t?.status === 'error') return '#ef4444'
-    return '#6b7280'
-  }
+    window.addEventListener('yu:new-chat', onNewChat)
+    return () => window.removeEventListener('yu:new-chat', onNewChat)
+  }, [setMessages])
 
   // ── Send message ──
   const handleSend = () => {
@@ -323,6 +373,7 @@ export default function ChatPanel() {
       const val = parseInt(text.slice(8).trim(), 10)
       if (!isNaN(val) && val > 0) {
         useStore.getState().setAgentBudget(val)
+        ;(window as any).__yu_budget = val
         addSystemMessage({ role: 'system', content: `💰 Token 预算已设置为: ${val.toLocaleString()}`, id: uuid() })
       } else {
         addSystemMessage({ role: 'system', content: '⚠️ 请输入有效数字', id: uuid() })
@@ -410,7 +461,16 @@ export default function ChatPanel() {
     if (text.startsWith('/new ')) {
       const name = text.slice(5).trim()
       if (name) {
-        addSystemMessage({ role: 'system', content: `📂 创建主题: ${name}...`, id: uuid() })
+        ;(async () => {
+          try {
+            const { createTopic } = await import('../lib/api')
+            await createTopic(name)
+            useStore.getState().refreshStatus()
+            addSystemMessage({ role: 'system', content: `📂 已创建主题: ${name}`, id: uuid() })
+          } catch (e) {
+            addSystemMessage({ role: 'system', content: `❌ 创建失败: ${(e as Error).message}`, id: uuid() })
+          }
+        })()
       }
       setInputValue('')
       return
@@ -523,6 +583,13 @@ export default function ChatPanel() {
 
   // ── Render parts for a message ──
   function renderParts(m: UIMessage, isLastAssistant: boolean, isStreaming: boolean) {
+    if (!m.parts || m.parts.length === 0) {
+      const text = (m as any).content || ''
+      if (text) {
+        return <div className="msg-text"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{text}</ReactMarkdown></div>
+      }
+      return null
+    }
     return m.parts.map((part, pi) => {
       switch (part.type) {
         case 'reasoning': {
@@ -640,7 +707,7 @@ export default function ChatPanel() {
             <div className="loading-spinner"></div>
             <p>加载中…</p>
           </div>
-        ) : messages.length === 0 ? (
+        ) : displayMessages.length === 0 ? (
           <div className="empty-state">
             <div className="icon">🎣</div>
             <h3>yu-agent + AI SDK</h3>
@@ -653,13 +720,13 @@ export default function ChatPanel() {
         ) : (
           <Virtuoso
             className="chat-virtuoso"
-            data={messages}
+            data={displayMessages}
             followOutput
-            initialTopMostItemIndex={messages.length - 1}
+            initialTopMostItemIndex={displayMessages.length - 1}
             itemContent={(index, m) => {
               const content = msgText(m)
               const mentioned = content ? parseMentions(content, topicNames) : []
-              const isLastAssistant = index === messages.length - 1 && m.role === 'assistant'
+              const isLastAssistant = index === displayMessages.length - 1 && m.role === 'assistant'
 
               return (
                 <div className={`message ${m.role}`}>
@@ -811,32 +878,6 @@ export default function ChatPanel() {
         ) : (
           <button onClick={handleSend} disabled={!inputValue.trim()}>{t('send')}</button>
         )}
-      </div>
-
-      {/* Status bar */}
-      <div className="chat-status-bar">
-        <span className={`status-indicator ${connected ? 'connected' : 'disconnected'}`} title={connected ? '已连接' : '已断开'}>
-          <span className="status-dot" />
-          <span className="status-label">{connected ? '已连接' : '已断开'}</span>
-        </span>
-        <span className="status-sep">·</span>
-        <span className="status-item" title="本轮对话 Token 使用量">
-          Token: {tokenUsage.toLocaleString()}
-        </span>
-        <span className="status-sep">·</span>
-        <span className="status-item" title="Agent 循环迭代次数">
-          迭代: {agentIterations}
-        </span>
-        {agentIterations > 0 && (
-          <>
-            <span className="status-sep">·</span>
-            <span className="status-item" title="Token 预算">
-              预算: {Math.round((tokenUsage / agentBudget) * 100)}%
-            </span>
-          </>
-        )}
-        <span className="status-filler" />
-        <span className="status-item status-version">yu v{status.version || '?'}</span>
       </div>
     </>
   )

@@ -17,10 +17,10 @@ describe('getModel', () => {
     expect(model.length).toBeGreaterThan(0)
   })
 
-  it('未知 agent 类型返回 deepseek-chat', async () => {
+  it('未知 agent 类型返回 deepseek-v4-flash', async () => {
     const { getModel } = await import('../extension/provider.js')
     const model = getModel('nonexistent_type_xyz')
-    expect(model).toBe('deepseek-chat')
+    expect(model).toBe('deepseek-v4-flash')
   })
 
   it('plan 类型返回非空 model', async () => {

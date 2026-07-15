@@ -1,9 +1,30 @@
 import { t } from '../lib/i18n'
 import { useStore } from '../lib/store'
+import { PanelLoading, ErrorState } from './primitives'
 
 export default function RulesPanel() {
   const status = useStore((s) => s.status)
+  const statusLoaded = useStore((s) => s.statusLoaded)
+  const connected = useStore((s) => s.connected)
+  const refreshStatus = useStore((s) => s.refreshStatus)
   const rules = status.rules || []
+
+  if (!statusLoaded) {
+    return (
+      <>
+        <div className="panel-header"><h2>{t('rules.title')}</h2></div>
+        <PanelLoading />
+      </>
+    )
+  }
+  if (!connected) {
+    return (
+      <>
+        <div className="panel-header"><h2>{t('rules.title')}</h2></div>
+        <ErrorState message={t('panel.disconnected')} onRetry={refreshStatus} />
+      </>
+    )
+  }
 
   return (
     <>
