@@ -1077,7 +1077,7 @@ app.post(
             const chatPromptPath = resolve(process.env.HOME || '/home/saltfish', '.yu', 'prompts', 'chat.md')
             const chatPrompt = existsSync(chatPromptPath) ? readFileSync(chatPromptPath, 'utf-8') : '你是一个友好的聊天助手，简洁直接地回答用户。'
 
-            const { chatCompletion } = await import('../extension/provider.js')
+            const { chatCompletion, getApiKey } = await import('../extension/provider.js')
             const result = await chatCompletion({
               messages: [
                 { role: 'system', content: chatPrompt },
@@ -1087,7 +1087,15 @@ app.post(
               temperature: 0.7,
             })
 
-            const output = result?.content ?? '嗯？'
+            let output: string
+            if (result?.content) {
+              output = result.content
+            } else {
+              const hasKey = !!(await getApiKey())
+              output = hasKey
+                ? '抱歉，模型调用失败，请稍后重试。'
+                : '未配置 DeepSeek API Key，无法生成回复。请在 ~/.yu/config.json 设置 apiKeys.deepseek，或设置环境变量 DEEPSEEK_API_KEY。'
+            }
 
             // Persist to DB
             try {
