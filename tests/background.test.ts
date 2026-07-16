@@ -8,8 +8,15 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 
 // Mock eventBus to silence emits
+let emitSpy: ReturnType<typeof spyOn> | undefined
+
 beforeEach(async () => {
-  spyOn((await import('../extension/events.js')).eventBus as any, 'emit').mockReturnValue(undefined as never)
+  emitSpy = spyOn((await import('../extension/events.js')).eventBus as any, 'emit').mockReturnValue(undefined as never)
+})
+
+afterEach(() => {
+  emitSpy?.mockRestore()
+  emitSpy = undefined
 })
 
 // ── register ──────────────────────────────────────────────

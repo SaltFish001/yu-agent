@@ -22,7 +22,12 @@ describe('Agent tracking', () => {
 
   beforeEach(() => {
     // Ensure the DB schema is initialized (getDb() creates tables)
-    getDb()
+    const db = getDb()
+    // Clean slate: remove any leftover rows from prior runs to avoid
+    // UNIQUE-constraint conflicts with the hardcoded agent IDs below.
+    for (const id of ['test-1', 'test-2', 'test-3', 'agent-a', 'agent-b']) {
+      db.prepare('DELETE FROM agent_runs WHERE agent_id = ?').run(id)
+    }
     // Reset in-memory tracker state
     resetTracker()
   })

@@ -100,10 +100,6 @@ export async function chatCompletion(request: DeepSeekRequest): Promise<DeepSeek
   const cfg = loadConfig()
   if (!cfg) return null
 
-  const shouldThink = request.thinking
-    ? request.thinking.type === 'enabled'
-    : !request.response_format
-
   try {
     const body: Record<string, unknown> = {
       model: request.model,
@@ -112,7 +108,7 @@ export async function chatCompletion(request: DeepSeekRequest): Promise<DeepSeek
       max_tokens: request.max_tokens ?? 1024,
       temperature: request.temperature ?? 0,
     }
-    if (shouldThink) {
+    if (request.thinking?.type === 'enabled') {
       body.thinking = { type: 'enabled' }
       body.reasoning_effort = 'high'
       // thinking mode doesn't support temperature

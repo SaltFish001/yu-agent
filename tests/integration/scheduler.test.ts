@@ -5,16 +5,25 @@
  * These tests work whether or not a DeepSeek API key is configured.
  */
 
-import { describe, expect, it, vi } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import { classifyIntent } from '../../extension/classifier.js'
-
-// Mock trackAgent and loadDecisions (no external deps)
-vi.mock('../../extension/tracker.js', () => ({
-  trackAgent: vi.fn(),
-  loadDecisions: vi.fn(() => []),
-}))
+import * as tracker from '../../extension/tracker.js'
 
 describe('Scheduler integration', () => {
+  // Spy on tracker side-effects (scoped to this file so the mock does not
+  // leak into other test files that rely on the real implementation).
+  let trackAgentSpy: ReturnType<typeof spyOn>
+  let loadDecisionsSpy: ReturnType<typeof spyOn>
+
+  beforeEach(() => {
+    trackAgentSpy = spyOn(tracker, 'trackAgent').mockImplementation(() => {})
+    loadDecisionsSpy = spyOn(tracker, 'loadDecisions').mockReturnValue([])
+  })
+
+  afterEach(() => {
+    trackAgentSpy.mockRestore()
+    loadDecisionsSpy.mockRestore()
+  })
   it('long input fast path returns pass_through', async () => {
     const longInput =
       '你是我的助手。请帮我完成以下任务：\n\n重要通知：请编写一个完整的 Node.js 应用，' +
