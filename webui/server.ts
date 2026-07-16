@@ -1287,7 +1287,7 @@ app.get('/', (c) =>
   c.newResponse(getHtml(), {
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
-      'Cache-Control': 'no-store',
+      'Cache-Control': 'no-cache',
     },
   }),
 )
@@ -1297,14 +1297,8 @@ app.get('/', (c) =>
 app.get('/assets/*', (c) => {
   const res = serveStatic(c.req.path)
   if (res) return res
-  // 文件不存在（hash changed）→ 返回 index.html 让浏览器重新加载
-  return c.newResponse(getHtml(), {
-    status: 200,
-    headers: {
-      'Content-Type': 'text/html; charset=utf-8',
-      'Cache-Control': 'no-store',
-    },
-  })
+  // 文件不存在（hash changed / 路径穿越）→ 返回 404
+  return c.notFound()
 })
 
 // ── API: config (P1.8) ────────────────────────────────
@@ -1346,13 +1340,8 @@ app.get('/*', (c) => {
   // Check for actual file first (favicon, etc.)
   const fileRes = serveStatic(path)
   if (fileRes) return fileRes
-  // Serve index.html for SPA routing
-  return c.newResponse(getHtml(), {
-    headers: {
-      'Content-Type': 'text/html; charset=utf-8',
-      'Cache-Control': 'no-store',
-    },
-  })
+  // 未知路由返回 404（不回退到 index.html，避免掩盖错误路径）
+  return c.notFound()
 })
 
 // ── 未匹配 404 ──
