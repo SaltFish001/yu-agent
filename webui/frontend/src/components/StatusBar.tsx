@@ -54,6 +54,8 @@ export default function StatusBar() {
             type="button"
             className="status-win-btn"
             title={b.label}
+            data-tip={b.label}
+            aria-label={b.label}
             onClick={() => openWindow(b.type)}
           >
             {b.icon}
