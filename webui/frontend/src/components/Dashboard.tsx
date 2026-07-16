@@ -30,6 +30,27 @@ export default function Dashboard() {
   const ws = s.ws || {}
   const skillsCount = s.skills?.length || 0
 
+  // Track resolved theme so chart colors follow light/dark mode
+  const [theme, setTheme] = useState<string>(
+    typeof document !== 'undefined'
+      ? document.documentElement.getAttribute('data-theme') || 'dark'
+      : 'dark',
+  )
+  useEffect(() => {
+    const el = document.documentElement
+    const apply = () => setTheme(el.getAttribute('data-theme') || 'dark')
+    apply()
+    const obs = new MutationObserver(apply)
+    obs.observe(el, { attributes: true, attributeFilter: ['data-theme'] })
+    return () => obs.disconnect()
+  }, [])
+
+  const isLight = theme === 'light'
+  const trackColor = isLight ? '#e2e5ea' : '#1c1c22'
+  const lineGrid = isLight ? '#e8eaee' : '#1c1c22'
+  const lineLabel = isLight ? '#80878f' : '#54545e'
+  const lineStroke = isLight ? '#2f7fa8' : '#5b7aff'
+
   // Mem usage gauge
   const memGaugeOption = {
     series: [{
@@ -39,13 +60,14 @@ export default function Dashboard() {
       min: 0,
       max: 512,
       center: ['50%', '50%'],
-      radius: '48%',
-      progress: { show: true, width: 8, itemStyle: { color: { type: 'linear', x: 0, y: 0, x2: 1, y2: 0, colorStops: [{ offset: 0, color: '#4caf7d' }, { offset: 1, color: '#5b7aff' }] } } },
-      axisLine: { lineStyle: { width: 8, color: [[1, '#1c1c22']] } },
+      radius: '62%',
+      progress: { show: true, width: 8, itemStyle: { color: { type: 'linear', x: 0, y: 0, x2: 1, y2: 0, colorStops: [{ offset: 0, color: isLight ? '#3fae7e' : '#4caf7d' }, { offset: 1, color: lineStroke }] } } },
+      axisLine: { lineStyle: { width: 8, color: [[1, trackColor]] } },
       axisTick: { show: false },
       splitLine: { show: false },
       axisLabel: { show: false },
-      detail: { fontSize: 16, fontWeight: 700, color: '#e4e4ea', offsetCenter: [0, 0], formatter: () => fmtBytes(mem) },
+      pointer: { show: false },
+      detail: { show: false },
       data: [{ value: Math.round(mem / 1024 / 1024), name: '' }],
     }]
   }
@@ -61,14 +83,14 @@ export default function Dashboard() {
   const memLineOption = {
     grid: { top: 20, right: 10, bottom: 20, left: 40 },
     xAxis: { type: 'category', show: false },
-    yAxis: { type: 'value', splitLine: { lineStyle: { color: '#1c1c22' } }, axisLabel: { color: '#54545e', fontSize: 10 } },
+    yAxis: { type: 'value', splitLine: { lineStyle: { color: lineGrid } }, axisLabel: { color: lineLabel, fontSize: 10 } },
     series: [{
       type: 'line',
       data: memHistory,
       smooth: true,
       showSymbol: false,
-      lineStyle: { color: '#5b7aff', width: 2 },
-      areaStyle: { color: 'rgba(91,122,255,0.08)' },
+      lineStyle: { color: lineStroke, width: 2 },
+      areaStyle: { color: isLight ? 'rgba(47,127,168,0.10)' : 'rgba(91,122,255,0.08)' },
     }]
   }
 
@@ -140,7 +162,8 @@ export default function Dashboard() {
         </div>
         <div className="card" onClick={() => setDetail(detail === 'mem' ? null : 'mem')}>
           <div className="card-label">{t('dash.memory')}</div>
-          <ReactEChartsCore echarts={echarts} option={memGaugeOption} style={{ height: 80 }} />
+          <ReactEChartsCore echarts={echarts} option={memGaugeOption} style={{ height: 78 }} />
+          <div className="card-value" style={{ marginTop: 2, fontSize: 16 }}>{fmtBytes(mem)}</div>
         </div>
         <div className="card" onClick={() => setDetail(detail === 'rules' ? null : 'rules')}>
           <div className="card-label">{t('dash.rules')}</div>

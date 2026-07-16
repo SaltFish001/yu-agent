@@ -16,7 +16,22 @@ import StatusBar from './components/StatusBar'
 export default function App() {
   useTheme()
 
+  // On small screens, start with the sidebar collapsed (off-canvas) so it
+  // doesn't cover the chat. Desktop keeps its persisted/open state.
+  // Guarded against React StrictMode double-invoke.
+  const mobileInit = useRef(false)
+  useEffect(() => {
+    if (mobileInit.current) return
+    mobileInit.current = true
+    const s = useStore.getState()
+    if (window.innerWidth <= 767 && !s.sidebarCollapsed) {
+      s.toggleSidebar()
+    }
+  }, [])
+
   const settingsOpen = useStore((s) => s.settingsOpen)
+  const sidebarCollapsed = useStore((s) => s.sidebarCollapsed)
+  const toggleSidebar = useStore((s) => s.toggleSidebar)
   const mainView = useStore((s) => s.mainView)
   const setMainView = useStore((s) => s.setMainView)
   const windows = useStore((s) => s.windows)
@@ -107,8 +122,19 @@ export default function App() {
   return (
     <div className="app-layout">
       <Sidebar />
+      <div
+        className={`sidebar-backdrop ${sidebarCollapsed ? '' : 'show'}`}
+        onClick={toggleSidebar}
+        aria-hidden="true"
+      />
       <main className="main-area">
         <nav className="main-nav">
+          <button
+            className="mobile-menu-btn"
+            onClick={toggleSidebar}
+            aria-label="切换侧边栏"
+            title="切换侧边栏"
+          >☰</button>
           {NAV.map((n) => (
             <button
               key={n.key}
