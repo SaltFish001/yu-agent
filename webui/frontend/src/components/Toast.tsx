@@ -1,40 +1,43 @@
-/** yu-agent — toast notifications */
-
-import { useEffect } from 'react'
-import { createPortal } from 'react-dom'
 import { useStore } from '../lib/store'
-
-function ToastItem({
-  id,
-  type,
-  message,
-}: {
-  id: string
-  type: 'success' | 'error' | 'info'
-  message: string
-}) {
-  const dismissToast = useStore((s) => s.dismissToast)
-  useEffect(() => {
-    const timer = setTimeout(() => dismissToast(id), 3000)
-    return () => clearTimeout(timer)
-  }, [id, dismissToast])
-  return (
-    <button type="button" className={`toast toast-${type}`} onClick={() => dismissToast(id)}>
-      <span className="toast-dot" />
-      <span className="toast-msg">{message}</span>
-    </button>
-  )
-}
+import { useEffect } from 'react'
 
 export function Toast() {
   const toasts = useStore((s) => s.toasts)
-  if (toasts.length === 0) return null
-  return createPortal(
-    <div className="toast-stack">
-      {toasts.map((t) => (
-        <ToastItem key={t.id} id={t.id} type={t.type} message={t.message} />
+  const dismissToast = useStore((s) => s.dismissToast);
+
+  return (
+    <div className="fixed top-4 right-4 z-[9999] flex flex-col gap-2 max-w-[360px] pointer-events-none">
+      {toasts.map((toast) => (
+        <div
+          key={toast.id}
+          className="pointer-events-auto flex items-center gap-3 px-4 py-3 bg-bg-elev border border-border rounded-xl shadow-lg cursor-pointer animate-slide-up"
+          onClick={() => dismissToast(toast.id)}
+        >
+          <span
+            className={`w-2 h-2 rounded-full flex-shrink-0 ${
+              toast.type === 'success'
+                ? 'bg-ok shadow-[0_0_6px_rgba(0,229,160,0.5)]'
+                : toast.type === 'error'
+                ? 'bg-err'
+                : 'bg-accent shadow-glow'
+            }`}
+          />
+          <span className="flex-1 text-sm text-text leading-relaxed">{toast.message}</span>
+        </div>
       ))}
-    </div>,
-    document.body,
+    </div>
   )
+}
+
+// Auto-dismiss effect
+export function useAutoDismiss() {
+  const toasts = useStore((s) => s.toasts)
+  const dismissToast = useStore((s) => s.dismissToast)
+
+  useEffect(() => {
+    const timers = toasts.map((toast) =>
+      setTimeout(() => dismissToast(toast.id), 3000)
+    )
+    return () => timers.forEach(clearTimeout)
+  }, [toasts, dismissToast])
 }

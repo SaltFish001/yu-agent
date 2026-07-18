@@ -1,152 +1,146 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useStore } from '../lib/store'
-import { getStoredTheme, applyTheme, type Theme } from '../lib/theme'
-import { setLang, t } from '../lib/i18n'
+import { t } from '../lib/i18n'
 
-type Item = {
-  id: string
-  label: string
-  hint?: string
-  group: string
-  keywords?: string
-  run: () => void
-}
-
-function toggleTheme() {
-  const cur = getStoredTheme()
-  const next: Theme = cur === 'light' ? 'dark' : 'light'
-  applyTheme(next)
-}
-
-function toggleLang() {
-  const cur = (localStorage.getItem('yu-lang') || 'zh') === 'zh' ? 'en' : 'zh'
-  setLang(cur)
-  window.dispatchEvent(new CustomEvent('yu-lang-change', { detail: cur }))
-}
+const COMMANDS = [
+  { id: 'new-chat', label: '新建对话', shortcut: '⌘N', action: () => window.dispatchEvent(new CustomEvent('yu:new-chat')) },
+  { id: 'toggle-sidebar', label: '切换侧边栏', shortcut: '⌘.', action: () => useStore.getState().toggleSidebar() },
+  { id: 'settings', label: '设置', shortcut: '', action: () => useStore.getState().setSettingsOpen(true) },
+  { id: 'status', label: '系统状态', shortcut: '', action: () => useStore.getState().openWindow('status') },
+  { id: 'terminal', label: '终端', shortcut: '', action: () => useStore.getState().openWindow('terminal') },
+  { id: 'files', label: '文件浏览器', shortcut: '', action: () => useStore.getState().openWindow('files') },
+  { id: 'bg', label: '后台任务', shortcut: '', action: () => useStore.getState().openWindow('bg') },
+  { id: 'rules', label: '规则', shortcut: '', action: () => useStore.getState().openWindow('rules') },
+  { id: 'skills', label: '技能', shortcut: '', action: () => useStore.getState().openWindow('skills') },
+]
 
 export default function CommandPalette() {
-  const open = useStore((s) => s.paletteOpen)
-  const setOpen = useStore((s) => s.setPaletteOpen)
-  const activeTopic = useStore((s) => s.activeTopic)
+  const paletteOpen = useStore((s) => s.paletteOpen)
+  const setPaletteOpen = useStore((s) => s.setPaletteOpen)
+  const topics = useStore((s) => s.status.topics || [])
   const setActiveTopic = useStore((s) => s.setActiveTopic)
-  const topics = useStore((s) => s.status.topics) || []
 
   const [query, setQuery] = useState('')
-  const [index, setIndex] = useState(0)
+  const [selected, setSelected] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
-  const listRef = useRef<HTMLDivElement>(null)
-
-  const items = useMemo<Item[]>(() => {
-    const app: Item[] = [
-      { id: 'new-chat', label: t('cmd.new.chat'), hint: '清空当前会话', group: t('cmd.group.app'), keywords: 'new chat clear', run: () => window.dispatchEvent(new CustomEvent('yu:new-chat')) },
-      { id: 'toggle-sidebar', label: t('cmd.toggle.sidebar'), hint: 'Cmd/Ctrl + .', group: t('cmd.group.app'), keywords: 'sidebar', run: () => useStore.getState().toggleSidebar() },
-      { id: 'toggle-theme', label: t('cmd.toggle.theme'), hint: '深色 / 浅色', group: t('cmd.group.app'), keywords: 'theme dark light', run: toggleTheme },
-      { id: 'toggle-lang', label: t('cmd.toggle.lang'), hint: '中文 / English', group: t('cmd.group.app'), keywords: 'language lang zh en', run: toggleLang },
-      { id: 'open-settings', label: t('cmd.open.settings'), group: t('cmd.group.app'), keywords: 'settings', run: () => useStore.getState().setSettingsOpen(true) },
-      { id: 'new-topic', label: t('cmd.new.topic'), group: t('cmd.group.app'), keywords: 'topic create', run: () => window.dispatchEvent(new CustomEvent('yu:open-create')) },
-    ]
-    const wins: Item[] = [
-      { id: 'win-status', label: `${t('cmd.open')} ${t('nav.status')}`, group: t('cmd.group.win'), keywords: 'status dashboard 系统状态', run: () => useStore.getState().openWindow('status') },
-      { id: 'win-bg', label: `${t('cmd.open')} ${t('nav.bg')}`, group: t('cmd.group.win'), keywords: 'background 后台', run: () => useStore.getState().openWindow('bg') },
-      { id: 'win-terminal', label: `${t('cmd.open')} ${t('nav.terminal')}`, group: t('cmd.group.win'), keywords: 'terminal 终端', run: () => useStore.getState().openWindow('terminal') },
-      { id: 'win-files', label: `${t('cmd.open')} ${t('nav.files')}`, group: t('cmd.group.win'), keywords: 'files 文件', run: () => useStore.getState().openWindow('files') },
-      { id: 'win-rules', label: `${t('cmd.open')} ${t('nav.rules')}`, group: t('cmd.group.win'), keywords: 'rules 规则', run: () => useStore.getState().openWindow('rules') },
-      { id: 'win-skills', label: `${t('cmd.open')} ${t('nav.skills')}`, group: t('cmd.group.win'), keywords: 'skills 技能', run: () => useStore.getState().openWindow('skills') },
-    ]
-    const topicItems: Item[] = topics
-      .filter((t) => !t.archived)
-      .map((t) => ({
-        id: `topic:${t.name}`,
-        label: `切换到 ${t.name}`,
-        hint: (t.status || 'idle') + (t.name === activeTopic ? ' · 当前' : ''),
-        group: '主题',
-        keywords: `topic switch ${t.name}`,
-        run: () => {
-          setActiveTopic(t.name)
-          window.dispatchEvent(new CustomEvent('yu:switch-topic', { detail: t.name }))
-        },
-      }))
-    return [...app, ...wins, ...topicItems]
-  }, [topics, activeTopic, setActiveTopic])
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return items
-    return items.filter((i) => (i.label + ' ' + (i.keywords || '') + ' ' + i.group).toLowerCase().includes(q))
-  }, [items, query])
 
   useEffect(() => {
-    if (open) {
+    if (paletteOpen) {
       setQuery('')
-      setIndex(0)
-      setTimeout(() => inputRef.current?.focus(), 20)
+      setSelected(0)
+      setTimeout(() => inputRef.current?.focus(), 50)
     }
-  }, [open])
+  }, [paletteOpen])
 
   useEffect(() => {
-    setIndex(0)
-  }, [query])
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setPaletteOpen(!paletteOpen)
+      }
+      if (e.key === 'Escape' && paletteOpen) {
+        setPaletteOpen(false)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [paletteOpen, setPaletteOpen])
 
-  if (!open) return null
+  const topicItems = topics.map((t: any) => ({
+    id: `topic-${t.name}`,
+    label: t.name,
+    group: 'Topics',
+    action: () => {
+      setActiveTopic(t.name)
+      setPaletteOpen(false)
+    },
+  }))
 
-  const close = () => setOpen(false)
-  const runItem = (it: Item) => {
-    it.run()
-    close()
-  }
+  const allItems = [
+    ...COMMANDS.map((c) => ({ ...c, group: '应用' })),
+    ...topicItems,
+  ]
 
-  const onKeyDown = (e: React.KeyboardEvent) => {
+  const filtered = query
+    ? allItems.filter((item) => item.label.toLowerCase().includes(query.toLowerCase()))
+    : allItems
+
+  const groups = filtered.reduce((acc, item) => {
+    if (!acc[item.group]) acc[item.group] = []
+    acc[item.group].push(item)
+    return acc
+  }, {} as Record<string, typeof allItems>)
+
+  const flatItems = Object.values(groups).flat()
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault()
-      setIndex((i) => Math.min(i + 1, filtered.length - 1))
+      setSelected((i) => Math.min(i + 1, flatItems.length - 1))
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
-      setIndex((i) => Math.max(i - 1, 0))
+      setSelected((i) => Math.max(i - 1, 0))
     } else if (e.key === 'Enter') {
       e.preventDefault()
-      if (filtered[index]) runItem(filtered[index])
-    } else if (e.key === 'Escape') {
-      e.preventDefault()
-      close()
+      const item = flatItems[selected]
+      if (item) {
+        item.action()
+        setPaletteOpen(false)
+      }
     }
   }
 
-  // group items preserving order
-  let lastGroup = ''
+  if (!paletteOpen) return null
+
   return (
-    <div className="cmdk-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) close() }}>
-      <div className="cmdk" role="dialog" aria-modal="true" aria-label="命令面板">
-        <div className="cmdk-input-wrap">
-          <span className="cmdk-prompt">⌘</span>
+    <div className="fixed inset-0 z-[300] flex items-start justify-center pt-[15vh]" onClick={() => setPaletteOpen(false)}>
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+      <div
+        className="relative w-[560px] max-w-[92vw] bg-bg-elev border border-border rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[70vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Input */}
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
+          <span className="text-accent text-lg">⌘</span>
           <input
             ref={inputRef}
-            className="cmdk-input"
-            placeholder="输入命令或搜索…"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={onKeyDown}
+            onChange={(e) => { setQuery(e.target.value); setSelected(0) }}
+            onKeyDown={handleKeyDown}
+            placeholder="搜索命令或 topic..."
+            className="flex-1 bg-transparent text-text text-base outline-none placeholder:text-text-tertiary"
           />
-          <kbd className="cmdk-esc">esc</kbd>
+          <span className="text-xs text-text-tertiary px-2 py-1 border border-border rounded">ESC</span>
         </div>
-        <div className="cmdk-list" ref={listRef}>
-          {filtered.length === 0 && <div className="cmdk-empty">无匹配结果</div>}
-          {filtered.map((it, i) => {
-            const showGroup = it.group !== lastGroup
-            lastGroup = it.group
-            return (
-              <div key={it.id}>
-                {showGroup && <div className="cmdk-group">{it.group}</div>}
-                <div
-                  className={`cmdk-item ${i === index ? 'active' : ''}`}
-                  onMouseEnter={() => setIndex(i)}
-                  onMouseDown={(e) => { e.preventDefault(); runItem(it) }}
-                >
-                  <span className="cmdk-label">{it.label}</span>
-                  {it.hint && <span className="cmdk-hint">{it.hint}</span>}
-                </div>
-              </div>
-            )
-          })}
+
+        {/* List */}
+        <div className="overflow-y-auto p-2">
+          {Object.entries(groups).map(([group, items]) => (
+            <div key={group}>
+              <div className="px-3 py-1.5 text-[10px] text-text-tertiary uppercase tracking-wider">{group}</div>
+              {items.map((item, idx) => {
+                const globalIdx = flatItems.indexOf(item)
+                return (
+                  <div
+                    key={item.id}
+                    className={`flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer text-sm transition-colors ${
+                      globalIdx === selected ? 'bg-accent/10 text-text' : 'text-text-secondary hover:bg-bg-hover'
+                    }`}
+                    onClick={() => { item.action(); setPaletteOpen(false) }}
+                    onMouseEnter={() => setSelected(globalIdx)}
+                  >
+                    <span>{item.label}</span>
+                    {(item as any).shortcut && (
+                      <span className="text-xs text-text-tertiary">{(item as any).shortcut}</span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          ))}
+          {flatItems.length === 0 && (
+            <div className="p-6 text-center text-sm text-text-tertiary">无匹配结果</div>
+          )}
         </div>
       </div>
     </div>

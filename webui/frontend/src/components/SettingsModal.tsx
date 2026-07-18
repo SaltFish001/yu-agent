@@ -1,198 +1,131 @@
 import { useState, useEffect } from 'react'
 import { useStore } from '../lib/store'
-import { t, setLang, getLang } from '../lib/i18n'
-import { type Theme, getStoredTheme, applyTheme, resolveTheme } from '../lib/theme'
-import { updateConfig } from '../lib/api'
-import Modal from './Modal'
+import { t } from '../lib/i18n'
+import { applyTheme, type Theme } from '../lib/theme'
 
 export default function SettingsModal() {
-  const settingsOpen = useStore((s) => s.settingsOpen)
   const setSettingsOpen = useStore((s) => s.setSettingsOpen)
-  const status = useStore((s) => s.status)
-  const agentBudget = useStore((s) => s.agentBudget)
-  const setAgentBudget = useStore((s) => s.setAgentBudget)
-  const agentIterations = useStore((s) => s.agentIterations)
-  const setAgentIterations = useStore((s) => s.setAgentIterations)
+  const [theme, setThemeState] = useState<Theme>('dark')
+  const [lang, setLangState] = useState('zh')
+  const [model, setModel] = useState('deepseek-chat')
+  const [maxIterations, setMaxIterations] = useState(50)
+  const [budget, setBudget] = useState(40000)
 
-  const [theme, setTheme] = useState<Theme>(getStoredTheme())
-  const [lang, setLangState] = useState(getLang())
-  const [budget, setBudget] = useState(String(agentBudget))
-  const [iters, setIters] = useState(String(agentIterations || 25))
-  const [model, setModel] = useState('deepseek-v4-flash')
-  const [restarting, setRestarting] = useState(false)
-
-  // Apply theme on change
   useEffect(() => {
-    applyTheme(theme)
-  }, [theme])
-
-  // On mount, ensure correct theme is applied (handles auto → resolved)
-  useEffect(() => {
-    applyTheme(getStoredTheme())
+    const storedTheme = localStorage.getItem('yu-theme') as Theme || 'dark'
+    setThemeState(storedTheme)
+    const storedLang = localStorage.getItem('yu-lang') || 'zh'
+    setLangState(storedLang)
   }, [])
 
-  const handleLangChange = (l: string) => {
-    setLangState(l)
-    setLang(l)
-    // Force re-render by toggling a state that all t() calls will see
-    window.dispatchEvent(new CustomEvent('yu-lang-change', { detail: l }))
+  const handleThemeChange = (val: Theme) => {
+    setThemeState(val)
+    applyTheme(val)
   }
 
-  const handleBudgetBlur = () => {
-    const v = parseInt(budget, 10)
-    if (!isNaN(v) && v > 0) {
-      setAgentBudget(v)
-      ;(window as any).__yu_budget = v
-      try { localStorage.setItem('yu-budget', String(v)) } catch {}
-    } else {
-      setBudget(String(agentBudget))
-    }
+  const handleLangChange = (val: string) => {
+    setLangState(val)
+    localStorage.setItem('yu-lang', val)
+    window.dispatchEvent(new CustomEvent('yu-lang-change', { detail: val }))
   }
-
-  const handleRestart = async () => {
-    if (!confirm(t('settings.restart.confirm'))) return
-    setRestarting(true)
-    try {
-      await fetch('/api/restart', { method: 'POST' })
-    } catch {
-      // Server will disconnect
-    }
-    setTimeout(() => {
-      location.reload()
-    }, 3000)
-  }
-
-  const resolvedTheme = resolveTheme(theme)
 
   return (
-    <Modal
-      open={settingsOpen}
-      onClose={() => setSettingsOpen(false)}
-      title={t('settings.title')}
-      width={520}
-    >
-      {/* General */}
-      <div className="settings-section">
-        <div className="settings-label">{t('settings.general')}</div>
-        <div className="settings-row">
-          <span>{t('settings.theme')}</span>
-          <div className="settings-right">
-            <select
-              className="settings-select"
-              value={theme}
-              onChange={(e) => setTheme(e.target.value as Theme)}
-            >
-              <option value="dark">{t('settings.theme.dark')}</option>
-              <option value="light">{t('settings.theme.light')}</option>
-              <option value="auto">{t('settings.theme.auto')}</option>
-            </select>
-            {theme === 'auto' && (
-              <span className="settings-hint">
-                {resolvedTheme === 'dark' ? '🌙' : '☀️'}
-              </span>
-            )}
-          </div>
-        </div>
-        <div className="settings-row">
-          <span>{t('settings.lang')}</span>
-          <select
-            className="settings-select"
-            value={lang}
-            onChange={(e) => handleLangChange(e.target.value)}
-          >
-            <option value="zh">{t('settings.lang.zh')}</option>
-            <option value="en">{t('settings.lang.en')}</option>
-          </select>
-        </div>
-      </div>
-
-      {/* Model */}
-      <div className="settings-section">
-        <div className="settings-label">{t('settings.model')}</div>
-        <div className="settings-row">
-          <span>{t('settings.default.model')}</span>
-          <select
-            className="settings-select"
-            value={model}
-            onChange={(e) => {
-              setModel(e.target.value)
-              updateConfig({ defaultModel: e.target.value })
-            }}
-          >
-            <option value="deepseek-v4-flash">DeepSeek v4 Flash</option>
-            <option value="deepseek-v4-pro">DeepSeek v4 Pro</option>
-          </select>
-        </div>
-      </div>
-
-      {/* Agent */}
-      <div className="settings-section">
-        <div className="settings-label">{t('settings.agent')}</div>
-        <div className="settings-row">
-          <div className="settings-col">
-            <span>{t('settings.token.budget')}</span>
-            <span className="settings-desc">{t('settings.token.budget.desc')}</span>
-          </div>
-          <input
-            type="number"
-            className="settings-input"
-            value={budget}
-            onChange={(e) => setBudget(e.target.value)}
-            onBlur={handleBudgetBlur}
-            min={1000}
-            max={999999}
-            step={1000}
-            style={{ width: 110 }}
-          />
-        </div>
-        <div className="settings-row">
-          <span>{t('settings.max.iters')}</span>
-          <input
-            type="number"
-            className="settings-input"
-            value={iters}
-            onChange={(e) => setIters(e.target.value)}
-            onBlur={() => {
-              const v = parseInt(iters, 10)
-              if (!isNaN(v) && v > 0) {
-                setAgentIterations(v)
-                updateConfig({ maxIterations: v })
-              } else {
-                setIters(String(agentIterations || 25))
-              }
-            }}
-            min={1}
-            max={100}
-            style={{ width: 80 }}
-          />
-        </div>
-      </div>
-
-      {/* System */}
-      <div className="settings-section">
-        <div className="settings-label">{t('settings.system')}</div>
-        <div className="settings-row">
-          <span>{t('settings.restart')}</span>
+    <div className="fixed inset-0 z-[200] flex items-center justify-center" onClick={() => setSettingsOpen(false)}>
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+      <div
+        className="relative w-[480px] max-w-[90vw] max-h-[80vh] bg-bg border border-border rounded-xl shadow-2xl overflow-hidden flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+          <h3 className="text-base font-semibold text-text">{t('settings')}</h3>
           <button
-            className="settings-btn danger"
-            onClick={handleRestart}
-            disabled={restarting}
+            onClick={() => setSettingsOpen(false)}
+            className="w-7 h-7 flex items-center justify-center rounded text-text-tertiary hover:text-text hover:bg-bg-hover transition-colors"
           >
-            {restarting ? t('settings.restarting') : t('settings.restart')}
+            ✕
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-6">
+          {/* Theme */}
+          <div>
+            <label className="block text-xs font-medium text-text-tertiary uppercase tracking-wider mb-2">{t('settings.theme')}</label>
+            <select
+              value={theme}
+              onChange={(e) => handleThemeChange(e.target.value as Theme)}
+              className="w-full px-3 py-2 bg-bg-surface border border-border rounded-lg text-sm text-text outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-colors"
+            >
+              <option value="dark">深色</option>
+              <option value="light">浅色</option>
+              <option value="auto">自动</option>
+            </select>
+          </div>
+
+          {/* Language */}
+          <div>
+            <label className="block text-xs font-medium text-text-tertiary uppercase tracking-wider mb-2">{t('settings.lang')}</label>
+            <select
+              value={lang}
+              onChange={(e) => handleLangChange(e.target.value)}
+              className="w-full px-3 py-2 bg-bg-surface border border-border rounded-lg text-sm text-text outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-colors"
+            >
+              <option value="zh">中文</option>
+              <option value="en">English</option>
+            </select>
+          </div>
+
+          {/* Model */}
+          <div>
+            <label className="block text-xs font-medium text-text-tertiary uppercase tracking-wider mb-2">{t('settings.model')}</label>
+            <input
+              type="text"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              className="w-full px-3 py-2 bg-bg-surface border border-border rounded-lg text-sm text-text outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-colors"
+            />
+          </div>
+
+          {/* Max Iterations */}
+          <div>
+            <label className="block text-xs font-medium text-text-tertiary uppercase tracking-wider mb-2">{t('settings.agent.maxIterations')}</label>
+            <input
+              type="number"
+              value={maxIterations}
+              onChange={(e) => setMaxIterations(Number(e.target.value))}
+              className="w-full px-3 py-2 bg-bg-surface border border-border rounded-lg text-sm text-text outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-colors"
+            />
+          </div>
+
+          {/* Budget */}
+          <div>
+            <label className="block text-xs font-medium text-text-tertiary uppercase tracking-wider mb-2">{t('settings.agent.budget')}</label>
+            <input
+              type="number"
+              value={budget}
+              onChange={(e) => setBudget(Number(e.target.value))}
+              className="w-full px-3 py-2 bg-bg-surface border border-border rounded-lg text-sm text-text outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-colors"
+            />
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-border">
+          <button
+            onClick={() => setSettingsOpen(false)}
+            className="px-4 py-2 text-sm text-text-secondary hover:text-text transition-colors"
+          >
+            取消
+          </button>
+          <button
+            onClick={() => setSettingsOpen(false)}
+            className="px-4 py-2 text-sm font-semibold text-on-accent bg-accent rounded-lg hover:bg-accent-hover transition-colors"
+          >
+            保存
           </button>
         </div>
       </div>
-
-      {/* About */}
-      <div className="settings-section">
-        <div className="settings-label">{t('settings.about')}</div>
-        <div className="settings-row">
-          <span>{t('settings.version')}</span>
-          <span className="settings-version">
-            yu v{status.version || '?'}
-          </span>
-        </div>
-      </div>
-    </Modal>
+    </div>
   )
 }

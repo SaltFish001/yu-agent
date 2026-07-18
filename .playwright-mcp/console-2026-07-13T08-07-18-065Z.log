@@ -1,0 +1,7 @@
+[   12006ms] [ERROR] Failed to load resource: net::ERR_INCOMPLETE_CHUNKED_ENCODING @ http://localhost:9876/events:0
+[   24007ms] [ERROR] Failed to load resource: net::ERR_INCOMPLETE_CHUNKED_ENCODING @ http://localhost:9876/events:0
+[   36004ms] [ERROR] Failed to load resource: net::ERR_INCOMPLETE_CHUNKED_ENCODING @ http://localhost:9876/events:0
+[   48006ms] [ERROR] Failed to load resource: net::ERR_INCOMPLETE_CHUNKED_ENCODING @ http://localhost:9876/events:0
+[   52004ms] [ERROR] Failed to load resource: net::ERR_INCOMPLETE_CHUNKED_ENCODING @ http://localhost:9876/api/chat/stream:0
+[   52005ms] [ERROR] Chat error: TypeError: network error @ http://localhost:9876/assets/index-DcNIW3TU.js:116
+[   60008ms] [ERROR] Failed to load resource: net::ERR_INCOMPLETE_CHUNKED_ENCODING @ http://localhost:9876/events:0

@@ -1,96 +1,56 @@
-import { useEffect, useRef, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
+import { useEffect, useRef } from 'react'
 
-type ModalProps = {
+interface ModalProps {
   open: boolean
   onClose: () => void
-  title?: ReactNode
-  children: ReactNode
-  footer?: ReactNode
-  variant?: 'center' | 'drawer'
-  width?: number
+  children: React.ReactNode
+  title?: string
+  size?: 'sm' | 'md' | 'lg'
 }
 
-const FOCUSABLE =
-  'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
-
-export default function Modal({
-  open,
-  onClose,
-  title,
-  children,
-  footer,
-  variant = 'center',
-  width = 480,
-}: ModalProps) {
-  const ref = useRef<HTMLDivElement>(null)
+export default function Modal({ open, onClose, children, title, size = 'md' }: ModalProps) {
+  const modalRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
-
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation()
-        onClose()
-      } else if (e.key === 'Tab') {
-        // Focus trap
-        const nodes = ref.current?.querySelectorAll<HTMLElement>(FOCUSABLE)
-        if (!nodes || nodes.length === 0) return
-        const first = nodes[0]
-        const last = nodes[nodes.length - 1]
-        const active = document.activeElement as HTMLElement
-        if (e.shiftKey && (active === first || !ref.current?.contains(active))) {
-          e.preventDefault()
-          last.focus()
-        } else if (!e.shiftKey && active === last) {
-          e.preventDefault()
-          first.focus()
-        }
-      }
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
     }
-    document.addEventListener('keydown', onKey, true)
-
-    const t = setTimeout(() => {
-      const el = ref.current?.querySelector<HTMLElement>(FOCUSABLE)
-      el?.focus()
-    }, 30)
-
-    const prevOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-
-    return () => {
-      document.removeEventListener('keydown', onKey, true)
-      document.body.style.overflow = prevOverflow
-      clearTimeout(t)
-    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
   }, [open, onClose])
 
   if (!open) return null
 
-  return createPortal(
-    <div
-      className={`modal-overlay ${variant === 'drawer' ? 'modal-drawer-overlay' : ''}`}
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose()
-      }}
-    >
+  const sizeClasses = {
+    sm: 'w-[360px]',
+    md: 'w-[480px]',
+    lg: 'w-[640px]',
+  }
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-fade-in" />
       <div
-        ref={ref}
-        className={`modal-window ${variant === 'drawer' ? 'modal-drawer' : ''}`}
-        role="dialog"
-        aria-modal="true"
-        style={variant === 'center' ? { width } : undefined}
+        ref={modalRef}
+        className={`relative ${sizeClasses[size]} max-w-[90vw] max-h-[80vh] bg-bg border border-border rounded-xl shadow-2xl overflow-hidden flex flex-col animate-slide-up`}
+        onClick={(e) => e.stopPropagation()}
       >
-        <div className="modal-header">
-          <h3>{title}</h3>
-          <button className="modal-close" onClick={onClose} aria-label="关闭" title="关闭">
-            ✕
-          </button>
+        {title && (
+          <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+            <h3 className="text-base font-semibold text-text">{title}</h3>
+            <button
+              onClick={onClose}
+              className="w-7 h-7 flex items-center justify-center rounded text-text-tertiary hover:text-text hover:bg-bg-hover transition-colors"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+        <div className="flex-1 overflow-y-auto">
+          {children}
         </div>
-        <div className="modal-body">{children}</div>
-        {footer && <div className="modal-footer">{footer}</div>}
       </div>
-    </div>,
-    document.body
+    </div>
   )
 }

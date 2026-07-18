@@ -1,54 +1,44 @@
-import { t } from '../lib/i18n'
-import { useStore } from '../lib/store'
-import { PanelLoading, ErrorState } from './primitives'
+import { useState, useEffect } from 'react'
 
 export default function SkillsPanel() {
-  const status = useStore((s) => s.status)
-  const statusLoaded = useStore((s) => s.statusLoaded)
-  const connected = useStore((s) => s.connected)
-  const refreshStatus = useStore((s) => s.refreshStatus)
-  const skills = status.skills || []
+  const [skills, setSkills] = useState<any[]>([])
+  const [loading, setLoading] = useState(false)
 
-  if (!statusLoaded) {
-    return (
-      <>
-        <div className="panel-header"><h2>{t('skills.title')}</h2></div>
-        <PanelLoading />
-      </>
-    )
-  }
-  if (!connected) {
-    return (
-      <>
-        <div className="panel-header"><h2>{t('skills.title')}</h2></div>
-        <ErrorState message={t('panel.disconnected')} onRetry={refreshStatus} />
-      </>
-    )
+  useEffect(() => {
+    setLoading(true)
+    fetch('/api/skills')
+      .then((res) => res.json())
+      .then((data) => {
+        setSkills(data.skills || [])
+        setLoading(false)
+      })
+      .catch(() => setLoading(false))
+  }, [])
+
+  if (loading) {
+    return <div className="text-sm text-text-tertiary text-center py-8">加载中...</div>
   }
 
   return (
-    <>
-      <div className="panel-header"><h2>{t('skills.title')} ({skills.length})</h2></div>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>{t('skills.name')}</th>
-              <th>{t('skills.description')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {skills.length > 0 ? skills.map((s, i) => (
-              <tr key={i}>
-                <td style={{ fontWeight: 500, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{s.name}</td>
-                <td style={{ color: 'var(--text-secondary)' }}>{s.description || '—'}</td>
-              </tr>
-            )) : (
-              <tr><td colSpan={2}><span className="hint">{t('skills.none')}</span></td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </>
+    <div>
+      <h3 className="text-sm font-semibold text-text mb-3">技能</h3>
+      {skills.length === 0 ? (
+        <div className="text-sm text-text-tertiary text-center py-8">暂无技能</div>
+      ) : (
+        <div className="space-y-2">
+          {skills.map((skill: any) => (
+            <div key={skill.name} className="p-3 bg-bg-surface border border-border rounded-lg hover:border-border-light transition-colors">
+              <div className="text-sm font-medium text-text">{skill.name}</div>
+              <div className="text-xs text-text-tertiary mt-1">{skill.description}</div>
+              {skill.version && (
+                <div className="mt-2 text-xs text-text-secondary">
+                  <span className="text-text-tertiary">版本: </span>{skill.version}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }

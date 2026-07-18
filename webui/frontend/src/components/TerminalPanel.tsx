@@ -1,257 +1,103 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useRef, useEffect, useState } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import '@xterm/xterm/css/xterm.css'
 import { useStore } from '../lib/store'
 import { t } from '../lib/i18n'
 
-interface TermSession {
-  topic: string
-  cwd: string
-  pid: number
-  uptime: number
-  alive: boolean
-}
-
-// 深水暖灯 terminal palette — deep-water bg, warm amber cursor
 const XTERM_THEME = {
   background: '#0e151b',
   foreground: '#c9d4dc',
-  cursor: '#e5a84b',
+  cursor: '#00d4ff',
   selectionBackground: '#2c3a47',
-  black: '#1e2a35', red: '#e8737c', green: '#4ecb8b', yellow: '#dcb14f',
+  black: '#1e2a35', red: '#ff5a5a', green: '#00e5a0', yellow: '#f0b030',
   blue: '#7aa8d8', magenta: '#b894d8', cyan: '#6fc4c9', white: '#c9d4dc',
-  brightBlack: '#45505c', brightRed: '#e8737c', brightGreen: '#4ecb8b',
-  brightYellow: '#e5a84b', brightBlue: '#7aa8d8', brightMagenta: '#b894d8',
+  brightBlack: '#45505c', brightRed: '#ff5a5a', brightGreen: '#00e5a0',
+  brightYellow: '#00d4ff', brightBlue: '#7aa8d8', brightMagenta: '#b894d8',
   brightCyan: '#6fc4c9', brightWhite: '#e9edf1',
 }
 
-function InlineTerm({ topic }: { topic: string }) {
+export default function TerminalPanel() {
   const hostRef = useRef<HTMLDivElement>(null)
+  const [sessions, setSessions] = useState<string[]>([])
+  const [activeSession, setActiveSession] = useState<string | null>(null)
 
   useEffect(() => {
-    const host = hostRef.current
-    if (!host) return
+    // Fetch terminal sessions
+    fetch('/api/terminals')
+      .then((res) => res.json())
+      .then((data) => {
+        setSessions(data.sessions || [])
+        if (data.sessions?.length > 0) setActiveSession(data.sessions[0])
+      })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    if (!hostRef.current || !activeSession) return
 
     const term = new XTerm({
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
       fontSize: 13,
       theme: XTERM_THEME,
       cursorBlink: true,
-      convertEol: true,
     })
-    const fit = new FitAddon()
-    term.loadAddon(fit)
-    term.open(host)
-    const doFit = () => {
-      try { fit.fit() } catch { /* ignore */ }
+
+    const fitAddon = new FitAddon()
+    term.loadAddon(fitAddon)
+    term.open(hostRef.current)
+    fitAddon.fit()
+
+    // Connect to WebSocket
+    const ws = new WebSocket(`ws://localhost:9876/term-ws?session=${activeSession}`)
+    ws.onopen = () => {
+      term.writeln('Connected to terminal')
     }
-    requestAnimationFrame(doFit)
-
-    let disposed = false
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
-    let ws: WebSocket | null = null
-    let sendQueue: string[] = []
-
-    const flushQueue = () => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        for (const m of sendQueue) {
-          try { ws.send(m) } catch { /* ignore */ }
-        }
-        sendQueue = []
-      }
+    ws.onmessage = (event) => {
+      term.write(event.data)
+    }
+    ws.onclose = () => {
+      term.writeln('\\r\\nDisconnected')
     }
 
-    const sendInput = (msg: string) => {
-      if (ws && ws.readyState === WebSocket.OPEN) ws.send(msg)
-      else sendQueue.push(msg)
-    }
-
-    const sendResize = () => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        try { ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows })) } catch { /* ignore */ }
+    term.onData((data) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(data)
       }
-    }
-
-    const connect = () => {
-      if (disposed) return
-      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-      ws = new WebSocket(`${proto}//${location.host}/term-ws/${encodeURIComponent(topic)}`)
-      ws.onopen = () => {
-        term.focus()
-        flushQueue()
-        sendResize()
-      }
-      ws.onmessage = (e) => {
-        const data = e.data as string
-        if (data.startsWith('{')) {
-          try {
-            const msg = JSON.parse(data)
-            if (msg.type === 'term:init') {
-              term.write(`\x1b[2m终端已就绪 (cwd: ${msg.data.cwd})\x1b[0m\n`)
-              return
-            }
-            if (msg.type === 'term:exit') {
-              term.write(`\n\x1b[31m进程退出 (code: ${msg.data.code})\x1b[0m\n`)
-              return
-            }
-          } catch { /* not a control message, fall through */ }
-        }
-        term.write(data)
-      }
-      ws.onclose = () => {
-        if (disposed) return
-        term.write('\n\x1b[33m连接已断开，正在重连…\x1b[0m\n')
-        reconnectTimer = setTimeout(connect, 3000)
-      }
-      ws.onerror = () => { try { ws?.close() } catch { /* ignore */ } }
-    }
-
-    const onData = term.onData((d) => {
-      sendInput(JSON.stringify({ type: 'input', data: d.replace(/\r/g, '\n') }))
     })
-    const ro = new ResizeObserver(() => { doFit(); sendResize() })
-    ro.observe(host)
 
-    connect()
+    const resizeObserver = new ResizeObserver(() => fitAddon.fit())
+    resizeObserver.observe(hostRef.current)
 
     return () => {
-      disposed = true
-      if (reconnectTimer) clearTimeout(reconnectTimer)
-      ro.disconnect()
-      onData.dispose()
-      sendQueue = []
-      try { ws?.close() } catch { /* ignore */ }
       term.dispose()
+      ws.close()
+      resizeObserver.disconnect()
     }
-  }, [topic])
-
-  return <div className="terminal-host" ref={hostRef} />
-}
-
-export default function TerminalPanel() {
-  const status = useStore((s) => s.status)
-  const topics = status.topics || []
-  const activeTopic = useStore((s) => s.activeTopic)
-  const [tab, setTab] = useState<'term' | 'sessions'>('term')
-  const [selectedTopic, setSelectedTopic] = useState<string>(activeTopic || '')
-  const [sessions, setSessions] = useState<TermSession[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-
-  const nonArchived = topics.filter((t: any) => !t.archived)
-
-  const fetchSessions = useCallback(async () => {
-    setLoading(true)
-    setError('')
-    try {
-      const res = await fetch('/api/terminals')
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = await res.json()
-      setSessions(data.sessions || [])
-    } catch (e) {
-      setError((e as Error).message)
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    if (tab === 'sessions') {
-      fetchSessions()
-      const timer = setInterval(fetchSessions, 5000)
-      return () => clearInterval(timer)
-    }
-  }, [tab, fetchSessions])
-
-  const killSession = async (topic: string) => {
-    try {
-      const res = await fetch(`/api/terminals/${topic}`, { method: 'DELETE' })
-      if (res.ok) fetchSessions()
-    } catch { /* ignore */ }
-  }
-
-  const termTopic = selectedTopic || activeTopic || 'default'
+  }, [activeSession])
 
   return (
-    <div className="terminal-panel">
-      <div className="terminal-tabs">
-        <button type="button" className={tab === 'term' ? 'active' : ''} onClick={() => setTab('term')}>
-          {t('term.tab.term')}
-        </button>
-        <button type="button" className={tab === 'sessions' ? 'active' : ''} onClick={() => setTab('sessions')}>
-          {t('term.tab.sessions')} ({sessions.length})
-        </button>
-      </div>
-
-      {tab === 'term' ? (
-        <div className="terminal-main">
-          <div className="terminal-toolbar">
-            <select value={termTopic} onChange={(e) => setSelectedTopic(e.target.value)}>
-              <option value="default">default</option>
-              {nonArchived.map((t: any) => (
-                <option key={t.name} value={t.name}>{t.name}</option>
-              ))}
-            </select>
-            <span className="hint">{t('term.hint')}</span>
-          </div>
-          <InlineTerm key={termTopic} topic={termTopic} />
+    <div className="flex flex-col h-full">
+      {/* Session tabs */}
+      {sessions.length > 1 && (
+        <div className="flex gap-1 p-2 border-b border-border">
+          {sessions.map((s) => (
+            <button
+              key={s}
+              onClick={() => setActiveSession(s)}
+              className={`px-3 py-1 text-xs rounded-lg transition-colors ${
+                s === activeSession
+                  ? 'bg-accent/10 text-accent border border-accent/20'
+                  : 'text-text-tertiary hover:text-text hover:bg-bg-hover border border-transparent'
+              }`}
+            >
+              {s}
+            </button>
+          ))}
         </div>
-      ) : (
-        <>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Topic</th>
-                  <th>{t('term.dir')}</th>
-                  <th>PID</th>
-                  <th>{t('term.uptime')}</th>
-                  <th>{t('term.status')}</th>
-                  <th>{t('term.action')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loading && sessions.length === 0 ? (
-                  <tr><td colSpan={6}><span className="hint">{t('loading')}</span></td></tr>
-                ) : sessions.length > 0 ? sessions.map((s) => (
-                  <tr key={s.topic}>
-                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{s.topic}</td>
-                    <td style={{ fontSize: 12, color: 'var(--text-tertiary)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.cwd}</td>
-                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>{s.pid}</td>
-                    <td>{fmtDuration(s.uptime)}</td>
-                    <td>
-                      <span className={`status-tag tag-${s.alive ? 'active' : 'failed'}`}>
-                        <span className="tag-dot" />
-                        {s.alive ? t('active') : t('term.disconnected')}
-                      </span>
-                    </td>
-                    <td>
-                      <div style={{ display: 'flex', gap: 4 }}>
-                        <button
-                          type="button"
-                          className="topic-action-btn archive"
-                          onClick={() => killSession(s.topic)}
-                          title={t('term.kill')}
-                        >✕</button>
-                      </div>
-                    </td>
-                  </tr>
-                )) : (
-                  <tr><td colSpan={6}><span className="hint">{t('term.no.sessions')}</span></td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          {error && <div style={{ marginTop: 8, fontSize: 12, color: 'var(--err)' }}>❌ {error}</div>}
-        </>
       )}
+
+      {/* Terminal */}
+      <div ref={hostRef} className="flex-1 min-h-0 bg-bg-code rounded-lg" />
     </div>
   )
-}
-
-function fmtDuration(s: number): string {
-  if (s < 60) return s + 's'
-  if (s < 3600) return Math.floor(s / 60) + 'm ' + (s % 60) + 's'
-  return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm'
 }

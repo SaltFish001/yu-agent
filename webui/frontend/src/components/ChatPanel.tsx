@@ -4,16 +4,11 @@ import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import { useChat } from '@ai-sdk/react'
 import { type UIMessage, type TextUIPart, type ReasoningUIPart } from 'ai'
-import { isDynamicToolUIPart, getToolName } from 'ai'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import { YuTransport } from '../lib/yu-transport'
 import { useStore } from '../lib/store'
 import { uuid } from '../lib/uuid'
-import { t, setLang } from '../lib/i18n'
-import { getStatusColor } from '../lib/status'
-import { applyTheme } from '../lib/theme'
-
-// ── 会话持久化 ──
+import { t } from '../lib/i18n'
 
 const STORAGE_KEY = 'yu-chat-messages'
 
@@ -22,10 +17,8 @@ function loadSavedMessages(): UIMessage[] {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return []
     const msgs = JSON.parse(raw)
-    // Build UIMessage from serializable format
     return msgs
       .map((m: any) => {
-        // New format: { role, text, id } → UIMessage
         if (m.text !== undefined) {
           const parts: any[] = [{ type: 'text', text: m.text || '' }]
           if (m.reasoning) parts.unshift({ type: 'reasoning', text: m.reasoning })
@@ -36,9 +29,7 @@ function loadSavedMessages(): UIMessage[] {
             content: m.text || '',
           } as UIMessage
         }
-        // AI SDK format: has parts array
         if (Array.isArray(m.parts) && m.parts.length > 0) return m as UIMessage
-        // Old format: { id, role, content }
         if (m.content) {
           return {
             id: m.id || `hist_${Date.now()}_${Math.random().toString(36).slice(2,6)}`,
@@ -57,7 +48,6 @@ function loadSavedMessages(): UIMessage[] {
 
 function saveMessages(msgs: UIMessage[]) {
   try {
-    // Serialize as lightweight {role, text} objects — UIMessage parts may not survive JSON
     const saved = msgs.slice(-200).map((m) => ({
       role: m.role,
       text: msgText(m),
@@ -68,9 +58,6 @@ function saveMessages(msgs: UIMessage[]) {
   } catch { /* quota exceeded */ }
 }
 
-// ── 工具函数 ──
-
-/** Extract reasoning from a UIMessage. */
 function msgReasoning(m: UIMessage): string {
   return m.parts
     .filter((p): p is ReasoningUIPart => p.type === 'reasoning')
@@ -78,7 +65,6 @@ function msgReasoning(m: UIMessage): string {
     .join('\n')
 }
 
-/** Extract full text from a UIMessage (v4 uses `parts` not `content`). */
 function msgText(m: UIMessage): string {
   return m.parts
     .filter((p): p is TextUIPart => p.type === 'text')
@@ -86,25 +72,8 @@ function msgText(m: UIMessage): string {
     .join('')
 }
 
-/** Format JSON args for display. */
-function fmtArgs(args: string): string {
-  try {
-    return JSON.stringify(JSON.parse(args), null, 2)
-  } catch {
-    return args
-  }
-}
-
-/** Parse @topic references from text. */
-function parseMentions(content: string, topicNames: string[]): string[] {
-  const matches = content.match(/@[\w-]+/g)
-  if (!matches) return []
-  return [...new Set(matches.map((m) => m.slice(1)))].filter((n) => topicNames.includes(n))
-}
-
 const transport = new YuTransport()
 
-// ── Available commands ──
 const COMMANDS = [
   { name: 'goal', description: '设定目标自动迭代', usage: '/goal <描述>' },
   { name: 'topic', description: '切换 topic', usage: '/topic <名称>' },
@@ -133,38 +102,34 @@ export default function ChatPanel() {
   const activeTopicData = topics.find((t: any) => t.name === activeTopic)
   const topicNames = topics.map((t: any) => t.name)
 
-  // ── Load history from server + localStorage fallback ──
-async function loadHistory(): Promise<UIMessage[]> {
-  try {
-    const res = await fetch('/api/messages?limit=50')
-    if (res.ok) {
-      const data = await res.json()
-      if (data.messages?.length > 0) {
-        return data.messages.map((m: any) => {
-          const parts: any[] = [{ type: 'text', text: m.content || '' }]
-          if (m.reasoning) parts.unshift({ type: 'reasoning', text: m.reasoning })
-          return {
-            id: String(m.id || Date.now()),
-            role: m.role || 'user',
-            parts,
-            content: m.content || '',
-          } as UIMessage
-        })
+  async function loadHistory(): Promise<UIMessage[]> {
+    try {
+      const res = await fetch('/api/messages?limit=50')
+      if (res.ok) {
+        const data = await res.json()
+        if (data.messages?.length > 0) {
+          return data.messages.map((m: any) => {
+            const parts: any[] = [{ type: 'text', text: m.content || '' }]
+            if (m.reasoning) parts.unshift({ type: 'reasoning', text: m.reasoning })
+            return {
+              id: String(m.id || Date.now()),
+              role: m.role || 'user',
+              parts,
+              content: m.content || '',
+            } as UIMessage
+          })
+        }
       }
-    }
-  } catch { /* offline or error */ }
-  // Fallback to localStorage
-  return loadSavedMessages()
-}
+    } catch { /* offline or error */ }
+    return loadSavedMessages()
+  }
 
-// ── AI SDK useChat ──
   const { messages, setMessages, status: chatStatus, error, ...chat } = useChat({
     transport,
     messages: loadSavedMessages(),
     onError: (e) => console.error('Chat error:', e),
   })
 
-  // Load server history on mount to replace localStorage
   useEffect(() => {
     loadHistory().then((msgs) => {
       if (msgs.length > 0) setMessages(msgs)
@@ -172,10 +137,8 @@ async function loadHistory(): Promise<UIMessage[]> {
   }, [])
 
   const isLoading = chatStatus === 'streaming' || chatStatus === 'submitted'
-  const [isInitialLoading, setIsInitialLoading] = useState(true)
   const [inputValue, setInputValue] = useState('')
 
-  // Merge server/command system-feedback messages (store.messages) into the chat
   const displayMessages = useMemo(() => {
     const sys = sysMessages.map((m) => ({
       id: m.id,
@@ -185,7 +148,6 @@ async function loadHistory(): Promise<UIMessage[]> {
     return [...messages, ...sys]
   }, [messages, sysMessages])
 
-  // 持久化消息
   const prevMsgLen = useRef(messages.length)
   useEffect(() => {
     if (messages.length > 0 && messages.length !== prevMsgLen.current) {
@@ -194,47 +156,27 @@ async function loadHistory(): Promise<UIMessage[]> {
     }
   }, [messages])
 
-  // 初始 loading（等 useChat 恢复历史）
-  useEffect(() => {
-    const t = setTimeout(() => setIsInitialLoading(false), 400)
-    return () => clearTimeout(t)
-  }, [])
-
   const inputRef = useRef<HTMLInputElement>(null)
-  const mentionRef = useRef<HTMLDivElement>(null)
-  const quickRefWrapRef = useRef<HTMLDivElement>(null)
-  const quickRefTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  // ── @mention ──
   const [mentionOpen, setMentionOpen] = useState(false)
   const [mentionQuery, setMentionQuery] = useState('')
   const [mentionStartPos, setMentionStartPos] = useState(-1)
   const [mentionIndex, setMentionIndex] = useState(0)
-
-  // ── Slash command ──
   const [cmdOpen, setCmdOpen] = useState(false)
   const [cmdQuery, setCmdQuery] = useState('')
   const [cmdIndex, setCmdIndex] = useState(0)
   const [cmdStartPos, setCmdStartPos] = useState(-1)
 
-  // ── Quick ref tooltip ──
-  const [quickRefOpen, setQuickRefOpen] = useState(false)
-
-  // Scroll to bottom on new messages (Virtuoso followOutput handles this natively)
-
-  // Close popups on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (mentionRef.current && !mentionRef.current.contains(e.target as Node)) setMentionOpen(false)
-      if (quickRefWrapRef.current && !quickRefWrapRef.current.contains(e.target as Node)) setQuickRefOpen(false)
-      // Close command dropdown on outside click (no dedicated ref needed)
+      const target = e.target as Node
+      if (!target) return
+      setMentionOpen(false)
       setCmdOpen(false)
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
-  // ── Global "new chat" (Cmd/Ctrl+N / command palette) ──
   useEffect(() => {
     const onNewChat = () => {
       setMessages([])
@@ -244,24 +186,10 @@ async function loadHistory(): Promise<UIMessage[]> {
     return () => window.removeEventListener('yu:new-chat', onNewChat)
   }, [setMessages])
 
-  // ── Send message ──
   const handleSend = () => {
     const text = inputValue.trim()
     if (!text || isLoading) return
 
-    // Handle mention insertion before send
-    if (mentionOpen && filteredMentions.length > 0) {
-      insertMention(filteredMentions[mentionIndex].name)
-      return
-    }
-
-    // Handle command insertion before send
-    if (cmdOpen && filteredCommands.length > 0) {
-      insertCommand(filteredCommands[cmdIndex].name)
-      return
-    }
-
-    // Handle client-side commands (no server roundtrip)
     if (text === '/help') {
       const helpText = [
         '## yu-agent 命令',
@@ -301,7 +229,6 @@ async function loadHistory(): Promise<UIMessage[]> {
       return
     }
 
-    // ── /doctor ──
     if (text === '/doctor') {
       const s = useStore.getState().status
       const uptime = s.uptime ? (s.uptime < 60 ? Math.floor(s.uptime) + 's' : Math.floor(s.uptime / 60) + 'm') : '—'
@@ -323,7 +250,6 @@ async function loadHistory(): Promise<UIMessage[]> {
       return
     }
 
-    // ── /topics ──
     if (text === '/topics') {
       const tps = useStore.getState().status.topics || []
       if (tps.length === 0) {
@@ -341,147 +267,11 @@ async function loadHistory(): Promise<UIMessage[]> {
       return
     }
 
-    // ── /theme ──
-    if (text.startsWith('/theme ')) {
-      const val = text.slice(7).trim()
-      if (['dark', 'light', 'auto'].includes(val)) {
-        applyTheme(val as any)
-        addSystemMessage({ role: 'system', content: `🎨 主题已切换: ${val}`, id: uuid() })
-      } else {
-        addSystemMessage({ role: 'system', content: `⚠️ 无效主题 "${val}"，可选: dark, light, auto`, id: uuid() })
-      }
-      setInputValue('')
-      return
-    }
-
-    // ── /lang ──
-    if (text.startsWith('/lang ')) {
-      const val = text.slice(6).trim()
-      if (['zh', 'en'].includes(val)) {
-        setLang(val)
-        window.dispatchEvent(new CustomEvent('yu-lang-change', { detail: val }))
-        addSystemMessage({ role: 'system', content: `🌐 语言已切换: ${val === 'zh' ? '中文' : 'English'}`, id: uuid() })
-      } else {
-        addSystemMessage({ role: 'system', content: `⚠️ 无效语言 "${val}"，可选: zh, en`, id: uuid() })
-      }
-      setInputValue('')
-      return
-    }
-
-    // ── /budget ──
-    if (text.startsWith('/budget ')) {
-      const val = parseInt(text.slice(8).trim(), 10)
-      if (!isNaN(val) && val > 0) {
-        useStore.getState().setAgentBudget(val)
-        ;(window as any).__yu_budget = val
-        addSystemMessage({ role: 'system', content: `💰 Token 预算已设置为: ${val.toLocaleString()}`, id: uuid() })
-      } else {
-        addSystemMessage({ role: 'system', content: '⚠️ 请输入有效数字', id: uuid() })
-      }
-      setInputValue('')
-      return
-    }
-
-    // ── /model ──
-    if (text.startsWith('/model ')) {
-      const name = text.slice(7).trim()
-      addSystemMessage({ role: 'system', content: `🤖 模型切换请求: ${name}（服务端支持取决于 provider 配置）`, id: uuid() })
-      setInputValue('')
-      return
-    }
-
-    // ── /export ──
-    if (text === '/export') {
-      const msgs = useStore.getState().messages
-      if (msgs.length === 0) {
-        addSystemMessage({ role: 'system', content: '📭 暂无对话可导出', id: uuid() })
-      } else {
-        const md = msgs.map((m) => `**${m.role}:** ${m.content}`).join('\n\n---\n\n')
-        const blob = new Blob([`# yu-agent 对话导出\n\n${md}`], { type: 'text/markdown' })
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url; a.download = `yu-export-${Date.now()}.md`; a.click()
-        URL.revokeObjectURL(url)
-        addSystemMessage({ role: 'system', content: `📤 已导出 ${msgs.length} 条消息`, id: uuid() })
-      }
-      setInputValue('')
-      return
-    }
-
-    // ── /topic ──
-    if (text.startsWith('/topic ')) {
-      const name = text.slice(7).trim()
-      if (name) {
-        setActiveTopic(name)
-        addSystemMessage({ role: 'system', content: `📂 切换到主题: ${name}`, id: uuid() })
-      }
-      setInputValue('')
-      return
-    }
-
-    // ── /rm ──
-    if (text.startsWith('/rm ')) {
-      const name = text.slice(4).trim()
-      if (name) {
-        ;(async () => {
-          try {
-            const { deleteTopic } = await import('../lib/api')
-            await deleteTopic(name)
-            useStore.getState().refreshStatus()
-            addSystemMessage({ role: 'system', content: `🗑️ 已删除主题: ${name}`, id: uuid() })
-          } catch (e) {
-            addSystemMessage({ role: 'system', content: `❌ 删除失败: ${(e as Error).message}`, id: uuid() })
-          }
-        })()
-      }
-      setInputValue('')
-      return
-    }
-
-    // ── /archive ──
-    if (text.startsWith('/archive ')) {
-      const name = text.slice(9).trim()
-      if (name) {
-        ;(async () => {
-          try {
-            const { archiveTopic } = await import('../lib/api')
-            await archiveTopic(name)
-            useStore.getState().refreshStatus()
-            addSystemMessage({ role: 'system', content: `📦 已归档主题: ${name}`, id: uuid() })
-          } catch (e) {
-            addSystemMessage({ role: 'system', content: `❌ 归档失败: ${(e as Error).message}`, id: uuid() })
-          }
-        })()
-      }
-      setInputValue('')
-      return
-    }
-
-    // ── /new ──
-    if (text.startsWith('/new ')) {
-      const name = text.slice(5).trim()
-      if (name) {
-        ;(async () => {
-          try {
-            const { createTopic } = await import('../lib/api')
-            await createTopic(name)
-            useStore.getState().refreshStatus()
-            addSystemMessage({ role: 'system', content: `📂 已创建主题: ${name}`, id: uuid() })
-          } catch (e) {
-            addSystemMessage({ role: 'system', content: `❌ 创建失败: ${(e as Error).message}`, id: uuid() })
-          }
-        })()
-      }
-      setInputValue('')
-      return
-    }
-
     chat.sendMessage({ text })
     setInputValue('')
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    // Slash command dropdown has priority over @mention
     if (cmdOpen && filteredCommands.length > 0) {
       if (e.key === 'ArrowDown') { e.preventDefault(); setCmdIndex((i) => Math.min(i + 1, filteredCommands.length - 1)); return }
       if (e.key === 'ArrowUp') { e.preventDefault(); setCmdIndex((i) => Math.max(i - 1, 0)); return }
@@ -500,7 +290,6 @@ async function loadHistory(): Promise<UIMessage[]> {
     }
   }
 
-  // ── @mention logic ──
   const detectMention = (val: string, cursorPos: number) => {
     const before = val.slice(0, cursorPos)
     const atIdx = before.lastIndexOf('@')
@@ -520,8 +309,7 @@ async function loadHistory(): Promise<UIMessage[]> {
   const insertMention = (topicName: string) => {
     const before = inputValue.slice(0, mentionStartPos)
     const after = inputValue.slice(mentionStartPos + mentionQuery.length + 1)
-    const newVal = `${before}@${topicName} ${after}`
-    setInputValue(newVal)
+    setInputValue(`${before}@${topicName} ${after}`)
     setMentionOpen(false)
     requestAnimationFrame(() => inputRef.current?.focus())
   }
@@ -530,7 +318,6 @@ async function loadHistory(): Promise<UIMessage[]> {
     ? nonArchived.filter((t: any) => t.name.toLowerCase().includes(mentionQuery.toLowerCase())).slice(0, 8)
     : []
 
-  // ── Slash command logic ──
   const detectCommand = (val: string, cursorPos: number) => {
     const before = val.slice(0, cursorPos)
     const slashIdx = before.lastIndexOf('/')
@@ -549,8 +336,7 @@ async function loadHistory(): Promise<UIMessage[]> {
 
   const insertCommand = (cmdName: string) => {
     const after = inputValue.slice(cmdStartPos + cmdQuery.length + 1)
-    const newVal = `/${cmdName} ${after}`
-    setInputValue(newVal)
+    setInputValue(`/${cmdName} ${after}`)
     setCmdOpen(false)
     requestAnimationFrame(() => inputRef.current?.focus())
   }
@@ -567,26 +353,11 @@ async function loadHistory(): Promise<UIMessage[]> {
     detectCommand(val, pos)
   }
 
-  const handleMentionClick = (topicName: string) => {
-    setActiveTopic(topicName)
-    addSystemMessage({ role: 'system', content: `📂 切换到主题: ${topicName}`, id: uuid() })
-  }
-
-  const insertQuickRef = (topicName: string) => {
-    const newVal = `${inputValue} @${topicName} `
-    setInputValue(newVal)
-    setQuickRefOpen(false)
-    requestAnimationFrame(() => {
-      inputRef.current?.focus()
-    })
-  }
-
-  // ── Render parts for a message ──
   function renderParts(m: UIMessage, isLastAssistant: boolean, isStreaming: boolean) {
     if (!m.parts || m.parts.length === 0) {
       const text = (m as any).content || ''
       if (text) {
-        return <div className="msg-text"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{text}</ReactMarkdown></div>
+        return <div className="prose prose-invert max-w-none"><ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{text}</ReactMarkdown></div>
       }
       return null
     }
@@ -594,66 +365,54 @@ async function loadHistory(): Promise<UIMessage[]> {
       switch (part.type) {
         case 'reasoning': {
           const rp = part as ReasoningUIPart
-          // Check if this is the last reasoning part and is still streaming
           const isLastReasoning = isLastAssistant && pi === m.parts.length - 1
           const isReasoningStreaming = isLastReasoning && isStreaming
           return (
-            <details key={`p${pi}`} className="thinking-steps" open={isReasoningStreaming}>
-              <summary className={`thinking-summary ${isReasoningStreaming ? 'streaming' : ''}`}>
+            <details key={`p${pi}`} className="mt-2 bg-bg-surface border border-border rounded-lg overflow-hidden" open={isReasoningStreaming}>
+              <summary className={`flex items-center gap-2 px-3 py-2 text-xs text-text-tertiary cursor-pointer select-none transition-colors hover:text-text hover:bg-accent/5 ${isReasoningStreaming ? 'text-accent' : ''}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${isReasoningStreaming ? 'bg-accent animate-breathe' : 'bg-text-muted'}`} />
                 {isReasoningStreaming ? '推理中…' : '推理过程'}
               </summary>
-              <div className={`thinking-step reasoning ${isReasoningStreaming ? 'stream-cursor' : ''}`}>
-                <div className="step-content">{rp.text}</div>
+              <div className="px-3 py-2 text-sm text-text-secondary leading-relaxed border-t border-border">
+                {rp.text}
               </div>
             </details>
           )
         }
         case 'text': {
           const tp = part as TextUIPart
-          // Check streaming state for last text part
-          const isLastText = isLastAssistant && pi === m.parts.length - 1
-          const isTextStreaming = isLastText && isStreaming
           return (
-            <div key={`p${pi}`} className={`msg-text ${isTextStreaming ? 'stream-cursor' : ''}`}>
-              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
-                {tp.text}
-              </ReactMarkdown>
+            <div key={`p${pi}`} className="prose prose-invert max-w-none">
+              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{tp.text}</ReactMarkdown>
             </div>
           )
         }
         case 'dynamic-tool': {
           const tp = part as any
           const toolName: string = tp.toolName ?? 'tool'
-          const toolCallId: string = tp.toolCallId ?? ''
           const state: string = tp.state ?? ''
-
-          // Input available → show tool call with args
           if (state === 'input-available' || state === 'input-streaming') {
             const args = tp.input ? JSON.stringify(tp.input, null, 2) : '{}'
             return (
-              <details key={`p${pi}`} className="thinking-steps" open={state === 'input-streaming'}>
-                <summary className="thinking-summary tool">
-                  <span className="tool-name">{toolName}</span>
+              <details key={`p${pi}`} className="mt-2 bg-bg-surface border border-border rounded-lg overflow-hidden">
+                <summary className="flex items-center gap-2 px-3 py-2 text-xs text-text-tertiary cursor-pointer select-none font-mono">
+                  {toolName}
                 </summary>
-                <div className="thinking-step tool-call">
-                  <pre className="step-content">{args}</pre>
-                </div>
+                <pre className="px-3 py-2 text-xs font-mono text-text-secondary overflow-x-auto border-t border-border">{args}</pre>
               </details>
             )
           }
-
-          // Output available → show tool result
           const isError = state === 'output-error'
           const output = isError ? (tp.errorText ?? '') : (tp.output ? JSON.stringify(tp.output, null, 2) : '')
           return (
-            <details key={`p${pi}`} className="thinking-steps" open={false}>
-              <summary className={`thinking-summary tool ${isError ? 'tool-error' : ''}`}>
-                <span className="tool-name">{toolName}</span>
-                <span className="tool-state">{isError ? '失败' : '完成'}</span>
+            <details key={`p${pi}`} className="mt-2 bg-bg-surface border border-border rounded-lg overflow-hidden">
+              <summary className={`flex items-center gap-2 px-3 py-2 text-xs cursor-pointer select-none ${isError ? 'text-err' : 'text-ok'}`}>
+                <span className="font-mono">{toolName}</span>
+                <span className="ml-auto px-2 py-0.5 rounded-full text-[10px] bg-bg-elev">{isError ? '失败' : '完成'}</span>
               </summary>
-              <div className={`thinking-step tool-result ${isError ? 'tool-error' : ''}`}>
-                <pre className="step-content">{(output as string)?.slice(0, 2000)}{(output as string)?.length > 2000 ? '…(已截断)' : ''}</pre>
-              </div>
+              <pre className={`px-3 py-2 text-xs font-mono overflow-x-auto border-t border-border ${isError ? 'text-err' : 'text-text-secondary'}`}>
+                {(output as string)?.slice(0, 2000)}{(output as string)?.length > 2000 ? '…(已截断)' : ''}
+              </pre>
             </details>
           )
         }
@@ -664,66 +423,40 @@ async function loadHistory(): Promise<UIMessage[]> {
   }
 
   return (
-    <>
-      {/* Topic context hint — enhanced with quick topic pills */}
+    <div className="flex flex-col h-full max-w-3xl mx-auto">
+      {/* Topic context */}
       {activeTopic && (
-        <div className="topic-context-hint">
-          <span className="topic-context-label">当前主题:</span>
-          <span className="topic-context-name" title={`状态: ${activeTopicData?.status || '—'} · 轮次: ${activeTopicData?.turns ?? 0}`}>
-            {activeTopic}
-          </span>
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-border">
+          <span className="text-xs text-text-tertiary">当前:</span>
+          <span className="text-sm font-medium text-accent">{activeTopic}</span>
           {activeTopicData && (
-            <>
-              <span className="topic-context-sep">-</span>
-              <span className="topic-context-status" style={{ color: getStatusColor(activeTopicData) }}>
-                {activeTopicData.status === 'active' ? '活跃' : activeTopicData.status === 'background' ? '后台' : '空闲'}
-              </span>
-            </>
-          )}
-          {/* Quick topic pills for recent/active topics */}
-          {nonArchived.length > 1 && (
-            <span className="topic-context-sep" style={{ marginLeft: 'auto' }}>|</span>
-          )}
-          {nonArchived.slice(0, 5).map((t: any) => (
-            t.name !== activeTopic && (
-              <button
-                key={t.name}
-                className="mention-pill"
-                onClick={() => insertQuickRef(t.name)}
-                title={`@${t.name} · ${t.status || '—'} · ${t.turns ?? 0}t`}
-              >
-                @{t.name}
-              </button>
-            )
-          ))}
-          {nonArchived.length > 6 && (
-            <span className="topic-context-sep" style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
-              +{nonArchived.length - 6}
+            <span className="text-xs text-text-tertiary">
+              {activeTopicData.status === 'active' ? '活跃' : activeTopicData.status === 'background' ? '后台' : '空闲'}
             </span>
           )}
         </div>
       )}
 
-      <div className="chat-messages" style={{ position: 'relative' }}>
-        {isInitialLoading ? (
-          <div className="loading-overlay">
-            <div className="loading-spinner"></div>
-            <p>加载中…</p>
-          </div>
-        ) : displayMessages.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-lantern">🎣</div>
-            <h3>深水里，灯已点好</h3>
-            <p>和 yu 说说你要做什么 —— 输入 <kbd>/</kbd> 使用命令，<kbd>@</kbd> 引用 topic</p>
-            <div className="empty-hints">
+      {/* Messages */}
+      <div className="flex-1 min-h-0 overflow-hidden">
+        {displayMessages.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full gap-4 pb-20">
+            <div className="w-16 h-16 rounded-2xl bg-accent text-on-accent flex items-center justify-center text-3xl shadow-glow animate-pulse-glow">
+              🎣
+            </div>
+            <h3 className="text-lg font-semibold text-text">深流</h3>
+            <p className="text-sm text-text-tertiary text-center max-w-md">
+              和 yu 说说你要做什么 —— 输入 <kbd className="px-1.5 py-0.5 bg-bg-elev border border-border rounded text-xs">/</kbd> 使用命令，<kbd className="px-1.5 py-0.5 bg-bg-elev border border-border rounded text-xs">@</kbd> 引用 topic
+            </p>
+            <div className="flex gap-2 mt-2">
               {['解释一下这个项目的结构', '/doctor', '帮我写一个脚本'].map((s) => (
                 <button
                   key={s}
-                  className="empty-chip"
                   onClick={() => {
                     setInputValue(s)
                     requestAnimationFrame(() => inputRef.current?.focus())
                   }}
+                  className="px-4 py-2 text-sm bg-bg-surface border border-border rounded-full text-text-secondary hover:border-accent hover:text-accent transition-colors"
                 >
                   {s}
                 </button>
@@ -732,46 +465,53 @@ async function loadHistory(): Promise<UIMessage[]> {
           </div>
         ) : (
           <Virtuoso
-            className="chat-virtuoso"
+            className="h-full"
             data={displayMessages}
             followOutput
             initialTopMostItemIndex={displayMessages.length - 1}
             itemContent={(index, m) => {
-              const content = msgText(m)
-              const mentioned = content ? parseMentions(content, topicNames) : []
               const isLastAssistant = index === displayMessages.length - 1 && m.role === 'assistant'
-
               return (
-                <div className={`message ${m.role}`}>
-                  <div className={`msg-avatar ${m.role}`} aria-hidden="true">
+                <div className={`flex gap-3 px-4 py-3 ${m.role === 'user' ? 'flex-row-reverse' : ''}`}>
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0 ${
+                    m.role === 'user'
+                      ? 'bg-bg-elev text-text-secondary border border-border'
+                      : m.role === 'system'
+                      ? 'bg-transparent text-text-muted border border-dashed border-border'
+                      : 'bg-accent text-on-accent shadow-glow'
+                  }`}>
                     {m.role === 'user' ? '你' : m.role === 'system' ? '·' : 'y'}
                   </div>
-                  <div className="msg-body">
-                    <div className="msg-label">
+                  <div className={`min-w-0 max-w-[80%] ${m.role === 'user' ? 'ml-auto' : ''}`}>
+                    <div className="text-xs text-text-tertiary mb-1">
                       {m.role === 'user' ? '你' : m.role === 'system' ? '系统' : 'yu'}
                     </div>
-                    <div className={`msg-content`}>
+                    <div className={`rounded-2xl px-4 py-3 ${
+                      m.role === 'user'
+                        ? 'bg-accent/10 border border-accent/20 rounded-br-md'
+                        : m.role === 'system'
+                        ? 'bg-transparent'
+                        : 'bg-bg-surface border border-border rounded-bl-md'
+                    }`}>
                       {renderParts(m, isLastAssistant, isLoading)}
                       {isLastAssistant && isLoading && m.parts.length === 0 && (
-                        <span className="thinking-indicator">思考中…</span>
+                        <span className="flex items-center gap-2 text-sm text-text-tertiary">
+                          <span className="w-2 h-2 rounded-full bg-accent animate-breathe" />
+                          思考中…
+                        </span>
                       )}
                     </div>
-                    {mentioned.length > 0 && (
-                      <div className="mention-pills">
-                        {mentioned.map((name) => (
-                          <button key={name} className="mention-pill" onClick={() => handleMentionClick(name)} title={`切换到 topic: ${name}`}>@{name}</button>
-                        ))}
-                      </div>
-                    )}
                   </div>
                 </div>
               )
             }}
             components={{
               Footer: () => error ? (
-                <div className="error-banner" style={{ margin: '8px 16px' }}>
+                <div className="mx-4 mb-4 p-3 bg-err/10 border border-err/30 rounded-lg text-sm text-err flex items-center justify-between">
                   <span>❌ 发送失败: {error.message}</span>
-                  <button className="error-retry" onClick={() => chat.regenerate()}>重试</button>
+                  <button onClick={() => chat.regenerate()} className="px-3 py-1 text-xs bg-err/20 hover:bg-err/30 rounded-full transition-colors">
+                    重试
+                  </button>
                 </div>
               ) : null,
             }}
@@ -779,119 +519,74 @@ async function loadHistory(): Promise<UIMessage[]> {
         )}
       </div>
 
-      {/* Dropdown container - aligns with input bar */}
-      <div style={{ width: '100%', maxWidth: 680, margin: '0 auto' }}>
-        {/* @mention dropdown */}
-        {mentionOpen && filteredMentions.length > 0 && (
-          <div className="mention-dropdown" ref={mentionRef}>
-            {filteredMentions.map((t: any, i: number) => (
-              <div
-                key={t.name}
-                className={`mention-item ${i === mentionIndex ? 'active' : ''}`}
-                onMouseDown={(e) => { e.preventDefault(); insertMention(t.name) }}
-                onMouseEnter={() => setMentionIndex(i)}
-              >
-                <span className="mention-status" style={{ color: getStatusColor(t) }}>
-                  {t.status === 'active' ? '▶' : '○'}
-                </span>
-                <span className="mention-name">{t.name}</span>
-                <span className="mention-meta">{t.turns ?? 0}t</span>
-                {t.lastActive && (
-                  <span className="mention-meta" style={{ minWidth: 'auto', marginLeft: '4px' }}>
-                    {new Date(t.lastActive).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Slash command dropdown */}
-        {cmdOpen && filteredCommands.length > 0 && (
-          <div className="mention-dropdown cmd-dropdown" style={{ margin: '0 0 4px' }}>
-            {filteredCommands.map((cmd, i) => (
-              <div
-                key={cmd.name}
-                className={`mention-item ${i === cmdIndex ? 'active' : ''}`}
-                onMouseDown={(e) => { e.preventDefault(); insertCommand(cmd.name) }}
-                onMouseEnter={() => setCmdIndex(i)}
-              >
-                <span className="mention-status">/</span>
-                <span className="mention-name">{cmd.name}</span>
-                <span className="mention-meta" style={{ maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', color: 'var(--text-secondary)' }}>
-                  {cmd.description}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Quick reference strip */}
-      {nonArchived.length > 0 && (
-        <div
-          className="quick-ref-wrap"
-          ref={quickRefWrapRef}
-          onMouseEnter={() => { if (quickRefTimer.current) clearTimeout(quickRefTimer.current); setQuickRefOpen(true) }}
-          onMouseLeave={() => { quickRefTimer.current = setTimeout(() => setQuickRefOpen(false), 200) }}
-        >
-          <span className="quick-ref-label">Topics:</span>
-          <div className="quick-ref-strip">
-            {nonArchived.slice(0, 5).map((t: any) => (
-              <button
-                key={t.name}
-                className={`quick-topic-btn ${t.name === activeTopic ? 'active' : ''}`}
-                onClick={() => insertQuickRef(t.name)}
-                title={t.status === 'active' ? '活跃' : '空闲'}
-              >
-                <span className="qt-dot" style={{ color: getStatusColor(t) }}>●</span>
-                <span className="qt-name">{t.name}</span>
-              </button>
-            ))}
-            {nonArchived.length > 5 && <span className="quick-ref-more">+{nonArchived.length - 5}</span>}
-          </div>
-          {quickRefOpen && (
-            <div className="quick-ref-tooltip">
-              <div className="qrt-header">所有 topic · {nonArchived.length}</div>
-              <div className="qrt-list">
-                {nonArchived.map((t: any) => (
-                  <div
-                    key={t.name}
-                    className={`qrt-item ${t.name === activeTopic ? 'active' : ''}`}
-                    onMouseDown={(e) => { e.preventDefault(); insertQuickRef(t.name) }}
-                  >
-                    <span className="qrt-status" style={{ color: getStatusColor(t) }}>{t.status === 'active' ? '▶' : '○'}</span>
-                    <span className="qrt-name">{t.name}</span>
-                    <span className="qrt-meta">{t.turns ?? 0}t</span>
-                    {t.lastActive && (
-                      <span className="qrt-meta" style={{ minWidth: 'auto', marginLeft: 0 }}>
-                        {new Date(t.lastActive).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
+      {/* Input */}
+      <div className="px-4 py-3 border-t border-border">
+        <div className="relative">
+          {/* Dropdowns */}
+          {mentionOpen && filteredMentions.length > 0 && (
+            <div className="absolute bottom-full left-0 mb-2 w-64 bg-bg-elev border border-border rounded-lg shadow-lg overflow-hidden z-50">
+              {filteredMentions.map((t: any, i: number) => (
+                <div
+                  key={t.name}
+                  className={`flex items-center gap-2 px-3 py-2 text-sm cursor-pointer transition-colors ${
+                    i === mentionIndex ? 'bg-accent/10 text-text' : 'text-text-secondary hover:bg-bg-hover'
+                  }`}
+                  onMouseDown={(e) => { e.preventDefault(); insertMention(t.name) }}
+                >
+                  <span className="text-xs">{t.status === 'active' ? '▶' : '○'}</span>
+                  <span className="flex-1">{t.name}</span>
+                  <span className="text-xs text-text-tertiary">{t.turns ?? 0}t</span>
+                </div>
+              ))}
             </div>
           )}
-        </div>
-      )}
+          {cmdOpen && filteredCommands.length > 0 && (
+            <div className="absolute bottom-full left-0 mb-2 w-72 bg-bg-elev border border-border rounded-lg shadow-lg overflow-hidden z-50">
+              {filteredCommands.map((cmd, i) => (
+                <div
+                  key={cmd.name}
+                  className={`flex items-center gap-3 px-3 py-2 text-sm cursor-pointer transition-colors ${
+                    i === cmdIndex ? 'bg-accent/10 text-text' : 'text-text-secondary hover:bg-bg-hover'
+                  }`}
+                  onMouseDown={(e) => { e.preventDefault(); insertCommand(cmd.name) }}
+                >
+                  <span className="font-mono text-accent">/{cmd.name}</span>
+                  <span className="text-xs text-text-tertiary">{cmd.description}</span>
+                </div>
+              ))}
+            </div>
+          )}
 
-      {/* Input */}
-      <div className="chat-input-bar">
-        <input
-          ref={inputRef}
-          value={inputValue}
-          onChange={onInputChange}
-          onKeyDown={handleKeyDown}
-          placeholder={t('input.placeholder')}
-          disabled={isLoading}
-        />
-        {isLoading ? (
-          <button className="stop-btn" onClick={() => chat.stop()}>{t('stop')}</button>
-        ) : (
-          <button onClick={handleSend} disabled={!inputValue.trim()}>{t('send')}</button>
-        )}
+          {/* Input bar */}
+          <div className="flex items-center gap-2 bg-bg-surface border border-border rounded-xl px-3 py-2 focus-within:border-accent focus-within:ring-1 focus-within:ring-accent transition-all">
+            <input
+              ref={inputRef}
+              value={inputValue}
+              onChange={onInputChange}
+              onKeyDown={handleKeyDown}
+              placeholder={t('input.placeholder')}
+              disabled={isLoading}
+              className="flex-1 bg-transparent text-sm text-text placeholder:text-text-tertiary outline-none min-w-0"
+            />
+            {isLoading ? (
+              <button
+                onClick={() => chat.stop()}
+                className="px-4 py-2 text-sm font-medium text-err bg-err/10 border border-err/30 rounded-lg hover:bg-err/20 transition-colors"
+              >
+                {t('stop')}
+              </button>
+            ) : (
+              <button
+                onClick={handleSend}
+                disabled={!inputValue.trim()}
+                className="px-4 py-2 text-sm font-semibold text-on-accent bg-accent rounded-lg hover:bg-accent-hover disabled:opacity-30 disabled:cursor-default transition-all hover:shadow-glow"
+              >
+                {t('send')}
+              </button>
+            )}
+          </div>
+        </div>
       </div>
-    </>
+    </div>
   )
 }

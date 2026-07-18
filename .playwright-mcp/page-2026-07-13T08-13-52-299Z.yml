@@ -1,0 +1,23 @@
+- generic [ref=f5e3]:
+  - complementary [ref=f5e4]:
+    - generic [ref=f5e5]: "y"
+    - button "+ 新建 Topic" [ref=f5e8] [cursor=pointer]
+    - textbox "搜索 topic…" [ref=f5e10]
+    - navigation [ref=f5e11]:
+      - generic [ref=f5e12]: 暂无 topic
+    - generic [ref=f5e13]:
+      - button "设置" [ref=f5e14] [cursor=pointer]: ⚙️ 设置
+      - button "系统状态" [ref=f5e15] [cursor=pointer]: 📊 系统状态
+  - main [ref=f5e16]:
+    - generic [ref=f5e18]:
+      - paragraph [ref=f5e22]: 加载中…
+      - generic [ref=f5e23]:
+        - textbox "输入消息… (/ 命令 / @ topic)" [ref=f5e24]
+        - button "发送" [disabled] [ref=f5e25] [cursor=pointer]
+      - generic [ref=f5e26]:
+        - generic "已断开" [ref=f5e27]
+        - generic [ref=f5e30]: ·
+        - generic "本轮对话 Token 使用量" [ref=f5e31]: "Token: 0"
+        - generic [ref=f5e32]: ·
+        - generic "Agent 循环迭代次数" [ref=f5e33]: "迭代: 0"
+        - generic [ref=f5e34]: yu v?

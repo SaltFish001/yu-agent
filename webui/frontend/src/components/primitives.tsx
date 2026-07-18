@@ -1,51 +1,62 @@
-/** yu-agent — shared UI primitives */
+/** yu-agent — shared primitive components */
 
-import type { ReactNode } from 'react'
+interface SpinnerProps {
+  size?: number
+  className?: string
+}
 
-export function Spinner({ size = 32 }: { size?: number }) {
+export function Spinner({ size = 24, className = '' }: SpinnerProps) {
   return (
     <div
-      className="loading-spinner"
-      style={{ width: size, height: size, borderWidth: Math.max(2, Math.round(size / 12)) }}
-      role="status"
-      aria-label="加载中"
+      className={`animate-spin rounded-full border-2 border-border border-t-accent ${className}`}
+      style={{ width: size, height: size }}
     />
   )
 }
 
-export function Skeleton({ height = 16, width = '100%', radius = 6 }: { height?: number; width?: string | number; radius?: number }) {
+interface SkeletonProps {
+  className?: string
+}
+
+export function Skeleton({ className = '' }: SkeletonProps) {
   return (
-    <div
-      className="skeleton"
-      style={{ height, width, borderRadius: radius }}
-      aria-hidden="true"
-    />
+    <div className={`animate-pulse bg-bg-surface rounded-lg ${className}`} />
   )
 }
 
-export function EmptyState({ icon = '∅', title, hint }: { icon?: string; title: string; hint?: string }) {
+interface EmptyStateProps {
+  icon?: string
+  title: string
+  description?: string
+  className?: string
+}
+
+export function EmptyState({ icon = '🔍', title, description, className = '' }: EmptyStateProps) {
   return (
-    <div className="empty-state">
-      <div className="icon">{icon}</div>
-      <h3>{title}</h3>
-      {hint && <p>{hint}</p>}
+    <div className={`flex flex-col items-center justify-center py-12 gap-3 ${className}`}>
+      <span className="text-3xl opacity-40">{icon}</span>
+      <h3 className="text-sm font-medium text-text">{title}</h3>
+      {description && <p className="text-xs text-text-tertiary text-center max-w-xs">{description}</p>}
     </div>
   )
 }
 
-export function ErrorState({
-  message = '加载失败',
-  onRetry,
-}: {
-  message?: string
+interface ErrorStateProps {
+  message: string
   onRetry?: () => void
-}) {
+  className?: string
+}
+
+export function ErrorState({ message, onRetry, className = '' }: ErrorStateProps) {
   return (
-    <div className="error-state">
-      <div className="error-icon">⚠</div>
-      <div className="error-msg">{message}</div>
+    <div className={`flex flex-col items-center justify-center py-12 gap-3 ${className}`}>
+      <span className="text-3xl">⚠️</span>
+      <p className="text-sm text-err">{message}</p>
       {onRetry && (
-        <button type="button" className="error-retry" onClick={onRetry}>
+        <button
+          onClick={onRetry}
+          className="px-4 py-2 text-sm text-accent bg-accent/10 border border-accent/20 rounded-lg hover:bg-accent/20 transition-colors"
+        >
           重试
         </button>
       )}
@@ -53,18 +64,18 @@ export function ErrorState({
   )
 }
 
-export function PanelLoading({ rows = 3 }: { rows?: number }) {
-  const widths = Array.from({ length: rows }, (_, i) => `${70 - i * 8}%`)
+interface PanelLoadingProps {
+  className?: string
+}
+
+export function PanelLoading({ className = '' }: PanelLoadingProps) {
   return (
-    <div className="panel-loading">
-      <Spinner size={26} />
-      <div className="skeleton-col">
-        {widths.map((w) => (
-          <Skeleton key={w} height={14} width={w} />
-        ))}
+    <div className={`flex items-center gap-4 p-5 ${className}`}>
+      <Skeleton className="w-10 h-10 rounded-full" />
+      <div className="flex-1 space-y-2">
+        <Skeleton className="h-4 w-1/3" />
+        <Skeleton className="h-3 w-1/2" />
       </div>
     </div>
   )
 }
-
-export type { ReactNode }

@@ -1,0 +1,163 @@
+/** yu-agent — Tailwind v4 entry + design tokens */
+@import 'tailwindcss';
+
+@theme {
+  /* ── Colors: Deep Flow ── */
+  --color-bg: #0a0f14;
+  --color-bg-sidebar: #0d1319;
+  --color-bg-surface: #111820;
+  --color-bg-hover: #1a2230;
+  --color-bg-elev: #1e2a38;
+  --color-bg-code: #0d1319;
+
+  --color-text: #e8edf2;
+  --color-text-secondary: #94a0b0;
+  --color-text-tertiary: #5d6b7a;
+  --color-text-muted: #3a4554;
+
+  /* Electric Cyan — the AI signal */
+  --color-accent: #00d4ff;
+  --color-accent-hover: #33ddff;
+  --color-accent-dim: rgba(0, 212, 255, 0.4);
+  --color-accent-glow: rgba(0, 212, 255, 0.3);
+  --color-on-accent: #001014;
+
+  /* Semantic */
+  --color-ok: #00e5a0;
+  --color-warn: #f0b030;
+  --color-err: #ff5a5a;
+
+  /* Lines */
+  --color-border: #1e2a38;
+  --color-border-light: #2a3a4a;
+
+  /* ── Typography ── */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', system-ui, sans-serif;
+  --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', 'JetBrains Mono', 'Consolas', monospace;
+
+  /* ── Spacing ── */
+  --spacing-sidebar: 260px;
+
+  /* ── Radius ── */
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-full: 9999px;
+
+  /* ── Shadows ── */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.6);
+  --shadow-glow: 0 0 20px var(--color-accent-glow);
+}
+
+/* ── Light theme override ── */
+[data-theme='light'] {
+  --color-bg: #f8fafc;
+  --color-bg-sidebar: #f1f5f9;
+  --color-bg-surface: #ffffff;
+  --color-bg-hover: #e2e8f0;
+  --color-bg-elev: #ffffff;
+  --color-bg-code: #f1f5f9;
+
+  --color-text: #0f172a;
+  --color-text-secondary: #475569;
+  --color-text-tertiary: #64748b;
+  --color-text-muted: #94a3b8;
+
+  --color-accent: #0088aa;
+  --color-accent-hover: #006688;
+  --color-accent-dim: rgba(0, 136, 170, 0.3);
+  --color-accent-glow: rgba(0, 136, 170, 0.2);
+  --color-on-accent: #ffffff;
+
+  --color-ok: #00a060;
+  --color-warn: #b88000;
+  --color-err: #d04040;
+
+  --color-border: #e2e8f0;
+  --color-border-light: #cbd5e1;
+}
+
+/* ── Base styles ── */
+@layer base {
+  html, body, #root {
+    height: 100%;
+    width: 100%;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background: var(--color-bg);
+    color: var(--color-text-secondary);
+    font-size: 14px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow: hidden;
+  }
+
+  ::selection {
+    background: var(--color-accent-dim);
+    color: var(--color-text);
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-border-light);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-text-muted);
+  }
+}
+
+/* ── Focus styles ── */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+}
+
+/* ── Animation keyframes ── */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes breathe {
+  0%, 100% { opacity: 0.5; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 8px var(--color-accent-glow); }
+  50% { box-shadow: 0 0 16px var(--color-accent-glow); }
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
