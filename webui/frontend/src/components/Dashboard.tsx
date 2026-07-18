@@ -46,10 +46,12 @@ export default function Dashboard() {
   }, [])
 
   const isLight = theme === 'light'
-  const trackColor = isLight ? '#e2e5ea' : '#1c1c22'
-  const lineGrid = isLight ? '#e8eaee' : '#1c1c22'
-  const lineLabel = isLight ? '#80878f' : '#54545e'
-  const lineStroke = isLight ? '#2f7fa8' : '#5b7aff'
+  // 深水暖灯 palette: warm amber signal + jade, matched to CSS tokens
+  const trackColor = isLight ? '#dfe5e8' : '#1f2a34'
+  const lineGrid = isLight ? '#e3e9eb' : '#1f2a34'
+  const lineLabel = isLight ? '#67747f' : '#75818f'
+  const lineStroke = isLight ? '#a06a0b' : '#e5a84b'
+  const jade = isLight ? '#1e8f52' : '#4ecb8b'
 
   // Mem usage gauge
   const memGaugeOption = {
@@ -61,7 +63,7 @@ export default function Dashboard() {
       max: 512,
       center: ['50%', '50%'],
       radius: '62%',
-      progress: { show: true, width: 8, itemStyle: { color: { type: 'linear', x: 0, y: 0, x2: 1, y2: 0, colorStops: [{ offset: 0, color: isLight ? '#3fae7e' : '#4caf7d' }, { offset: 1, color: lineStroke }] } } },
+      progress: { show: true, width: 8, itemStyle: { color: { type: 'linear', x: 0, y: 0, x2: 1, y2: 0, colorStops: [{ offset: 0, color: jade }, { offset: 1, color: lineStroke }] } } },
       axisLine: { lineStyle: { width: 8, color: [[1, trackColor]] } },
       axisTick: { show: false },
       splitLine: { show: false },
@@ -90,7 +92,7 @@ export default function Dashboard() {
       smooth: true,
       showSymbol: false,
       lineStyle: { color: lineStroke, width: 2 },
-      areaStyle: { color: isLight ? 'rgba(47,127,168,0.10)' : 'rgba(91,122,255,0.08)' },
+      areaStyle: { color: isLight ? 'rgba(160,106,11,0.08)' : 'rgba(229,168,75,0.08)' },
     }]
   }
 

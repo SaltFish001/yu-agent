@@ -13,16 +13,17 @@ interface TermSession {
   alive: boolean
 }
 
+// 深水暖灯 terminal palette — deep-water bg, warm amber cursor
 const XTERM_THEME = {
-  background: '#0b0e14',
-  foreground: '#cdd6f4',
-  cursor: '#cdd6f4',
-  selectionBackground: '#3b4261',
-  black: '#1e1e2e', red: '#f38ba8', green: '#a6e3a1', yellow: '#f9e2af',
-  blue: '#89b4fa', magenta: '#cba6f7', cyan: '#94e2d5', white: '#cdd6f4',
-  brightBlack: '#585b70', brightRed: '#f38ba8', brightGreen: '#a6e3a1',
-  brightYellow: '#f9e2af', brightBlue: '#89b4fa', brightMagenta: '#cba6f7',
-  brightCyan: '#94e2d5', brightWhite: '#ffffff',
+  background: '#0e151b',
+  foreground: '#c9d4dc',
+  cursor: '#e5a84b',
+  selectionBackground: '#2c3a47',
+  black: '#1e2a35', red: '#e8737c', green: '#4ecb8b', yellow: '#dcb14f',
+  blue: '#7aa8d8', magenta: '#b894d8', cyan: '#6fc4c9', white: '#c9d4dc',
+  brightBlack: '#45505c', brightRed: '#e8737c', brightGreen: '#4ecb8b',
+  brightYellow: '#e5a84b', brightBlue: '#7aa8d8', brightMagenta: '#b894d8',
+  brightCyan: '#6fc4c9', brightWhite: '#e9edf1',
 }
 
 function InlineTerm({ topic }: { topic: string }) {
@@ -242,7 +243,7 @@ export default function TerminalPanel() {
               </tbody>
             </table>
           </div>
-          {error && <div style={{ marginTop: 8, fontSize: 12, color: '#ef4444' }}>❌ {error}</div>}
+          {error && <div style={{ marginTop: 8, fontSize: 12, color: 'var(--err)' }}>❌ {error}</div>}
         </>
       )}
     </div>

@@ -599,8 +599,8 @@ async function loadHistory(): Promise<UIMessage[]> {
           const isReasoningStreaming = isLastReasoning && isStreaming
           return (
             <details key={`p${pi}`} className="thinking-steps" open={isReasoningStreaming}>
-              <summary className="thinking-summary">
-                {isReasoningStreaming ? '🧠 推理中…' : '🧠 推理过程'}
+              <summary className={`thinking-summary ${isReasoningStreaming ? 'streaming' : ''}`}>
+                {isReasoningStreaming ? '推理中…' : '推理过程'}
               </summary>
               <div className={`thinking-step reasoning ${isReasoningStreaming ? 'stream-cursor' : ''}`}>
                 <div className="step-content">{rp.text}</div>
@@ -631,8 +631,10 @@ async function loadHistory(): Promise<UIMessage[]> {
           if (state === 'input-available' || state === 'input-streaming') {
             const args = tp.input ? JSON.stringify(tp.input, null, 2) : '{}'
             return (
-              <details key={`p${pi}`} className="thinking-steps" open={false}>
-                <summary className="thinking-summary">🛠️ {toolName}</summary>
+              <details key={`p${pi}`} className="thinking-steps" open={state === 'input-streaming'}>
+                <summary className="thinking-summary tool">
+                  <span className="tool-name">{toolName}</span>
+                </summary>
                 <div className="thinking-step tool-call">
                   <pre className="step-content">{args}</pre>
                 </div>
@@ -645,11 +647,12 @@ async function loadHistory(): Promise<UIMessage[]> {
           const output = isError ? (tp.errorText ?? '') : (tp.output ? JSON.stringify(tp.output, null, 2) : '')
           return (
             <details key={`p${pi}`} className="thinking-steps" open={false}>
-              <summary className={`thinking-summary ${isError ? 'tool-error' : ''}`}>
-                {isError ? '❌' : '✅'} {toolCallId.slice(0, 8)}…
+              <summary className={`thinking-summary tool ${isError ? 'tool-error' : ''}`}>
+                <span className="tool-name">{toolName}</span>
+                <span className="tool-state">{isError ? '失败' : '完成'}</span>
               </summary>
               <div className={`thinking-step tool-result ${isError ? 'tool-error' : ''}`}>
-                <pre className="step-content">{(output as string)?.slice(0, 2000)}{(output as string)?.length > 2000 ? '...(截断)' : ''}</pre>
+                <pre className="step-content">{(output as string)?.slice(0, 2000)}{(output as string)?.length > 2000 ? '…(已截断)' : ''}</pre>
               </div>
             </details>
           )
@@ -709,12 +712,22 @@ async function loadHistory(): Promise<UIMessage[]> {
           </div>
         ) : displayMessages.length === 0 ? (
           <div className="empty-state">
-            <div className="icon">🎣</div>
-            <h3>yu-agent + AI SDK</h3>
-            <p>输入消息开始对话 &mdash; 输入 <kbd>/</kbd> 使用命令，<kbd>@</kbd> 引用 topic</p>
+            <div className="empty-lantern">🎣</div>
+            <h3>深水里，灯已点好</h3>
+            <p>和 yu 说说你要做什么 —— 输入 <kbd>/</kbd> 使用命令，<kbd>@</kbd> 引用 topic</p>
             <div className="empty-hints">
-              <span className="hint">试试: yu help</span>
-              <span className="hint">试试: yu doctor</span>
+              {['解释一下这个项目的结构', '/doctor', '帮我写一个脚本'].map((s) => (
+                <button
+                  key={s}
+                  className="empty-chip"
+                  onClick={() => {
+                    setInputValue(s)
+                    requestAnimationFrame(() => inputRef.current?.focus())
+                  }}
+                >
+                  {s}
+                </button>
+              ))}
             </div>
           </div>
         ) : (
@@ -730,8 +743,8 @@ async function loadHistory(): Promise<UIMessage[]> {
 
               return (
                 <div className={`message ${m.role}`}>
-                  <div className={`msg-avatar ${m.role}`}>
-                    {m.role === 'user' ? 'U' : m.role === 'system' ? 'S' : 'Y'}
+                  <div className={`msg-avatar ${m.role}`} aria-hidden="true">
+                    {m.role === 'user' ? '你' : m.role === 'system' ? '·' : 'y'}
                   </div>
                   <div className="msg-body">
                     <div className="msg-label">
@@ -740,7 +753,7 @@ async function loadHistory(): Promise<UIMessage[]> {
                     <div className={`msg-content`}>
                       {renderParts(m, isLastAssistant, isLoading)}
                       {isLastAssistant && isLoading && m.parts.length === 0 && (
-                        <span className="thinking-indicator">🤔 思考中…</span>
+                        <span className="thinking-indicator">思考中…</span>
                       )}
                     </div>
                     {mentioned.length > 0 && (

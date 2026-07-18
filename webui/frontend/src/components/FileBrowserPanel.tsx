@@ -99,7 +99,7 @@ export default function FileBrowserPanel() {
         </button>
       </div>
 
-      {error && <div style={{ marginBottom: 12, fontSize: 13, color: '#ef4444' }}>❌ {error}</div>}
+      {error && <div style={{ marginBottom: 12, fontSize: 13, color: 'var(--err)' }}>❌ {error}</div>}
 
       {loading ? (
         <div className="loading-fallback">{t('fb.loading')}</div>
